@@ -23,7 +23,6 @@ android {
         versionProps["VERSION_D"] = "0"
     }
 
-    // Only increment when assembling or bundling (not syncing/cleaning)
     val runTasks = gradle.startParameter.taskNames
     val isBuilding = runTasks.any { it.contains("assemble") || it.contains("bundle") }
 
@@ -88,6 +87,9 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
+
+    // Encrypted SharedPreferences — keys managed by Android Keystore
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     val composeBom = platform("androidx.compose:compose-bom:2025.01.00")
     implementation(composeBom)
