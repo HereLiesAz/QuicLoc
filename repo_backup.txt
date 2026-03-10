@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    48e0213336f93daaf12ff608831a312926b50c57
-  Timestamp: 2026-03-10 18:13:26 UTC
+  Commit:    36b5723a2a54e82b1e84270d8b9cb98634e74fd7
+  Timestamp: 2026-03-10 18:19:09 UTC
 ======================================================
 
 
@@ -1596,43 +1596,6 @@ class NotificationListener : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         // Not needed, but required to override
-    }
-}
-
-
-######################################################
-# FILE: app/src/main/java/com/hereliesaz/quicloc/SmsReceiver.kt
-######################################################
-
-package com.hereliesaz.quicloc
-
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.provider.Telephony
-
-class SmsReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
-            val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
-            for (smsMessage in messages) {
-                val messageBody = smsMessage.messageBody
-                val senderNum = smsMessage.displayOriginatingAddress
-
-                if (senderNum != null) {
-                    val whitelistManager = WhitelistManager(context)
-
-                    if (whitelistManager.isWhitelisted(senderNum)) {
-                        val bodyLower = messageBody.trim().lowercase()
-                        if (bodyLower == "loc" || bodyLower == "quicloc") {
-                            // Valid trigger word from a whitelisted number!
-                            val pendingResult = goAsync()
-                            LocationHelper.getCurrentLocationAndReply(context, senderNum, pendingResult)
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
