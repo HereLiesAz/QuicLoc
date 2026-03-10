@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    d40ee8e76af7be254386df51d0fc2b825b2ab52a
-  Timestamp: 2026-03-10 17:38:36 UTC
+  Commit:    29435c003fd83f6427171833e1c05cc8fa58bcb5
+  Timestamp: 2026-03-10 17:38:57 UTC
 ======================================================
 
 
@@ -1104,12 +1104,14 @@ dependencies {
 
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <application
         android:allowBackup="true"
@@ -1126,12 +1128,6 @@ dependencies {
             </intent-filter>
         </activity>
 
-        <!--
-            FIX #1: Removed android:permission="android.permission.BROADCAST_SMS"
-            That attribute was BLOCKING the receiver — it told Android to only allow
-            callers who hold BROADCAST_SMS to trigger it, but the system SMS framework
-            doesn't hold that permission when firing SMS_RECEIVED. Result: silent failure.
-        -->
         <receiver
             android:name=".SmsReceiver"
             android:exported="true">
@@ -1141,13 +1137,17 @@ dependencies {
         </receiver>
 
         <!--
-            FIX #2: NotificationListenerService to intercept messages from ANY app
-            (WhatsApp, Telegram, Signal, Messages, etc.)
-            User must grant "Notification Access" in system settings (app will prompt them).
+            NotificationListenerService — triggers Google Play manual review.
+            You MUST submit a Declaration in Play Console:
+              App content > Sensitive app permissions > Notification access
+            Suggested text: "QuicLoc reads incoming message notifications solely
+            to detect the trigger word 'loc' from user-approved contacts and
+            reply with the device's location. No message content is stored,
+            logged, transmitted, or shared with any third party."
         -->
         <service
             android:name=".NotificationListener"
-            android:label="QuicLoc Notification Listener"
+            android:label="@string/notification_listener_label"
             android:exported="true"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
