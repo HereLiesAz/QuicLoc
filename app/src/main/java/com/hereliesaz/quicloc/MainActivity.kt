@@ -1,7 +1,6 @@
 package com.hereliesaz.quicloc
 
 import android.Manifest
-import androidx.appcompat.app.AppCompatDelegate
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -9,9 +8,10 @@ import android.os.Bundle
 import android.provider.Settings
 import android.text.TextUtils
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.biometric.BiometricManager
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,10 +25,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {   // FragmentActivity required by BiometricPrompt
 
     private lateinit var whitelistManager: WhitelistManager
+
+    // Tracks whether the user has passed biometric auth this session.
+    // Set to false whenever the app is backgrounded, so re-auth is required on return.
+    private var isAuthenticated = false
 
     private val REQUIRED_PERMISSIONS = arrayOf(
         Manifest.permission.RECEIVE_SMS,
@@ -47,7 +52,6 @@ class MainActivity : ComponentActivity() {
                 Toast.LENGTH_LONG
             ).show()
         }
-        // After location permissions, prompt for notification access
         checkNotificationListenerPermission()
     }
 
@@ -70,61 +74,105 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Compose state — hoisted so biometric callback can flip it
+    private var authState = mutableStateOf(false)
+
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Force dark mode regardless of system setting
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         whitelistManager = WhitelistManager(this)
 
         setContent {
             MaterialTheme {
-                var numbersList by remember { mutableStateOf(whitelistManager.getNumbers().toList()) }
-                var notificationAccessGranted by remember {
-                    mutableStateOf(isNotificationListenerEnabled())
-                }
+                val authenticated by authState
 
-                Scaffold(
-                    topBar = {
-                        TopAppBar(
-                            title = { Text("QuicLoc") },
-                            colors = TopAppBarDefaults.topAppBarColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                if (!authenticated) {
+                    BiometricGateScreen(
+                        onRetry = { promptBiometric() }
+                    )
+                } else {
+                    var numbersList by remember { mutableStateOf(whitelistManager.getNumbers().toList()) }
+                    var notificationAccessGranted by remember {
+                        mutableStateOf(isNotificationListenerEnabled())
+                    }
+
+                    Scaffold(
+                        topBar = {
+                            TopAppBar(
+                                title = { Text("QuicLoc") },
+                                colors = TopAppBarDefaults.topAppBarColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                )
                             )
+                        }
+                    ) { innerPadding ->
+                        QuicLocScreen(
+                            modifier = Modifier.padding(innerPadding),
+                            numbersList = numbersList,
+                            notificationAccessGranted = notificationAccessGranted,
+                            noLockScreenWarning = !BiometricHelper.canAuthenticate(this@MainActivity),
+                            onRequestNotificationAccess = {
+                                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                            },
+                            onAddNumber = { number ->
+                                if (number.isNotBlank()) {
+                                    whitelistManager.addNumber(number)
+                                    numbersList = whitelistManager.getNumbers().toList()
+                                    Toast.makeText(this, "Added to whitelist", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            onRemoveNumber = { number ->
+                                whitelistManager.removeNumber(number)
+                                numbersList = whitelistManager.getNumbers().toList()
+                            }
                         )
                     }
-                ) { innerPadding ->
-                    QuicLocScreen(
-                        modifier = Modifier.padding(innerPadding),
-                        numbersList = numbersList,
-                        notificationAccessGranted = notificationAccessGranted,
-                        onRequestNotificationAccess = {
-                            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                        },
-                        onAddNumber = { number ->
-                            if (number.isNotBlank()) {
-                                whitelistManager.addNumber(number)
-                                numbersList = whitelistManager.getNumbers().toList()
-                                Toast.makeText(this, "Added to whitelist", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        onRemoveNumber = { number ->
-                            whitelistManager.removeNumber(number)
-                            numbersList = whitelistManager.getNumbers().toList()
-                        }
-                    )
                 }
             }
         }
-
-        checkPermissions()
     }
 
     override fun onResume() {
         super.onResume()
-        // Re-check notification access when returning from settings
+        // Re-auth every time the app comes to the foreground
+        if (!isAuthenticated) {
+            promptBiometric()
+        }
     }
+
+    override fun onPause() {
+        super.onPause()
+        // Lock the app when it goes to the background
+        isAuthenticated = false
+        authState.value = false
+    }
+
+    // -------------------------------------------------------------------------
+    // Biometric prompt
+    // -------------------------------------------------------------------------
+
+    private fun promptBiometric() {
+        BiometricHelper.authenticate(
+            activity = this,
+            onSuccess = {
+                isAuthenticated = true
+                authState.value = true
+                checkPermissions()
+            },
+            onFailure = { reason ->
+                isAuthenticated = false
+                authState.value = false
+                // User cancelled or failed — show the lock screen UI with retry
+                Toast.makeText(this, "Authentication required: $reason", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // Permissions
+    // -------------------------------------------------------------------------
 
     private fun checkPermissions() {
         val hasSms = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
@@ -155,7 +203,6 @@ class MainActivity : ComponentActivity() {
 
     private fun checkNotificationListenerPermission() {
         if (!isNotificationListenerEnabled()) {
-            // The UI will show a prompt — user taps the button to go to settings
             Toast.makeText(
                 this,
                 "Grant Notification Access so QuicLoc can respond in WhatsApp, Telegram, and other apps.",
@@ -177,11 +224,50 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// -------------------------------------------------------------------------
+// Lock screen shown before auth passes
+// -------------------------------------------------------------------------
+
+@Composable
+fun BiometricGateScreen(onRetry: () -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "🔒",
+                style = MaterialTheme.typography.displayLarge
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "QuicLoc",
+                style = MaterialTheme.typography.headlineMedium
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Authentication required",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(onClick = onRetry) {
+                Text("Unlock")
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// Main UI
+// -------------------------------------------------------------------------
+
 @Composable
 fun QuicLocScreen(
     modifier: Modifier = Modifier,
     numbersList: List<String>,
     notificationAccessGranted: Boolean,
+    noLockScreenWarning: Boolean,
     onRequestNotificationAccess: () -> Unit,
     onAddNumber: (String) -> Unit,
     onRemoveNumber: (String) -> Unit
@@ -199,15 +285,26 @@ fun QuicLocScreen(
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        // Notification access warning banner
+        // Warn if device has no lock screen (biometrics were bypassed)
+        if (noLockScreenWarning) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+            ) {
+                Text(
+                    text = "⚠ No lock screen set up. Set a PIN, pattern, or fingerprint in system settings to protect this app.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+
+        // Notification access banner
         if (!notificationAccessGranted) {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                )
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text(
@@ -223,9 +320,7 @@ fun QuicLocScreen(
                     )
                     Button(
                         onClick = onRequestNotificationAccess,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error
-                        )
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                     ) {
                         Text("Grant Notification Access")
                     }
@@ -233,12 +328,8 @@ fun QuicLocScreen(
             }
         } else {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
             ) {
                 Text(
                     text = "✓ Notification Access granted — QuicLoc will respond in all messaging apps.",
@@ -285,9 +376,7 @@ fun QuicLocScreen(
         LazyColumn(modifier = Modifier.fillMaxWidth()) {
             items(numbersList) { number ->
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
