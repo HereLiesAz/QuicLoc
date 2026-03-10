@@ -84,7 +84,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         whitelistManager = WhitelistManager(this)
 
         setContent {
-            MaterialTheme {
+            MaterialTheme(colorScheme = darkColorScheme()) {
                 val authenticated by authState
 
                 if (!authenticated) {
