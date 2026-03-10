@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    55c21cbcb35034639b4890e262418b7f152bfca6
-  Timestamp: 2026-03-10 19:21:42 UTC
+  Commit:    25d9303d43dc1849b2b94d60e7c5d5a4611f5143
+  Timestamp: 2026-03-10 19:22:10 UTC
 ======================================================
 
 
@@ -861,7 +861,6 @@ package com.hereliesaz.quicloc
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.RemoteInput
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.location.Location
@@ -875,178 +874,162 @@ import com.google.android.gms.tasks.CancellationTokenSource
 
 object LocationHelper {
     private const val TAG = "QuicLoc.LocationHelper"
-    private const val LOCATION_TIMEOUT_MS = 15000L
+
+    // Total time we'll wait across all three stages before giving up.
+    // 30 seconds is enough for a cold GPS fix in most conditions.
+    private const val LOCATION_TIMEOUT_MS = 30_000L
 
     // -------------------------------------------------------------------------
-    // SMS reply path
+    // SMS reply — called from LocationReplyService (no PendingResult needed)
     // -------------------------------------------------------------------------
 
     @SuppressLint("MissingPermission")
     fun getCurrentLocationAndReply(
         context: Context,
         phoneNumber: String,
-        pendingResult: BroadcastReceiver.PendingResult
+        onResult: ((succeeded: Boolean) -> Unit)? = null
     ) {
         fetchLocation(context,
             onSuccess = { location ->
                 val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
                 sendSms(context, phoneNumber, "QuicLoc Location:\n$mapsLink")
+                onResult?.invoke(true)
             },
             onFailure = { msg ->
                 sendSms(context, phoneNumber, "QuicLoc Error: $msg")
-            },
-            onComplete = {
-                pendingResult.finish()
+                onResult?.invoke(false)
             }
         )
     }
 
     // -------------------------------------------------------------------------
-    // Notification inline-reply path
+    // Notification inline-reply — called from LocationReplyService
     // -------------------------------------------------------------------------
 
     @SuppressLint("MissingPermission")
     fun getCurrentLocationAndReplyViaNotification(
         context: Context,
         replyAction: Notification.Action,
-        notificationKey: String
+        notificationKey: String,
+        onResult: ((succeeded: Boolean) -> Unit)? = null
     ) {
         fetchLocation(context,
             onSuccess = { location ->
                 val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
                 sendNotificationReply(context, replyAction, "QuicLoc: $mapsLink")
+                onResult?.invoke(true)
             },
             onFailure = { msg ->
                 sendNotificationReply(context, replyAction, "QuicLoc Error: $msg")
-            },
-            onComplete = {}
+                onResult?.invoke(false)
+            }
         )
     }
 
     // -------------------------------------------------------------------------
-    // Core location fetch — three-stage fallback:
-    //   Stage 1: getCurrentLocation() HIGH_ACCURACY (GPS + network, up to ~5s)
-    //   Stage 2: lastLocation (cached fix, instant but possibly stale)
-    //   Stage 3: requestLocationUpdates() (forces a brand new fix, 15s timeout)
+    // Core location fetch — three-stage fallback with a single 30s deadline:
     //
-    // Why this is needed:
-    //   getCurrentLocation() returns null when the device has no cached fix AND
-    //   GPS hasn't acquired a signal yet (e.g. cold start, screen was off).
-    //   lastLocation fills the gap instantly if any app recently used GPS.
-    //   requestLocationUpdates is the nuclear option — it always works if
-    //   location services are on, just takes longer.
+    //   Stage 1: getCurrentLocation() HIGH_ACCURACY
+    //            Fast if a recent fix exists. Returns null on cold start.
+    //
+    //   Stage 2: lastLocation
+    //            Instant. May be stale but better than nothing if stages 1 & 3
+    //            both fail.
+    //
+    //   Stage 3: requestLocationUpdates()
+    //            Forces the GPS radio on. Always works if location services are
+    //            enabled. May take 20-30 seconds on a cold start outdoors.
+    //
+    // The 30-second deadline applies to the entire chain. If all three stages
+    // are exhausted or time runs out, onFailure is called and the service stops.
     // -------------------------------------------------------------------------
 
     @SuppressLint("MissingPermission")
     private fun fetchLocation(
         context: Context,
         onSuccess: (Location) -> Unit,
-        onFailure: (String) -> Unit,
-        onComplete: () -> Unit
+        onFailure: (String) -> Unit
     ) {
         val fusedClient = LocationServices.getFusedLocationProviderClient(context)
+        val deadline = System.currentTimeMillis() + LOCATION_TIMEOUT_MS
+        val handler = Handler(Looper.getMainLooper())
+        var done = false
+
+        fun finish(success: Boolean, location: Location? = null, msg: String = "") {
+            if (done) return
+            done = true
+            handler.removeCallbacksAndMessages(null)
+            if (success && location != null) onSuccess(location) else onFailure(msg)
+        }
+
+        // Hard deadline — fires if all stages are still running
+        handler.postDelayed({
+            finish(false, msg = "Location timed out after ${LOCATION_TIMEOUT_MS / 1000}s. Is GPS enabled?")
+        }, LOCATION_TIMEOUT_MS)
 
         try {
+            // Stage 1
             val cts = CancellationTokenSource()
-            fusedClient.getCurrentLocation(
-                Priority.PRIORITY_HIGH_ACCURACY,
-                cts.token
-            ).addOnCompleteListener { task ->
-                val location = task.result
-                if (task.isSuccessful && location != null) {
-                    Log.d(TAG, "Stage 1 success: getCurrentLocation()")
-                    onSuccess(location)
-                    onComplete()
-                } else {
-                    Log.w(TAG, "Stage 1 null — trying lastLocation")
-                    tryLastLocation(context, fusedClient, onSuccess, onFailure, onComplete)
+            fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
+                .addOnCompleteListener { task ->
+                    if (done) return@addOnCompleteListener
+                    val loc = task.result
+                    if (task.isSuccessful && loc != null) {
+                        Log.d(TAG, "Stage 1 success")
+                        finish(true, loc)
+                    } else {
+                        Log.w(TAG, "Stage 1 null — trying lastLocation")
+                        // Stage 2
+                        fusedClient.lastLocation.addOnCompleteListener { t2 ->
+                            if (done) return@addOnCompleteListener
+                            val loc2 = t2.result
+                            if (t2.isSuccessful && loc2 != null) {
+                                Log.d(TAG, "Stage 2 success (age ${System.currentTimeMillis() - loc2.time}ms)")
+                                finish(true, loc2)
+                            } else {
+                                Log.w(TAG, "Stage 2 null — requesting fresh update")
+                                // Stage 3
+                                val timeLeft = deadline - System.currentTimeMillis()
+                                if (timeLeft <= 0) {
+                                    finish(false, msg = "Location timed out before stage 3 could start.")
+                                    return@addOnCompleteListener
+                                }
+                                val request = LocationRequest.Builder(
+                                    Priority.PRIORITY_HIGH_ACCURACY, 1000L
+                                )
+                                    .setMaxUpdates(1)
+                                    .setWaitForAccurateLocation(false)
+                                    .setMaxUpdateDelayMillis(timeLeft)
+                                    .build()
+
+                                val callback = object : LocationCallback() {
+                                    override fun onLocationResult(result: LocationResult) {
+                                        fusedClient.removeLocationUpdates(this)
+                                        val loc3 = result.lastLocation
+                                        if (loc3 != null) {
+                                            Log.d(TAG, "Stage 3 success")
+                                            finish(true, loc3)
+                                        } else {
+                                            finish(false, msg = "Could not obtain a location fix.")
+                                        }
+                                    }
+
+                                    override fun onLocationAvailability(avail: LocationAvailability) {
+                                        if (!avail.isLocationAvailable) {
+                                            fusedClient.removeLocationUpdates(this)
+                                            finish(false, msg = "Location services are disabled on this device.")
+                                        }
+                                    }
+                                }
+                                fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
+                            }
+                        }
+                    }
                 }
-            }
         } catch (e: SecurityException) {
             Log.e(TAG, "Missing location permission", e)
-            onFailure("Location permission not granted.")
-            onComplete()
+            finish(false, msg = "Location permission not granted.")
         }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun tryLastLocation(
-        context: Context,
-        fusedClient: FusedLocationProviderClient,
-        onSuccess: (Location) -> Unit,
-        onFailure: (String) -> Unit,
-        onComplete: () -> Unit
-    ) {
-        fusedClient.lastLocation.addOnCompleteListener { task ->
-            val location = task.result
-            if (task.isSuccessful && location != null) {
-                Log.d(TAG, "Stage 2 success: lastLocation (age ${System.currentTimeMillis() - location.time}ms)")
-                onSuccess(location)
-                onComplete()
-            } else {
-                Log.w(TAG, "Stage 2 null — requesting fresh update")
-                requestFreshUpdate(context, fusedClient, onSuccess, onFailure, onComplete)
-            }
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun requestFreshUpdate(
-        context: Context,
-        fusedClient: FusedLocationProviderClient,
-        onSuccess: (Location) -> Unit,
-        onFailure: (String) -> Unit,
-        onComplete: () -> Unit
-    ) {
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
-            .setMaxUpdates(1)
-            .setWaitForAccurateLocation(false)
-            .setMaxUpdateDelayMillis(LOCATION_TIMEOUT_MS)
-            .build()
-
-        val handler = Handler(Looper.getMainLooper())
-        var finished = false
-
-        val callback = object : LocationCallback() {
-            override fun onLocationResult(result: LocationResult) {
-                if (finished) return
-                finished = true
-                handler.removeCallbacksAndMessages(null)
-                fusedClient.removeLocationUpdates(this)
-                val loc = result.lastLocation
-                if (loc != null) {
-                    Log.d(TAG, "Stage 3 success: requestLocationUpdates()")
-                    onSuccess(loc)
-                } else {
-                    onFailure("Could not obtain a location fix.")
-                }
-                onComplete()
-            }
-
-            override fun onLocationAvailability(availability: LocationAvailability) {
-                if (!availability.isLocationAvailable && !finished) {
-                    finished = true
-                    handler.removeCallbacksAndMessages(null)
-                    fusedClient.removeLocationUpdates(this)
-                    Log.e(TAG, "Location services unavailable")
-                    onFailure("Location services are turned off on this device.")
-                    onComplete()
-                }
-            }
-        }
-
-        fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
-
-        // Hard timeout — give up after 15 seconds
-        handler.postDelayed({
-            if (!finished) {
-                finished = true
-                fusedClient.removeLocationUpdates(callback)
-                Log.e(TAG, "Stage 3 timed out after ${LOCATION_TIMEOUT_MS}ms")
-                onFailure("Location timed out. Is GPS enabled?")
-                onComplete()
-            }
-        }, LOCATION_TIMEOUT_MS)
     }
 
     // -------------------------------------------------------------------------
@@ -1098,6 +1081,158 @@ object LocationHelper {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send notification reply", e)
         }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/LocationReplyService.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.os.IBinder
+import android.util.Log
+
+/**
+ * Foreground service that fetches the device's location and sends a reply.
+ *
+ * Why a Service instead of goAsync():
+ *   BroadcastReceiver.goAsync() only buys 10 seconds before Android kills the
+ *   process. GPS acquisition from a cold start can take 20-30 seconds in poor
+ *   conditions. A foreground service has no such time limit and survives as long
+ *   as needed (up to our own 30-second timeout), then stops itself.
+ *
+ * Started by SmsReceiver and NotificationListener. Stops itself once a reply
+ * is sent or the timeout is reached.
+ */
+class LocationReplyService : Service() {
+
+    companion object {
+        private const val TAG = "QuicLoc.ReplyService"
+        private const val CHANNEL_ID = "quicloc_reply"
+        private const val NOTIF_ID = 1001
+
+        const val EXTRA_SENDER = "sender"
+        const val EXTRA_SOURCE = "source"         // "SMS", "WhatsApp", etc.
+        const val EXTRA_REPLY_MODE = "reply_mode" // "sms" or "notification"
+
+        // Parcelable-friendly: pass notification action fields separately
+        // (Notification.Action isn't easily parcelable across process boundaries)
+        // For notification replies we pass the action via a static holder instead.
+        var pendingNotificationAction: Notification.Action? = null
+
+        fun startForSms(context: Context, sender: String) {
+            val intent = Intent(context, LocationReplyService::class.java).apply {
+                putExtra(EXTRA_SENDER, sender)
+                putExtra(EXTRA_SOURCE, "SMS")
+                putExtra(EXTRA_REPLY_MODE, "sms")
+            }
+            context.startForegroundService(intent)
+        }
+
+        fun startForNotification(
+            context: Context,
+            sender: String,
+            source: String,
+            action: Notification.Action
+        ) {
+            pendingNotificationAction = action
+            val intent = Intent(context, LocationReplyService::class.java).apply {
+                putExtra(EXTRA_SENDER, sender)
+                putExtra(EXTRA_SOURCE, source)
+                putExtra(EXTRA_REPLY_MODE, "notification")
+            }
+            context.startForegroundService(intent)
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+        startForeground(NOTIF_ID, buildNotification("Fetching location…"))
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent == null) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        val sender = intent.getStringExtra(EXTRA_SENDER) ?: run { stopSelf(); return START_NOT_STICKY }
+        val source = intent.getStringExtra(EXTRA_SOURCE) ?: "Unknown"
+        val replyMode = intent.getStringExtra(EXTRA_REPLY_MODE) ?: "sms"
+
+        Log.d(TAG, "Starting location fetch for $sender via $source (mode=$replyMode)")
+
+        when (replyMode) {
+            "sms" -> {
+                LocationHelper.getCurrentLocationAndReply(
+                    context = this,
+                    phoneNumber = sender,
+                    onResult = { succeeded ->
+                        RequestHistoryManager(this).record(sender, source, succeeded)
+                        stopSelf()
+                    }
+                )
+            }
+            "notification" -> {
+                val action = pendingNotificationAction
+                if (action == null) {
+                    Log.e(TAG, "No pending notification action found")
+                    RequestHistoryManager(this).record(sender, source, false)
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                pendingNotificationAction = null
+                LocationHelper.getCurrentLocationAndReplyViaNotification(
+                    context = this,
+                    replyAction = action,
+                    notificationKey = "",
+                    onResult = { succeeded ->
+                        RequestHistoryManager(this).record(sender, source, succeeded)
+                        stopSelf()
+                    }
+                )
+            }
+            else -> stopSelf()
+        }
+
+        return START_NOT_STICKY
+    }
+
+    // -------------------------------------------------------------------------
+    // Foreground notification (required to keep the service alive)
+    // -------------------------------------------------------------------------
+
+    private fun buildNotification(text: String): Notification {
+        return Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("QuicLoc")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setOngoing(true)
+            .build()
+    }
+
+    private fun createNotificationChannel() {
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "QuicLoc Location Reply",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Shown briefly while QuicLoc is fetching your location to reply to a request."
+            setShowBadge(false)
+        }
+        getSystemService(NotificationManager::class.java)
+            .createNotificationChannel(channel)
     }
 }
 
@@ -1535,22 +1670,22 @@ class NotificationListener : NotificationListenerService() {
 
         // Packages we care about — covers the major messaging apps.
         // Empty set = listen to all apps (broader but noisier).
-        private val MESSAGING_PACKAGES = setOf(
-            "com.whatsapp",
-            "com.whatsapp.w4b",               // WhatsApp Business
-            "org.telegram.messenger",
-            "org.thoughtcrime.securesms",      // Signal
-            "com.google.android.apps.messaging", // Google Messages
-            "com.samsung.android.messaging",
-            "com.facebook.orca",               // Messenger
-            "com.facebook.mlite",
-            "com.viber.voip",
-            "com.skype.raider",
-            "com.discord",
-            "io.github.nickcox.slank",         // Slack
-            "com.Slack",
-            "com.microsoft.teams",
-            "com.snapchat.android",
+        private val MESSAGING_PACKAGES = mapOf(
+            "com.whatsapp"                        to "WhatsApp",
+            "com.whatsapp.w4b"                    to "WhatsApp Business",
+            "org.telegram.messenger"              to "Telegram",
+            "org.thoughtcrime.securesms"          to "Signal",
+            "com.google.android.apps.messaging"   to "Google Messages",
+            "com.samsung.android.messaging"       to "Samsung Messages",
+            "com.facebook.orca"                   to "Messenger",
+            "com.facebook.mlite"                  to "Messenger Lite",
+            "com.viber.voip"                      to "Viber",
+            "com.skype.raider"                    to "Skype",
+            "com.discord"                         to "Discord",
+            "io.github.nickcox.slank"             to "Slack",
+            "com.Slack"                           to "Slack",
+            "com.microsoft.teams"                 to "Teams",
+            "com.snapchat.android"                to "Snapchat",
         )
     }
 
@@ -1559,6 +1694,7 @@ class NotificationListener : NotificationListenerService() {
 
         // Filter to known messaging apps (remove this check to catch everything)
         if (packageName !in MESSAGING_PACKAGES) return
+        val appName = MESSAGING_PACKAGES[packageName] ?: packageName
 
         val notification = sbn.notification ?: return
         val extras: Bundle = notification.extras ?: return
@@ -1587,14 +1723,20 @@ class NotificationListener : NotificationListenerService() {
         val replyAction = findReplyAction(notification)
 
         if (replyAction != null) {
-            // Reply via the notification's own reply action (works for WhatsApp, Signal, etc.)
-            LocationHelper.getCurrentLocationAndReplyViaNotification(
+            Log.d(TAG, "Starting LocationReplyService for '$title' via $appName")
+            LocationReplyService.startForNotification(
                 applicationContext,
-                replyAction,
-                sbn.key
+                sender = title,
+                source = appName,
+                action = replyAction
             )
         } else {
             Log.w(TAG, "No reply action found for notification from $packageName")
+            RequestHistoryManager(applicationContext).record(
+                sender = title,
+                source = appName,
+                succeeded = false
+            )
         }
     }
 
@@ -1611,6 +1753,123 @@ class NotificationListener : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         // Not needed, but required to override
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/RequestHistoryManager.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import org.json.JSONArray
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+data class RequestEvent(
+    val timestamp: Long,
+    val sender: String,
+    val source: String,       // "SMS", "WhatsApp", "Telegram", etc.
+    val succeeded: Boolean,   // false if location fetch failed
+) {
+    val formattedTime: String
+        get() = SimpleDateFormat("MMM d, yyyy  h:mm a", Locale.getDefault())
+            .format(Date(timestamp))
+}
+
+class RequestHistoryManager(context: Context) {
+
+    companion object {
+        private const val TAG = "QuicLoc.History"
+        private const val PREFS_FILE = "quicloc_history"
+        private const val KEY_HISTORY = "history"
+        private const val MAX_ENTRIES = 100
+    }
+
+    private val prefs: SharedPreferences = createEncryptedPrefs(context)
+
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
+    fun record(sender: String, source: String, succeeded: Boolean) {
+        val events = getHistory().toMutableList()
+        events.add(0, RequestEvent(
+            timestamp = System.currentTimeMillis(),
+            sender = sender,
+            source = source,
+            succeeded = succeeded
+        ))
+        // Cap at MAX_ENTRIES to avoid unbounded growth
+        val trimmed = if (events.size > MAX_ENTRIES) events.take(MAX_ENTRIES) else events
+        saveHistory(trimmed)
+        Log.d(TAG, "Recorded request from $sender via $source (success=$succeeded)")
+    }
+
+    fun getHistory(): List<RequestEvent> {
+        val json = prefs.getString(KEY_HISTORY, null) ?: return emptyList()
+        return try {
+            val array = JSONArray(json)
+            (0 until array.length()).map { i ->
+                val obj = array.getJSONObject(i)
+                RequestEvent(
+                    timestamp = obj.getLong("timestamp"),
+                    sender = obj.getString("sender"),
+                    source = obj.getString("source"),
+                    succeeded = obj.getBoolean("succeeded")
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse history", e)
+            emptyList()
+        }
+    }
+
+    fun clearHistory() {
+        prefs.edit().remove(KEY_HISTORY).apply()
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal
+    // -------------------------------------------------------------------------
+
+    private fun saveHistory(events: List<RequestEvent>) {
+        val array = JSONArray()
+        for (event in events) {
+            val obj = JSONObject()
+            obj.put("timestamp", event.timestamp)
+            obj.put("sender", event.sender)
+            obj.put("source", event.source)
+            obj.put("succeeded", event.succeeded)
+            array.put(obj)
+        }
+        prefs.edit().putString(KEY_HISTORY, array.toString()).apply()
+    }
+
+    private fun createEncryptedPrefs(context: Context): SharedPreferences {
+        return try {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            EncryptedSharedPreferences.create(
+                context,
+                PREFS_FILE,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Falling back to plaintext prefs for history", e)
+            context.getSharedPreferences("${PREFS_FILE}_fallback", Context.MODE_PRIVATE)
+        }
     }
 }
 
@@ -1659,9 +1918,11 @@ class SmsReceiver : BroadcastReceiver() {
             }
 
             if (body == "loc" || body == "quicloc") {
-                Log.d(TAG, "Trigger word received from $sender via SMS")
-                val pendingResult = goAsync()
-                LocationHelper.getCurrentLocationAndReply(context, sender, pendingResult)
+                Log.d(TAG, "Trigger from $sender — starting LocationReplyService")
+                // Hand off to the foreground service immediately.
+                // The receiver returns in milliseconds; the service does the
+                // actual GPS wait and reply with no time limit.
+                LocationReplyService.startForSms(context, sender)
             }
         }
     }
