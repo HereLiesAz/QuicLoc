@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">QuicLoc</string>
+    <string name="remove_whitelist_entry">Remove</string>
 </resources>
