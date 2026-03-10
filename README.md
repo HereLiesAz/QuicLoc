@@ -1,6 +1,6 @@
 # QuicLoc
 
-**QuicLoc** (`com.hereliesaz.quicloc`) is an Android utility that lets trusted contacts request your real-time GPS location by sending a single keyword — via SMS or any messaging app. It responds automatically, even when your screen is off.
+**QuicLoc** is an Android utility that lets trusted contacts request your real-time GPS location by sending a single keyword — via SMS or any messaging app. It responds automatically, even when your screen is off.
 
 ---
 
