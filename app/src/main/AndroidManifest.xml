@@ -5,12 +5,14 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
         android:allowBackup="true"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.QuicLoc">
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -20,12 +22,34 @@
             </intent-filter>
         </activity>
 
-        <receiver android:name=".SmsReceiver"
-            android:exported="true"
-            android:permission="android.permission.BROADCAST_SMS">
-            <intent-filter>
+        <!--
+            FIX #1: Removed android:permission="android.permission.BROADCAST_SMS"
+            That attribute was BLOCKING the receiver — it told Android to only allow
+            callers who hold BROADCAST_SMS to trigger it, but the system SMS framework
+            doesn't hold that permission when firing SMS_RECEIVED. Result: silent failure.
+        -->
+        <receiver
+            android:name=".SmsReceiver"
+            android:exported="true">
+            <intent-filter android:priority="999">
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
         </receiver>
+
+        <!--
+            FIX #2: NotificationListenerService to intercept messages from ANY app
+            (WhatsApp, Telegram, Signal, Messages, etc.)
+            User must grant "Notification Access" in system settings (app will prompt them).
+        -->
+        <service
+            android:name=".NotificationListener"
+            android:label="QuicLoc Notification Listener"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
     </application>
 </manifest>
