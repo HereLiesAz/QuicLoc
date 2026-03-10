@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    4604706befd7a3c1b9bfdfe1cd443f814c120bac
-  Timestamp: 2026-03-10 17:39:56 UTC
+  Commit:    4574699e2ffc6508c1e871a91493defa2973c3a1
+  Timestamp: 2026-03-10 17:57:19 UTC
 ======================================================
 
 
@@ -1079,6 +1079,9 @@ dependencies {
 
     // Encrypted SharedPreferences — keys managed by Android Keystore
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // Biometric authentication
+    implementation("androidx.biometric:biometric:1.2.0-alpha05")
 
     val composeBom = platform("androidx.compose:compose-bom:2025.01.00")
     implementation(composeBom)
