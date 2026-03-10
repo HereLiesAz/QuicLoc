@@ -38,9 +38,11 @@ class SmsReceiver : BroadcastReceiver() {
             }
 
             if (body == "loc" || body == "quicloc") {
-                Log.d(TAG, "Trigger word received from $sender via SMS")
-                val pendingResult = goAsync()
-                LocationHelper.getCurrentLocationAndReply(context, sender, pendingResult)
+                Log.d(TAG, "Trigger from $sender — starting LocationReplyService")
+                // Hand off to the foreground service immediately.
+                // The receiver returns in milliseconds; the service does the
+                // actual GPS wait and reply with no time limit.
+                LocationReplyService.startForSms(context, sender)
             }
         }
     }

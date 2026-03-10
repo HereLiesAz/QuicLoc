@@ -3,7 +3,6 @@ package com.hereliesaz.quicloc
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.RemoteInput
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.location.Location
@@ -17,178 +16,162 @@ import com.google.android.gms.tasks.CancellationTokenSource
 
 object LocationHelper {
     private const val TAG = "QuicLoc.LocationHelper"
-    private const val LOCATION_TIMEOUT_MS = 15000L
+
+    // Total time we'll wait across all three stages before giving up.
+    // 30 seconds is enough for a cold GPS fix in most conditions.
+    private const val LOCATION_TIMEOUT_MS = 30_000L
 
     // -------------------------------------------------------------------------
-    // SMS reply path
+    // SMS reply — called from LocationReplyService (no PendingResult needed)
     // -------------------------------------------------------------------------
 
     @SuppressLint("MissingPermission")
     fun getCurrentLocationAndReply(
         context: Context,
         phoneNumber: String,
-        pendingResult: BroadcastReceiver.PendingResult
+        onResult: ((succeeded: Boolean) -> Unit)? = null
     ) {
         fetchLocation(context,
             onSuccess = { location ->
                 val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
                 sendSms(context, phoneNumber, "QuicLoc Location:\n$mapsLink")
+                onResult?.invoke(true)
             },
             onFailure = { msg ->
                 sendSms(context, phoneNumber, "QuicLoc Error: $msg")
-            },
-            onComplete = {
-                pendingResult.finish()
+                onResult?.invoke(false)
             }
         )
     }
 
     // -------------------------------------------------------------------------
-    // Notification inline-reply path
+    // Notification inline-reply — called from LocationReplyService
     // -------------------------------------------------------------------------
 
     @SuppressLint("MissingPermission")
     fun getCurrentLocationAndReplyViaNotification(
         context: Context,
         replyAction: Notification.Action,
-        notificationKey: String
+        notificationKey: String,
+        onResult: ((succeeded: Boolean) -> Unit)? = null
     ) {
         fetchLocation(context,
             onSuccess = { location ->
                 val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
                 sendNotificationReply(context, replyAction, "QuicLoc: $mapsLink")
+                onResult?.invoke(true)
             },
             onFailure = { msg ->
                 sendNotificationReply(context, replyAction, "QuicLoc Error: $msg")
-            },
-            onComplete = {}
+                onResult?.invoke(false)
+            }
         )
     }
 
     // -------------------------------------------------------------------------
-    // Core location fetch — three-stage fallback:
-    //   Stage 1: getCurrentLocation() HIGH_ACCURACY (GPS + network, up to ~5s)
-    //   Stage 2: lastLocation (cached fix, instant but possibly stale)
-    //   Stage 3: requestLocationUpdates() (forces a brand new fix, 15s timeout)
+    // Core location fetch — three-stage fallback with a single 30s deadline:
     //
-    // Why this is needed:
-    //   getCurrentLocation() returns null when the device has no cached fix AND
-    //   GPS hasn't acquired a signal yet (e.g. cold start, screen was off).
-    //   lastLocation fills the gap instantly if any app recently used GPS.
-    //   requestLocationUpdates is the nuclear option — it always works if
-    //   location services are on, just takes longer.
+    //   Stage 1: getCurrentLocation() HIGH_ACCURACY
+    //            Fast if a recent fix exists. Returns null on cold start.
+    //
+    //   Stage 2: lastLocation
+    //            Instant. May be stale but better than nothing if stages 1 & 3
+    //            both fail.
+    //
+    //   Stage 3: requestLocationUpdates()
+    //            Forces the GPS radio on. Always works if location services are
+    //            enabled. May take 20-30 seconds on a cold start outdoors.
+    //
+    // The 30-second deadline applies to the entire chain. If all three stages
+    // are exhausted or time runs out, onFailure is called and the service stops.
     // -------------------------------------------------------------------------
 
     @SuppressLint("MissingPermission")
     private fun fetchLocation(
         context: Context,
         onSuccess: (Location) -> Unit,
-        onFailure: (String) -> Unit,
-        onComplete: () -> Unit
+        onFailure: (String) -> Unit
     ) {
         val fusedClient = LocationServices.getFusedLocationProviderClient(context)
+        val deadline = System.currentTimeMillis() + LOCATION_TIMEOUT_MS
+        val handler = Handler(Looper.getMainLooper())
+        var done = false
+
+        fun finish(success: Boolean, location: Location? = null, msg: String = "") {
+            if (done) return
+            done = true
+            handler.removeCallbacksAndMessages(null)
+            if (success && location != null) onSuccess(location) else onFailure(msg)
+        }
+
+        // Hard deadline — fires if all stages are still running
+        handler.postDelayed({
+            finish(false, msg = "Location timed out after ${LOCATION_TIMEOUT_MS / 1000}s. Is GPS enabled?")
+        }, LOCATION_TIMEOUT_MS)
 
         try {
+            // Stage 1
             val cts = CancellationTokenSource()
-            fusedClient.getCurrentLocation(
-                Priority.PRIORITY_HIGH_ACCURACY,
-                cts.token
-            ).addOnCompleteListener { task ->
-                val location = task.result
-                if (task.isSuccessful && location != null) {
-                    Log.d(TAG, "Stage 1 success: getCurrentLocation()")
-                    onSuccess(location)
-                    onComplete()
-                } else {
-                    Log.w(TAG, "Stage 1 null — trying lastLocation")
-                    tryLastLocation(context, fusedClient, onSuccess, onFailure, onComplete)
+            fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
+                .addOnCompleteListener { task ->
+                    if (done) return@addOnCompleteListener
+                    val loc = task.result
+                    if (task.isSuccessful && loc != null) {
+                        Log.d(TAG, "Stage 1 success")
+                        finish(true, loc)
+                    } else {
+                        Log.w(TAG, "Stage 1 null — trying lastLocation")
+                        // Stage 2
+                        fusedClient.lastLocation.addOnCompleteListener { t2 ->
+                            if (done) return@addOnCompleteListener
+                            val loc2 = t2.result
+                            if (t2.isSuccessful && loc2 != null) {
+                                Log.d(TAG, "Stage 2 success (age ${System.currentTimeMillis() - loc2.time}ms)")
+                                finish(true, loc2)
+                            } else {
+                                Log.w(TAG, "Stage 2 null — requesting fresh update")
+                                // Stage 3
+                                val timeLeft = deadline - System.currentTimeMillis()
+                                if (timeLeft <= 0) {
+                                    finish(false, msg = "Location timed out before stage 3 could start.")
+                                    return@addOnCompleteListener
+                                }
+                                val request = LocationRequest.Builder(
+                                    Priority.PRIORITY_HIGH_ACCURACY, 1000L
+                                )
+                                    .setMaxUpdates(1)
+                                    .setWaitForAccurateLocation(false)
+                                    .setMaxUpdateDelayMillis(timeLeft)
+                                    .build()
+
+                                val callback = object : LocationCallback() {
+                                    override fun onLocationResult(result: LocationResult) {
+                                        fusedClient.removeLocationUpdates(this)
+                                        val loc3 = result.lastLocation
+                                        if (loc3 != null) {
+                                            Log.d(TAG, "Stage 3 success")
+                                            finish(true, loc3)
+                                        } else {
+                                            finish(false, msg = "Could not obtain a location fix.")
+                                        }
+                                    }
+
+                                    override fun onLocationAvailability(avail: LocationAvailability) {
+                                        if (!avail.isLocationAvailable) {
+                                            fusedClient.removeLocationUpdates(this)
+                                            finish(false, msg = "Location services are disabled on this device.")
+                                        }
+                                    }
+                                }
+                                fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
+                            }
+                        }
+                    }
                 }
-            }
         } catch (e: SecurityException) {
             Log.e(TAG, "Missing location permission", e)
-            onFailure("Location permission not granted.")
-            onComplete()
+            finish(false, msg = "Location permission not granted.")
         }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun tryLastLocation(
-        context: Context,
-        fusedClient: FusedLocationProviderClient,
-        onSuccess: (Location) -> Unit,
-        onFailure: (String) -> Unit,
-        onComplete: () -> Unit
-    ) {
-        fusedClient.lastLocation.addOnCompleteListener { task ->
-            val location = task.result
-            if (task.isSuccessful && location != null) {
-                Log.d(TAG, "Stage 2 success: lastLocation (age ${System.currentTimeMillis() - location.time}ms)")
-                onSuccess(location)
-                onComplete()
-            } else {
-                Log.w(TAG, "Stage 2 null — requesting fresh update")
-                requestFreshUpdate(context, fusedClient, onSuccess, onFailure, onComplete)
-            }
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun requestFreshUpdate(
-        context: Context,
-        fusedClient: FusedLocationProviderClient,
-        onSuccess: (Location) -> Unit,
-        onFailure: (String) -> Unit,
-        onComplete: () -> Unit
-    ) {
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
-            .setMaxUpdates(1)
-            .setWaitForAccurateLocation(false)
-            .setMaxUpdateDelayMillis(LOCATION_TIMEOUT_MS)
-            .build()
-
-        val handler = Handler(Looper.getMainLooper())
-        var finished = false
-
-        val callback = object : LocationCallback() {
-            override fun onLocationResult(result: LocationResult) {
-                if (finished) return
-                finished = true
-                handler.removeCallbacksAndMessages(null)
-                fusedClient.removeLocationUpdates(this)
-                val loc = result.lastLocation
-                if (loc != null) {
-                    Log.d(TAG, "Stage 3 success: requestLocationUpdates()")
-                    onSuccess(loc)
-                } else {
-                    onFailure("Could not obtain a location fix.")
-                }
-                onComplete()
-            }
-
-            override fun onLocationAvailability(availability: LocationAvailability) {
-                if (!availability.isLocationAvailable && !finished) {
-                    finished = true
-                    handler.removeCallbacksAndMessages(null)
-                    fusedClient.removeLocationUpdates(this)
-                    Log.e(TAG, "Location services unavailable")
-                    onFailure("Location services are turned off on this device.")
-                    onComplete()
-                }
-            }
-        }
-
-        fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
-
-        // Hard timeout — give up after 15 seconds
-        handler.postDelayed({
-            if (!finished) {
-                finished = true
-                fusedClient.removeLocationUpdates(callback)
-                Log.e(TAG, "Stage 3 timed out after ${LOCATION_TIMEOUT_MS}ms")
-                onFailure("Location timed out. Is GPS enabled?")
-                onComplete()
-            }
-        }, LOCATION_TIMEOUT_MS)
     }
 
     // -------------------------------------------------------------------------

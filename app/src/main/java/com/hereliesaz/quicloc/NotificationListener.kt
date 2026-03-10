@@ -24,22 +24,22 @@ class NotificationListener : NotificationListenerService() {
 
         // Packages we care about — covers the major messaging apps.
         // Empty set = listen to all apps (broader but noisier).
-        private val MESSAGING_PACKAGES = setOf(
-            "com.whatsapp",
-            "com.whatsapp.w4b",               // WhatsApp Business
-            "org.telegram.messenger",
-            "org.thoughtcrime.securesms",      // Signal
-            "com.google.android.apps.messaging", // Google Messages
-            "com.samsung.android.messaging",
-            "com.facebook.orca",               // Messenger
-            "com.facebook.mlite",
-            "com.viber.voip",
-            "com.skype.raider",
-            "com.discord",
-            "io.github.nickcox.slank",         // Slack
-            "com.Slack",
-            "com.microsoft.teams",
-            "com.snapchat.android",
+        private val MESSAGING_PACKAGES = mapOf(
+            "com.whatsapp"                        to "WhatsApp",
+            "com.whatsapp.w4b"                    to "WhatsApp Business",
+            "org.telegram.messenger"              to "Telegram",
+            "org.thoughtcrime.securesms"          to "Signal",
+            "com.google.android.apps.messaging"   to "Google Messages",
+            "com.samsung.android.messaging"       to "Samsung Messages",
+            "com.facebook.orca"                   to "Messenger",
+            "com.facebook.mlite"                  to "Messenger Lite",
+            "com.viber.voip"                      to "Viber",
+            "com.skype.raider"                    to "Skype",
+            "com.discord"                         to "Discord",
+            "io.github.nickcox.slank"             to "Slack",
+            "com.Slack"                           to "Slack",
+            "com.microsoft.teams"                 to "Teams",
+            "com.snapchat.android"                to "Snapchat",
         )
     }
 
@@ -48,6 +48,7 @@ class NotificationListener : NotificationListenerService() {
 
         // Filter to known messaging apps (remove this check to catch everything)
         if (packageName !in MESSAGING_PACKAGES) return
+        val appName = MESSAGING_PACKAGES[packageName] ?: packageName
 
         val notification = sbn.notification ?: return
         val extras: Bundle = notification.extras ?: return
@@ -76,14 +77,20 @@ class NotificationListener : NotificationListenerService() {
         val replyAction = findReplyAction(notification)
 
         if (replyAction != null) {
-            // Reply via the notification's own reply action (works for WhatsApp, Signal, etc.)
-            LocationHelper.getCurrentLocationAndReplyViaNotification(
+            Log.d(TAG, "Starting LocationReplyService for '$title' via $appName")
+            LocationReplyService.startForNotification(
                 applicationContext,
-                replyAction,
-                sbn.key
+                sender = title,
+                source = appName,
+                action = replyAction
             )
         } else {
             Log.w(TAG, "No reply action found for notification from $packageName")
+            RequestHistoryManager(applicationContext).record(
+                sender = title,
+                source = appName,
+                succeeded = false
+            )
         }
     }
 
