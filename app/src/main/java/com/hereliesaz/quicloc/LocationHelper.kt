@@ -24,45 +24,54 @@ object LocationHelper {
                 cancellationTokenSource.token
             ).addOnSuccessListener { location: Location? ->
                 if (location != null) {
-                    sendLocationSms(phoneNumber, location)
+                    sendLocationSms(context, phoneNumber, location)
                 } else {
-                    sendErrorSms(phoneNumber, "Unable to determine current location.")
+                    sendErrorSms(context, phoneNumber, "Unable to determine current location.")
                 }
             }.addOnFailureListener { exception ->
                 Log.e(TAG, "Failed to get location", exception)
-                sendErrorSms(phoneNumber, "Error retrieving location.")
+                sendErrorSms(context, phoneNumber, "Error retrieving location.")
             }.addOnCompleteListener {
                 pendingResult.finish()
             }
         } catch (e: SecurityException) {
             Log.e(TAG, "Missing location permissions", e)
-            sendErrorSms(phoneNumber, "Missing location permissions.")
+            sendErrorSms(context, phoneNumber, "Missing location permissions.")
             pendingResult.finish()
         }
     }
 
-    private fun sendLocationSms(phoneNumber: String, location: Location) {
+    private fun sendLocationSms(context: Context, phoneNumber: String, location: Location) {
         val lat = location.latitude
         val lng = location.longitude
         val mapsLink = "https://maps.google.com/?q=$lat,$lng"
         val message = "QuicLoc Location:\n$mapsLink"
 
-        sendSms(phoneNumber, message)
+        sendSms(context, phoneNumber, message)
     }
 
-    private fun sendErrorSms(phoneNumber: String, errorMessage: String) {
+    private fun sendErrorSms(context: Context, phoneNumber: String, errorMessage: String) {
         val message = "QuicLoc Error: $errorMessage"
-        sendSms(phoneNumber, message)
+        sendSms(context, phoneNumber, message)
     }
 
-    private fun sendSms(phoneNumber: String, message: String) {
+    private fun sendSms(context: Context, phoneNumber: String, message: String) {
         try {
-            val smsManager = SmsManager.getDefault()
-            val parts = smsManager.divideMessage(message)
-            if (parts.size > 1) {
-                smsManager.sendMultipartTextMessage(phoneNumber, null, parts, null, null)
+            val smsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                context.getSystemService(SmsManager::class.java)
             } else {
-                smsManager.sendTextMessage(phoneNumber, null, message, null, null)
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
+            }
+            if (smsManager != null) {
+                val parts = smsManager.divideMessage(message)
+                if (parts.size > 1) {
+                    smsManager.sendMultipartTextMessage(phoneNumber, null, parts, null, null)
+                } else {
+                    smsManager.sendTextMessage(phoneNumber, null, message, null, null)
+                }
+            } else {
+                Log.e(TAG, "Failed to get SmsManager")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send SMS", e)

@@ -44,11 +44,13 @@ class MainActivity : ComponentActivity() {
     private val multiplePermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val allGranted = REQUIRED_PERMISSIONS.all { permissions[it] == true }
-        if (allGranted) {
+        val hasSms = permissions[Manifest.permission.RECEIVE_SMS] == true && permissions[Manifest.permission.SEND_SMS] == true
+        val hasLocation = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true || permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+
+        if (hasSms && hasLocation) {
             checkBackgroundLocationPermission()
         } else {
-            Toast.makeText(this, "All permissions are required for QuicLoc to function.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "SMS and at least Approximate Location permissions are required for QuicLoc to function.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -95,12 +97,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun checkPermissions() {
-        val missingPermissions = REQUIRED_PERMISSIONS.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
+        val hasSms = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
+                     ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
+        val hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                          ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
-        if (missingPermissions.isNotEmpty()) {
-            multiplePermissionsLauncher.launch(missingPermissions.toTypedArray())
+        if (!hasSms || !hasLocation) {
+            multiplePermissionsLauncher.launch(REQUIRED_PERMISSIONS)
         } else {
             checkBackgroundLocationPermission()
         }
