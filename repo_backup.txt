@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    ee3cd14d531dbf235f3572935e232f5ddb5184be
-  Timestamp: 2026-03-10 18:03:26 UTC
+  Commit:    7ca05ed6a484ae237abf9af13f684410e8d547a8
+  Timestamp: 2026-03-10 18:04:50 UTC
 ======================================================
 
 
@@ -695,59 +695,6 @@ QuicLoc is a standard Gradle-based Android project with an automated versioning 
 Version variables are stored and tracked in `app/version.properties`. To build:
 1. Ensure you have the Android SDK (API 36) installed.
 2. Run `./gradlew assembleDebug` to build the debug APK. The version `C` and `D` parameters will automatically increment and be compiled into the final output.
-
-
-######################################################
-# FILE: SmsReceiver.kt.txt
-######################################################
-
-package com.hereliesaz.quicloc
-
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.provider.Telephony
-import android.util.Log
-
-class SmsReceiver : BroadcastReceiver() {
-
-    companion object {
-        private const val TAG = "QuicLoc.SmsReceiver"
-    }
-
-    override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
-
-        val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
-        if (messages.isNullOrEmpty()) return
-
-        // Reassemble multi-part SMS by sender
-        val messagesBySender = mutableMapOf<String, StringBuilder>()
-        for (smsMessage in messages) {
-            val sender = smsMessage.displayOriginatingAddress ?: continue
-            messagesBySender.getOrPut(sender) { StringBuilder() }
-                .append(smsMessage.messageBody)
-        }
-
-        val whitelistManager = WhitelistManager(context)
-
-        for ((sender, bodyBuilder) in messagesBySender) {
-            val body = bodyBuilder.toString().trim().lowercase()
-            Log.d(TAG, "SMS from $sender: '$body'")
-
-            if (!whitelistManager.isWhitelisted(sender)) {
-                Log.d(TAG, "Sender $sender not whitelisted, ignoring.")
-                continue
-            }
-
-            if (body == "loc" || body == "quicloc") {
-                Log.d(TAG, "Trigger word received from $sender via SMS")
-                val pendingResult = goAsync()
-                LocationHelper.getCurrentLocationAndReply(context, sender, pendingResult)
-            }
-        }
-    }
-}
 
 
 ######################################################
