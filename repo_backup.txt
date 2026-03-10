@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    3f7f13054bf49f8570522adac0e39829de7f09d3
-  Timestamp: 2026-03-10 19:16:15 UTC
+  Commit:    55c21cbcb35034639b4890e262418b7f152bfca6
+  Timestamp: 2026-03-10 19:21:42 UTC
 ======================================================
 
 
@@ -707,8 +707,6 @@ dependencies {
 
     <application
         android:allowBackup="true"
-        android:icon="@drawable/icon"
-        android:roundIcon="@drawable/icon"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.QuicLoc">
@@ -729,6 +727,16 @@ dependencies {
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
         </receiver>
+
+        <!--
+            Foreground service that handles location fetch + reply.
+            Uses foregroundServiceType="location" so Android 14+ allows
+            background location access from a foreground service.
+        -->
+        <service
+            android:name=".LocationReplyService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <!--
             NotificationListenerService — triggers Google Play manual review.
