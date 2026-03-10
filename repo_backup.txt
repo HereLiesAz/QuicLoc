@@ -1,0 +1,1167 @@
+======================================================
+  REPOSITORY BACKUP
+======================================================
+  Repo:      HereLiesAz/QuicLoc
+  Branch:    main
+  Commit:    354687695542ea8d874636cdadc8361c1c204fda
+  Timestamp: 2026-03-10 09:26:07 UTC
+======================================================
+
+
+######################################################
+# FILE: .github/workflows/backup-repo.yml
+######################################################
+
+name: Backup Repository to TXT
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build backup TXT file
+        run: |
+          BACKUP_FILE="repo_backup.txt"
+          REPO_NAME="${{ github.repository }}"
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          COMMIT_SHA="${{ github.sha }}"
+          BRANCH="${{ github.ref_name }}"
+
+          echo "======================================================" > "$BACKUP_FILE"
+          echo "  REPOSITORY BACKUP" >> "$BACKUP_FILE"
+          echo "======================================================" >> "$BACKUP_FILE"
+          echo "  Repo:      $REPO_NAME" >> "$BACKUP_FILE"
+          echo "  Branch:    $BRANCH" >> "$BACKUP_FILE"
+          echo "  Commit:    $COMMIT_SHA" >> "$BACKUP_FILE"
+          echo "  Timestamp: $TIMESTAMP" >> "$BACKUP_FILE"
+          echo "======================================================" >> "$BACKUP_FILE"
+          echo "" >> "$BACKUP_FILE"
+
+          # Find all files, excluding .git and the backup file itself
+          find . \
+            -type f \
+            ! -path "./.git/*" \
+            ! -name "$BACKUP_FILE" \
+            | sort \
+            | while read -r filepath; do
+
+            # Strip leading ./
+            clean_path="${filepath#./}"
+
+            echo "" >> "$BACKUP_FILE"
+            echo "######################################################" >> "$BACKUP_FILE"
+            echo "# FILE: $clean_path" >> "$BACKUP_FILE"
+            echo "######################################################" >> "$BACKUP_FILE"
+            echo "" >> "$BACKUP_FILE"
+
+            # Check if file is binary
+            if file "$filepath" | grep -qE 'binary|executable|ELF|archive|compressed|image|audio|video'; then
+              echo "[BINARY FILE - SKIPPED]" >> "$BACKUP_FILE"
+            else
+              cat "$filepath" >> "$BACKUP_FILE" 2>/dev/null || echo "[COULD NOT READ FILE]" >> "$BACKUP_FILE"
+            fi
+
+            echo "" >> "$BACKUP_FILE"
+          done
+
+          echo "" >> "$BACKUP_FILE"
+          echo "======================================================" >> "$BACKUP_FILE"
+          echo "  END OF BACKUP" >> "$BACKUP_FILE"
+          echo "======================================================" >> "$BACKUP_FILE"
+
+          echo "Backup complete. Size: $(wc -c < "$BACKUP_FILE") bytes"
+
+      - name: Upload backup as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-backup-${{ github.ref_name }}-${{ github.sha }}
+          path: repo_backup.txt
+          retention-days: 90
+
+      - name: Commit backup to repo (optional)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Only commit if there are changes
+          if ! git diff --quiet repo_backup.txt 2>/dev/null || ! git ls-files --error-unmatch repo_backup.txt 2>/dev/null; then
+            git add repo_backup.txt
+            git commit -m "chore: update repo backup [skip ci]"
+            git push
+          else
+            echo "No changes to backup file, skipping commit."
+          fi
+
+
+######################################################
+# FILE: .github/workflows/build-apk.yml
+######################################################
+
+name: Build and Publish QuicLoc APK
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant Execute Permission to Gradle Wrapper
+        run: chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Get App Version
+        id: version
+        run: |
+          VERSION_NAME=$(./gradlew -q :app:printVersionName)
+          echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_ENV
+
+      - name: Rename APK
+        run: |
+          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuicLoc-v${{ env.VERSION_NAME }}.apk
+          path: app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+######################################################
+# FILE: .gitignore
+######################################################
+
+# Gradle files
+.gradle/
+build/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Log/OS Files
+*.log
+
+# Android Studio generated files and folders
+captures/
+.externalNativeBuild/
+.cxx/
+*.aab
+*.apk
+output-metadata.json
+
+# IntelliJ
+*.iml
+.idea/
+misc.xml
+deploymentTargetDropDown.xml
+render.experimental.xml
+
+# Keystore files
+*.jks
+*.keystore
+
+# Google Services (e.g. APIs or Firebase)
+google-services.json
+
+# Android Profiling
+*.hprof
+
+
+######################################################
+# FILE: LICENSE
+######################################################
+
+This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or
+distribute this software, either in source code form or as a compiled
+binary, for any purpose, commercial or non-commercial, and by any
+means.
+
+In jurisdictions that recognize copyright laws, the author or authors
+of this software dedicate any and all copyright interest in the
+software to the public domain. We make this dedication for the benefit
+of the public at large and to the detriment of our heirs and
+successors. We intend this dedication to be an overt act of
+relinquishment in perpetuity of all present and future rights to this
+software under copyright law.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+For more information, please refer to <https://unlicense.org>
+
+
+######################################################
+# FILE: README.md
+######################################################
+
+# QuicLoc
+
+QuicLoc (com.hereliesaz.quicloc) is an Android utility application that allows users to quickly and automatically share their fine-grained location with a pre-approved list of contacts (a whitelist).
+
+## Features
+- **Whitelist Management**: Add or remove trusted phone numbers using a simple user interface.
+- **Automated Location Sharing**: When the app receives an SMS message containing exactly the word "loc" or "quicloc" (case-insensitive) from a whitelisted number, it automatically fetches the device's current high-accuracy location and replies with a Google Maps link.
+- **Background Execution**: QuicLoc seamlessly operates in the background, ensuring location requests are fulfilled even when the app is closed.
+
+## Permissions
+QuicLoc requires the following permissions to function correctly:
+- `RECEIVE_SMS` & `SEND_SMS`: To detect incoming trigger words and send the automated response containing the Google Maps link.
+- `ACCESS_FINE_LOCATION` & `ACCESS_COARSE_LOCATION`: To accurately determine the device's current location.
+- `ACCESS_BACKGROUND_LOCATION`: To enable the app to fetch the location while running in the background. Note: On newer Android versions (Android 11+), this permission must be granted separately after allowing foreground location access. The app guides the user through this process.
+
+## Architecture
+QuicLoc is built using Kotlin and utilizes the following core components:
+- **`SmsReceiver`**: A `BroadcastReceiver` that intercepts incoming text messages and checks them against the trigger words and the user's whitelist. It utilizes `goAsync()` to safely perform asynchronous background work.
+- **`LocationHelper`**: A utility object that interacts with Google Play Services (`LocationServices.getFusedLocationProviderClient`) to retrieve the user's high-accuracy location and format the SMS reply.
+- **`WhitelistManager`**: Manages the persistence of trusted phone numbers using `SharedPreferences`.
+
+## Building the App & Versioning
+QuicLoc is a standard Gradle-based Android project with an automated versioning scheme modeled as **A.B.C.D**:
+- `A`: Major user-managed version. Should only be incremented manually by the app owner.
+- `B`: Feature increment. Incremented by the AI/developer when major features are added.
+- `C`: The number of times the app has been built within the current `B` version. Automatically increments on every build.
+- `D`: The absolute total number of times the app has been built. Automatically increments on every build and corresponds to the internal Android `versionCode`.
+
+Version variables are stored and tracked in `app/version.properties`. To build:
+1. Ensure you have the Android SDK (API 36) installed.
+2. Run `./gradlew assembleDebug` to build the debug APK. The version `C` and `D` parameters will automatically increment and be compiled into the final output.
+
+
+######################################################
+# FILE: app/build.gradle.kts
+######################################################
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+import java.util.Properties
+import java.io.FileInputStream
+import java.io.FileOutputStream
+
+android {
+    namespace = "com.hereliesaz.quicloc"
+    compileSdk = 36
+
+    val versionPropsFile = file("version.properties")
+    val versionProps = Properties()
+
+    if (versionPropsFile.canRead()) {
+        versionProps.load(FileInputStream(versionPropsFile))
+    } else {
+        versionProps["VERSION_A"] = "1"
+        versionProps["VERSION_B"] = "0"
+        versionProps["VERSION_C"] = "0"
+        versionProps["VERSION_D"] = "0"
+    }
+
+    // Only increment when assembling or bundling (not syncing/cleaning)
+    val runTasks = gradle.startParameter.taskNames
+    val isBuilding = runTasks.any { it.contains("assemble") || it.contains("bundle") }
+
+    var vA = versionProps["VERSION_A"].toString().toInt()
+    var vB = versionProps["VERSION_B"].toString().toInt()
+    var vC = versionProps["VERSION_C"].toString().toInt()
+    var vD = versionProps["VERSION_D"].toString().toInt()
+
+    if (isBuilding) {
+        vD += 1
+        vC += 1
+        versionProps["VERSION_D"] = vD.toString()
+        versionProps["VERSION_C"] = vC.toString()
+        versionProps.store(FileOutputStream(versionPropsFile), null)
+    }
+
+    val finalVersionName = "${vA}.${vB}.${vC}.${vD}"
+    val finalVersionCode = vD
+
+    defaultConfig {
+        applicationId = "com.hereliesaz.quicloc"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = finalVersionCode
+        versionName = finalVersionName
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+    buildFeatures {
+        compose = true
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.8"
+    }
+}
+
+tasks.register("printVersionName") {
+    doLast {
+        println(android.defaultConfig.versionName)
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.12.0")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+
+    val composeBom = platform("androidx.compose:compose-bom:2025.01.00")
+    implementation(composeBom)
+    androidTestImplementation(composeBom)
+
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+
+    implementation("androidx.activity:activity-compose:1.9.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.2")
+
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+}
+
+
+######################################################
+# FILE: app/src/main/AndroidManifest.xml
+######################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <application
+        android:allowBackup="true"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.QuicLoc">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <receiver android:name=".SmsReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/LocationHelper.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.location.Location
+import android.telephony.SmsManager
+import android.util.Log
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
+
+object LocationHelper {
+    private const val TAG = "QuicLoc"
+
+    @SuppressLint("MissingPermission")
+    fun getCurrentLocationAndReply(context: Context, phoneNumber: String, pendingResult: BroadcastReceiver.PendingResult) {
+        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
+
+        try {
+            val cancellationTokenSource = CancellationTokenSource()
+            fusedLocationClient.getCurrentLocation(
+                Priority.PRIORITY_HIGH_ACCURACY,
+                cancellationTokenSource.token
+            ).addOnSuccessListener { location: Location? ->
+                if (location != null) {
+                    sendLocationSms(context, phoneNumber, location)
+                } else {
+                    sendErrorSms(context, phoneNumber, "Unable to determine current location.")
+                }
+            }.addOnFailureListener { exception ->
+                Log.e(TAG, "Failed to get location", exception)
+                sendErrorSms(context, phoneNumber, "Error retrieving location.")
+            }.addOnCompleteListener {
+                pendingResult.finish()
+            }
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Missing location permissions", e)
+            sendErrorSms(context, phoneNumber, "Missing location permissions.")
+            pendingResult.finish()
+        }
+    }
+
+    private fun sendLocationSms(context: Context, phoneNumber: String, location: Location) {
+        val lat = location.latitude
+        val lng = location.longitude
+        val mapsLink = "https://maps.google.com/?q=$lat,$lng"
+        val message = "QuicLoc Location:\n$mapsLink"
+
+        sendSms(context, phoneNumber, message)
+    }
+
+    private fun sendErrorSms(context: Context, phoneNumber: String, errorMessage: String) {
+        val message = "QuicLoc Error: $errorMessage"
+        sendSms(context, phoneNumber, message)
+    }
+
+    private fun sendSms(context: Context, phoneNumber: String, message: String) {
+        try {
+            val smsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                context.getSystemService(SmsManager::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
+            }
+            if (smsManager != null) {
+                val parts = smsManager.divideMessage(message)
+                if (parts.size > 1) {
+                    smsManager.sendMultipartTextMessage(phoneNumber, null, parts, null, null)
+                } else {
+                    smsManager.sendTextMessage(phoneNumber, null, message, null, null)
+                }
+            } else {
+                Log.e(TAG, "Failed to get SmsManager")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send SMS", e)
+        }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+
+class MainActivity : ComponentActivity() {
+
+    private lateinit var whitelistManager: WhitelistManager
+
+    private val REQUIRED_PERMISSIONS = arrayOf(
+        Manifest.permission.RECEIVE_SMS,
+        Manifest.permission.SEND_SMS,
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION
+    )
+
+    private val backgroundLocationLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (!isGranted) {
+            Toast.makeText(this, "Background location permission is required for QuicLoc to function when the app is closed.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private val multiplePermissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val hasSms = permissions[Manifest.permission.RECEIVE_SMS] == true && permissions[Manifest.permission.SEND_SMS] == true
+        val hasLocation = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true || permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+
+        if (hasSms && hasLocation) {
+            checkBackgroundLocationPermission()
+        } else {
+            Toast.makeText(this, "SMS and at least Approximate Location permissions are required for QuicLoc to function.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        whitelistManager = WhitelistManager(this)
+
+        setContent {
+            MaterialTheme {
+                var numbersList by remember { mutableStateOf(whitelistManager.getNumbers().toList()) }
+
+                Scaffold(
+                    topBar = {
+                        TopAppBar(
+                            title = { Text("QuicLoc") },
+                            colors = TopAppBarDefaults.topAppBarColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        )
+                    }
+                ) { innerPadding ->
+                    QuicLocScreen(
+                        modifier = Modifier.padding(innerPadding),
+                        numbersList = numbersList,
+                        onAddNumber = { number ->
+                            if (number.isNotBlank()) {
+                                whitelistManager.addNumber(number)
+                                numbersList = whitelistManager.getNumbers().toList()
+                                Toast.makeText(this, "Number added to whitelist", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onRemoveNumber = { number ->
+                            whitelistManager.removeNumber(number)
+                            numbersList = whitelistManager.getNumbers().toList()
+                        }
+                    )
+                }
+            }
+        }
+
+        checkPermissions()
+    }
+
+    private fun checkPermissions() {
+        val hasSms = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
+                     ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
+        val hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                          ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasSms || !hasLocation) {
+            multiplePermissionsLauncher.launch(REQUIRED_PERMISSIONS)
+        } else {
+            checkBackgroundLocationPermission()
+        }
+    }
+
+    private fun checkBackgroundLocationPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            }
+        }
+    }
+}
+
+@Composable
+fun QuicLocScreen(
+    modifier: Modifier = Modifier,
+    numbersList: List<String>,
+    onAddNumber: (String) -> Unit,
+    onRemoveNumber: (String) -> Unit
+) {
+    var phoneNumberInput by remember { mutableStateOf("") }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "QuicLoc Configuration",
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.padding(bottom = 24.dp)
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = phoneNumberInput,
+                onValueChange = { phoneNumberInput = it },
+                label = { Text("Enter phone number to whitelist") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                modifier = Modifier.weight(1f),
+                singleLine = true
+            )
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Button(
+                onClick = {
+                    onAddNumber(phoneNumberInput)
+                    phoneNumberInput = ""
+                }
+            ) {
+                Text("Add")
+            }
+        }
+
+        Text(
+            text = "Whitelisted Numbers:",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 24.dp, bottom = 8.dp)
+        )
+
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            items(numbersList) { number ->
+                WhitelistItem(
+                    number = number,
+                    onDeleteClick = { onRemoveNumber(number) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun WhitelistItem(number: String, onDeleteClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = number,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f)
+        )
+        IconButton(onClick = onDeleteClick) {
+            Icon(
+                imageVector = Icons.Default.Delete,
+                contentDescription = stringResource(id = R.string.remove_whitelist_entry)
+            )
+        }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/SmsReceiver.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.provider.Telephony
+
+class SmsReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
+            val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
+            for (smsMessage in messages) {
+                val messageBody = smsMessage.messageBody
+                val senderNum = smsMessage.displayOriginatingAddress
+
+                if (senderNum != null) {
+                    val whitelistManager = WhitelistManager(context)
+
+                    if (whitelistManager.isWhitelisted(senderNum)) {
+                        val bodyLower = messageBody.trim().lowercase()
+                        if (bodyLower == "loc" || bodyLower == "quicloc") {
+                            // Valid trigger word from a whitelisted number!
+                            val pendingResult = goAsync()
+                            LocationHelper.getCurrentLocationAndReply(context, senderNum, pendingResult)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/WhitelistAdapter.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageButton
+import android.widget.TextView
+import androidx.recyclerview.widget.RecyclerView
+
+class WhitelistAdapter(
+    private var numbers: List<String>,
+    private val onDeleteClick: (String) -> Unit
+) : RecyclerView.Adapter<WhitelistAdapter.ViewHolder>() {
+
+    class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val phoneText: TextView = view.findViewById(R.id.phoneNumberText)
+        val deleteBtn: ImageButton = view.findViewById(R.id.deleteButton)
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+        val view = LayoutInflater.from(parent.context)
+            .inflate(R.layout.whitelist_item, parent, false)
+        return ViewHolder(view)
+    }
+
+    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+        val number = numbers[position]
+        holder.phoneText.text = number
+        holder.deleteBtn.setOnClickListener { onDeleteClick(number) }
+    }
+
+    override fun getItemCount() = numbers.size
+
+    fun updateNumbers(newNumbers: List<String>) {
+        numbers = newNumbers
+        notifyDataSetChanged()
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/WhitelistManager.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.telephony.PhoneNumberUtils
+
+class WhitelistManager(context: Context) {
+    private val prefs: SharedPreferences = context.getSharedPreferences("quicloc_prefs", Context.MODE_PRIVATE)
+
+    fun addNumber(number: String) {
+        val cleanNumber = cleanPhoneNumber(number)
+        if (cleanNumber.isNotEmpty()) {
+            val numbers = getNumbers().toMutableSet()
+            numbers.add(cleanNumber)
+            prefs.edit().putStringSet("whitelist", numbers).apply()
+        }
+    }
+
+    fun removeNumber(number: String) {
+        val numbers = getNumbers().toMutableSet()
+        numbers.remove(number)
+        prefs.edit().putStringSet("whitelist", numbers).apply()
+    }
+
+    fun getNumbers(): Set<String> {
+        return prefs.getStringSet("whitelist", emptySet()) ?: emptySet()
+    }
+
+    fun isWhitelisted(number: String): Boolean {
+        val cleanIncoming = cleanPhoneNumber(number)
+        return getNumbers().any { whitelisted ->
+            PhoneNumberUtils.compare(cleanIncoming, whitelisted)
+        }
+    }
+
+    private fun cleanPhoneNumber(number: String): String {
+        return number.replace(Regex("[^0-9+]"), "")
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/res/layout/activity_main.xml
+######################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp"
+    tools:context=".MainActivity">
+
+    <TextView
+        android:id="@+id/textView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="QuicLoc Configuration"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <EditText
+        android:id="@+id/phoneNumberInput"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:hint="Enter phone number to whitelist"
+        android:inputType="phone"
+        app:layout_constraintEnd_toStartOf="@+id/addButton"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/textView" />
+
+    <Button
+        android:id="@+id/addButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:text="Add"
+        app:layout_constraintBottom_toBottomOf="@+id/phoneNumberInput"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@+id/phoneNumberInput"
+        app:layout_constraintTop_toTopOf="@+id/phoneNumberInput" />
+
+    <TextView
+        android:id="@+id/whitelistTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="Whitelisted Numbers:"
+        android:textStyle="bold"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/phoneNumberInput" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/whitelistRecyclerView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginTop="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/whitelistTitle" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>
+
+
+######################################################
+# FILE: app/src/main/res/layout/whitelist_item.xml
+######################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="8dp"
+    android:gravity="center_vertical">
+
+    <TextView
+        android:id="@+id/phoneNumberText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:textSize="16sp" />
+
+    <ImageButton
+        android:id="@+id/deleteButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:src="@android:drawable/ic_menu_delete"
+        android:background="?android:attr/selectableItemBackground"
+        android:contentDescription="Remove" />
+</LinearLayout>
+
+
+######################################################
+# FILE: app/src/main/res/values/colors.xml
+######################################################
+
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>
+
+
+######################################################
+# FILE: app/src/main/res/values/strings.xml
+######################################################
+
+<resources>
+    <string name="app_name">QuicLoc</string>
+    <string name="remove_whitelist_entry">Remove</string>
+</resources>
+
+
+######################################################
+# FILE: app/src/main/res/values/themes.xml
+######################################################
+
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.QuicLoc" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
+        <item name="colorPrimary">@color/purple_500</item>
+        <item name="colorPrimaryDark">@color/purple_700</item>
+        <item name="colorAccent">@color/teal_200</item>
+    </style>
+</resources>
+
+
+######################################################
+# FILE: app/version.properties
+######################################################
+
+#Tue Mar 10 05:27:45 UTC 2026
+VERSION_A=1
+VERSION_B=0
+VERSION_C=2
+VERSION_D=2
+
+
+######################################################
+# FILE: build.gradle.kts
+######################################################
+
+plugins {
+    id("com.android.application") version "8.2.0" apply false
+    id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+}
+
+
+######################################################
+# FILE: gradle.properties
+######################################################
+
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+kotlin.code.style=official
+
+
+######################################################
+# FILE: gradle/wrapper/gradle-wrapper.jar
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: gradle/wrapper/gradle-wrapper.properties
+######################################################
+
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.8-bin.zip
+networkTimeout=10000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+
+
+######################################################
+# FILE: gradlew
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: gradlew.bat
+######################################################
+
+@rem
+@rem Copyright 2015 the original author or authors.
+@rem
+@rem Licensed under the Apache License, Version 2.0 (the "License");
+@rem you may not use this file except in compliance with the License.
+@rem You may obtain a copy of the License at
+@rem
+@rem      https://www.apache.org/licenses/LICENSE-2.0
+@rem
+@rem Unless required by applicable law or agreed to in writing, software
+@rem distributed under the License is distributed on an "AS IS" BASIS,
+@rem WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+@rem See the License for the specific language governing permissions and
+@rem limitations under the License.
+@rem
+
+@if "%DEBUG%"=="" @echo off
+@rem ##########################################################################
+@rem
+@rem  Gradle startup script for Windows
+@rem
+@rem ##########################################################################
+
+@rem Set local scope for the variables with windows NT shell
+if "%OS%"=="Windows_NT" setlocal
+
+set DIRNAME=%~dp0
+if "%DIRNAME%"=="" set DIRNAME=.
+@rem This is normally unused
+set APP_BASE_NAME=%~n0
+set APP_HOME=%DIRNAME%
+
+@rem Resolve any "." and ".." in APP_HOME to make it shorter.
+for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
+
+@rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
+
+@rem Find java.exe
+if defined JAVA_HOME goto findJavaFromJavaHome
+
+set JAVA_EXE=java.exe
+%JAVA_EXE% -version >NUL 2>&1
+if %ERRORLEVEL% equ 0 goto execute
+
+echo. 1>&2
+echo ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH. 1>&2
+echo. 1>&2
+echo Please set the JAVA_HOME variable in your environment to match the 1>&2
+echo location of your Java installation. 1>&2
+
+goto fail
+
+:findJavaFromJavaHome
+set JAVA_HOME=%JAVA_HOME:"=%
+set JAVA_EXE=%JAVA_HOME%/bin/java.exe
+
+if exist "%JAVA_EXE%" goto execute
+
+echo. 1>&2
+echo ERROR: JAVA_HOME is set to an invalid directory: %JAVA_HOME% 1>&2
+echo. 1>&2
+echo Please set the JAVA_HOME variable in your environment to match the 1>&2
+echo location of your Java installation. 1>&2
+
+goto fail
+
+:execute
+@rem Setup the command line
+
+set CLASSPATH=%APP_HOME%\gradle\wrapper\gradle-wrapper.jar
+
+
+@rem Execute Gradle
+"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %GRADLE_OPTS% "-Dorg.gradle.appname=%APP_BASE_NAME%" -classpath "%CLASSPATH%" org.gradle.wrapper.GradleWrapperMain %*
+
+:end
+@rem End local scope for the variables with windows NT shell
+if %ERRORLEVEL% equ 0 goto mainEnd
+
+:fail
+rem Set variable GRADLE_EXIT_CONSOLE if you need the _script_ return code instead of
+rem the _cmd.exe /c_ return code!
+set EXIT_CODE=%ERRORLEVEL%
+if %EXIT_CODE% equ 0 set EXIT_CODE=1
+if not ""=="%GRADLE_EXIT_CONSOLE%" exit %EXIT_CODE%
+exit /b %EXIT_CODE%
+
+:mainEnd
+if "%OS%"=="Windows_NT" endlocal
+
+:omega
+
+
+######################################################
+# FILE: settings.gradle.kts
+######################################################
+
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "QuicLoc"
+include(":app")
+
+
+======================================================
+  END OF BACKUP
+======================================================
