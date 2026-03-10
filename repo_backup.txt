@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    df62248d0e5ec9873b28f73dc34112f535f81f5e
-  Timestamp: 2026-03-10 18:11:54 UTC
+  Commit:    48e0213336f93daaf12ff608831a312926b50c57
+  Timestamp: 2026-03-10 18:13:26 UTC
 ======================================================
 
 
@@ -465,35 +465,111 @@ If you have questions about this privacy policy, please open an issue at:
 
 # QuicLoc
 
-QuicLoc (com.hereliesaz.quicloc) is an Android utility application that allows users to quickly and automatically share their fine-grained location with a pre-approved list of contacts (a whitelist).
+**QuicLoc** (`com.hereliesaz.quicloc`) is an Android utility that lets trusted contacts request your real-time GPS location by sending a single keyword — via SMS or any messaging app. It responds automatically, even when your screen is off.
+
+---
+
+## How It Works
+
+1. You add a contact's phone number or display name to an encrypted, biometric-protected whitelist.
+2. That contact sends you the message `loc` or `quicloc` (case-insensitive) from any messaging app.
+3. QuicLoc detects the trigger, fetches your current GPS location, and replies automatically with a Google Maps link.
+
+No app needs to be open. No buttons need to be pressed.
+
+---
 
 ## Features
-- **Whitelist Management**: Add or remove trusted phone numbers using a simple user interface.
-- **Automated Location Sharing**: When the app receives an SMS message containing exactly the word "loc" or "quicloc" (case-insensitive) from a whitelisted number, it automatically fetches the device's current high-accuracy location and replies with a Google Maps link.
-- **Background Execution**: QuicLoc seamlessly operates in the background, ensuring location requests are fulfilled even when the app is closed.
+
+- **Works across messaging apps** — responds to SMS, WhatsApp, Telegram, Signal, Google Messages, Messenger, and any app that supports notification inline replies.
+- **Encrypted whitelist** — trusted contacts are stored using AES-256-GCM encryption backed by the Android Keystore. The data never leaves your device.
+- **Biometric protection** — the app requires fingerprint, face unlock, or device PIN to open. Falls back to PIN/pattern if no biometric is enrolled.
+- **Reliable location** — uses a three-stage fallback (GPS fix → cached location → forced update) to ensure a location is returned even from a cold start.
+- **Fully background** — operates silently when the screen is off. Auto-replies work without the app being open or unlocked.
+- **No data collection** — no analytics, no crash reporters, no servers. Nothing leaves your device except the location reply sent directly to the requesting contact.
+
+---
 
 ## Permissions
-QuicLoc requires the following permissions to function correctly:
-- `RECEIVE_SMS` & `SEND_SMS`: To detect incoming trigger words and send the automated response containing the Google Maps link.
-- `ACCESS_FINE_LOCATION` & `ACCESS_COARSE_LOCATION`: To accurately determine the device's current location.
-- `ACCESS_BACKGROUND_LOCATION`: To enable the app to fetch the location while running in the background. Note: On newer Android versions (Android 11+), this permission must be granted separately after allowing foreground location access. The app guides the user through this process.
+
+| Permission | Purpose |
+|---|---|
+| `RECEIVE_SMS` | Detect the trigger word in incoming SMS messages |
+| `SEND_SMS` | Send the location reply via SMS |
+| `ACCESS_FINE_LOCATION` | Obtain a precise GPS location |
+| `ACCESS_COARSE_LOCATION` | Fallback if fine location is unavailable |
+| `ACCESS_BACKGROUND_LOCATION` | Obtain location while the app is not in the foreground |
+| `USE_BIOMETRIC` / `USE_FINGERPRINT` | Authenticate the user before allowing whitelist access |
+| `BIND_NOTIFICATION_LISTENER_SERVICE` | Detect the trigger word in non-SMS messaging apps |
+
+---
+
+## Setup
+
+1. Install the APK (download from [Releases](../../releases)).
+2. Open QuicLoc and authenticate with your fingerprint or PIN.
+3. Grant all requested permissions. When prompted, also grant **Notification Access** in system settings — this enables responses in WhatsApp, Telegram, and other apps.
+4. Add the phone numbers or contact names of people you want to allow to request your location.
+5. Done. QuicLoc runs silently in the background.
+
+### First-time permission note
+
+Android requires **Background Location** to be granted separately after foreground location. The app will walk you through this. On Android 11+, you must tap *"Allow all the time"* in the location settings screen — the app cannot request this directly.
+
+---
+
+## Privacy
+
+QuicLoc does not collect, store, transmit, or share any user data with the developer or any third party. See [PRIVACY_POLICY.md](./PRIVACY_POLICY.md) for the full policy.
+
+---
 
 ## Architecture
-QuicLoc is built using Kotlin and utilizes the following core components:
-- **`SmsReceiver`**: A `BroadcastReceiver` that intercepts incoming text messages and checks them against the trigger words and the user's whitelist. It utilizes `goAsync()` to safely perform asynchronous background work.
-- **`LocationHelper`**: A utility object that interacts with Google Play Services (`LocationServices.getFusedLocationProviderClient`) to retrieve the user's high-accuracy location and format the SMS reply.
-- **`WhitelistManager`**: Manages the persistence of trusted phone numbers using `SharedPreferences`.
 
-## Building the App & Versioning
-QuicLoc is a standard Gradle-based Android project with an automated versioning scheme modeled as **A.B.C.D**:
-- `A`: Major user-managed version. Should only be incremented manually by the app owner.
-- `B`: Feature increment. Incremented by the AI/developer when major features are added.
-- `C`: The number of times the app has been built within the current `B` version. Automatically increments on every build.
-- `D`: The absolute total number of times the app has been built. Automatically increments on every build and corresponds to the internal Android `versionCode`.
+QuicLoc is written in Kotlin using Jetpack Compose for the UI. Core components:
 
-Version variables are stored and tracked in `app/version.properties`. To build:
-1. Ensure you have the Android SDK (API 36) installed.
-2. Run `./gradlew assembleDebug` to build the debug APK. The version `C` and `D` parameters will automatically increment and be compiled into the final output.
+- **`SmsReceiver`** — `BroadcastReceiver` that intercepts incoming SMS and checks for the trigger word from whitelisted numbers. Uses `goAsync()` for safe background work.
+- **`NotificationListener`** — `NotificationListenerService` that monitors incoming notifications from all messaging apps and replies via their inline reply action.
+- **`LocationHelper`** — obtains the device's GPS location using Fused Location Provider with a three-stage fallback: `getCurrentLocation()` → `lastLocation` → `requestLocationUpdates()` with a 15-second timeout.
+- **`WhitelistManager`** — manages trusted contacts using `EncryptedSharedPreferences` (AES-256-GCM, Android Keystore). Automatically migrates any existing plaintext data on first upgrade.
+- **`BiometricHelper`** — wraps `BiometricPrompt` to gate UI access with fingerprint, face, or device PIN. The background components are unaffected by authentication state.
+
+---
+
+## Building
+
+QuicLoc is a standard Gradle Android project targeting API 36 with a minimum of API 26 (Android 8.0).
+
+```bash
+./gradlew assembleDebug
+```
+
+The APK will be at `app/build/outputs/apk/debug/`.
+
+### Versioning
+
+Versions follow the scheme **A.B.C.D**:
+
+| Segment | Meaning |
+|---|---|
+| `A` | Major version — incremented manually by the developer |
+| `B` | Feature version — incremented when significant features are added |
+| `C` | Build count within the current `B` version — auto-increments on every build |
+| `D` | Absolute total build count — auto-increments on every build, used as `versionCode` |
+
+Version state is tracked in `app/version.properties`.
+
+---
+
+## Google Play
+
+This app uses sensitive permissions (`NotificationListenerService`, background location, SMS) that require manual review by Google Play. See [DECLARATIONS.md](./DECLARATIONS.md) for the full Play Console declaration text and Data Safety form guidance.
+
+---
+
+## License
+
+This is free and unencumbered software released into the public domain. See [LICENSE](./LICENSE) for details.
 
 
 ######################################################
