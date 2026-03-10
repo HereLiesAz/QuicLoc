@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">QuicLoc</string>
     <string name="remove_whitelist_entry">Remove</string>
+    <string name="notification_listener_label">QuicLoc Message Listener</string>
 </resources>
