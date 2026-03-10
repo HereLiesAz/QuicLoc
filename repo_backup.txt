@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    4574699e2ffc6508c1e871a91493defa2973c3a1
-  Timestamp: 2026-03-10 17:57:19 UTC
+  Commit:    ba10509691bfe5d79e197f736179545e12517f0b
+  Timestamp: 2026-03-10 17:57:39 UTC
 ======================================================
 
 
@@ -1115,6 +1115,8 @@ dependencies {
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
 
     <application
         android:allowBackup="true"
