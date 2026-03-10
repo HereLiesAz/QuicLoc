@@ -4,7 +4,9 @@ import android.Manifest
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.ContactsContract
 import android.provider.Settings
 import android.text.TextUtils
 import android.widget.Toast
@@ -17,7 +19,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -74,14 +78,30 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         }
     }
 
-    // Compose state — hoisted so biometric callback can flip it
+    // Compose state — hoisted so biometric callback and launchers can update it
     private var authState = mutableStateOf(false)
+    private var numbersState = mutableStateOf<List<String>>(emptyList())
+
+    private val readContactsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        // Whether granted or not, open the picker — we'll get name regardless,
+        // and phone numbers only if READ_CONTACTS was granted.
+        contactPickerLauncher.launch(null)
+    }
+
+    private val contactPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.PickContact()
+    ) { uri ->
+        if (uri != null) handleContactPicked(uri)
+    }
 
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         whitelistManager = WhitelistManager(this)
+        numbersState.value = whitelistManager.getNumbers().toList()
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
@@ -92,42 +112,60 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                         onRetry = { promptBiometric() }
                     )
                 } else {
-                    var numbersList by remember { mutableStateOf(whitelistManager.getNumbers().toList()) }
+                    val numbersList by numbersState
                     var notificationAccessGranted by remember {
                         mutableStateOf(isNotificationListenerEnabled())
                     }
+                    var showHistory by remember { mutableStateOf(false) }
 
                     Scaffold(
                         topBar = {
                             TopAppBar(
-                                title = { Text("QuicLoc") },
+                                title = { Text(if (showHistory) "Request History" else "QuicLoc") },
                                 colors = TopAppBarDefaults.topAppBarColors(
                                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                )
+                                ),
+                                actions = {
+                                    IconButton(onClick = { showHistory = !showHistory }) {
+                                        Icon(
+                                            imageVector = Icons.Default.List,
+                                            contentDescription = if (showHistory) "Back to config" else "View history",
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                }
                             )
                         }
                     ) { innerPadding ->
-                        QuicLocScreen(
-                            modifier = Modifier.padding(innerPadding),
-                            numbersList = numbersList,
-                            notificationAccessGranted = notificationAccessGranted,
-                            noLockScreenWarning = !BiometricHelper.canAuthenticate(this@MainActivity),
-                            onRequestNotificationAccess = {
-                                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                            },
-                            onAddNumber = { number ->
-                                if (number.isNotBlank()) {
-                                    whitelistManager.addNumber(number)
-                                    numbersList = whitelistManager.getNumbers().toList()
-                                    Toast.makeText(this, "Added to whitelist", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            onRemoveNumber = { number ->
-                                whitelistManager.removeNumber(number)
-                                numbersList = whitelistManager.getNumbers().toList()
-                            }
-                        )
+                        if (showHistory) {
+                            HistoryScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                historyManager = RequestHistoryManager(this@MainActivity)
+                            )
+                        } else {
+                            QuicLocScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                numbersList = numbersList,
+                                notificationAccessGranted = notificationAccessGranted,
+                                noLockScreenWarning = !BiometricHelper.canAuthenticate(this@MainActivity),
+                                onRequestNotificationAccess = {
+                                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                                },
+                                onAddNumber = { number ->
+                                    if (number.isNotBlank()) {
+                                        whitelistManager.addNumber(number)
+                                        numbersState.value = whitelistManager.getNumbers().toList()
+                                        Toast.makeText(this, "Added to whitelist", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                onRemoveNumber = { number ->
+                                    whitelistManager.removeNumber(number)
+                                    numbersState.value = whitelistManager.getNumbers().toList()
+                                },
+                                onPickContact = { launchContactPicker() }
+                            )
+                        }
                     }
                 }
             }
@@ -168,6 +206,60 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 Toast.makeText(this, "Authentication required: $reason", Toast.LENGTH_SHORT).show()
             }
         )
+    }
+
+    // -------------------------------------------------------------------------
+    // Contact picker
+    // -------------------------------------------------------------------------
+
+    private fun launchContactPicker() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            readContactsLauncher.launch(Manifest.permission.READ_CONTACTS)
+        } else {
+            contactPickerLauncher.launch(null)
+        }
+    }
+
+    private fun handleContactPicked(uri: Uri) {
+        val contactProjection = arrayOf(
+            ContactsContract.Contacts._ID,
+            ContactsContract.Contacts.DISPLAY_NAME_PRIMARY
+        )
+        contentResolver.query(uri, contactProjection, null, null, null)?.use { cursor ->
+            if (!cursor.moveToFirst()) return
+            val id = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.Contacts._ID))
+            val name = cursor.getString(
+                cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
+            ) ?: return
+
+            // Always store the display name — this is what notification-based apps send
+            whitelistManager.addNumber(name)
+
+            // Also store phone numbers for SMS matching
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
+                == PackageManager.PERMISSION_GRANTED
+            ) {
+                contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                    "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                    arrayOf(id),
+                    null
+                )?.use { phoneCursor ->
+                    while (phoneCursor.moveToNext()) {
+                        val number = phoneCursor.getString(
+                            phoneCursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                        )
+                        if (!number.isNullOrBlank()) whitelistManager.addNumber(number)
+                    }
+                }
+            }
+
+            numbersState.value = whitelistManager.getNumbers().toList()
+            Toast.makeText(this, "Added $name to whitelist", Toast.LENGTH_SHORT).show()
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -270,7 +362,8 @@ fun QuicLocScreen(
     noLockScreenWarning: Boolean,
     onRequestNotificationAccess: () -> Unit,
     onAddNumber: (String) -> Unit,
-    onRemoveNumber: (String) -> Unit
+    onRemoveNumber: (String) -> Unit,
+    onPickContact: () -> Unit
 ) {
     var phoneNumberInput by remember { mutableStateOf("") }
 
@@ -341,10 +434,24 @@ fun QuicLocScreen(
         }
 
         Text(
-            text = "Whitelist a number or contact name:",
+            text = "Whitelist a contact:",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(bottom = 8.dp)
         )
+
+        Button(
+            onClick = onPickContact,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(
+                imageVector = Icons.Default.Person,
+                contentDescription = null,
+                modifier = Modifier.padding(end = 8.dp)
+            )
+            Text("Pick from Contacts")
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -353,7 +460,7 @@ fun QuicLocScreen(
             OutlinedTextField(
                 value = phoneNumberInput,
                 onValueChange = { phoneNumberInput = it },
-                label = { Text("Phone number or contact name") },
+                label = { Text("Or type name / number manually") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                 modifier = Modifier.weight(1f),
                 singleLine = true
@@ -389,6 +496,77 @@ fun QuicLocScreen(
                             imageVector = Icons.Default.Delete,
                             contentDescription = "Remove"
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// History screen
+// -------------------------------------------------------------------------
+
+@Composable
+fun HistoryScreen(
+    modifier: Modifier = Modifier,
+    historyManager: RequestHistoryManager
+) {
+    val history = remember { historyManager.getHistory() }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        if (history.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "No location requests yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                items(history) { event ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (event.succeeded)
+                                MaterialTheme.colorScheme.surfaceVariant
+                            else
+                                MaterialTheme.colorScheme.errorContainer
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = event.sender,
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Text(
+                                    text = "${event.source} · ${event.formattedTime}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = if (event.succeeded) "✓" else "✗",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (event.succeeded)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
             }

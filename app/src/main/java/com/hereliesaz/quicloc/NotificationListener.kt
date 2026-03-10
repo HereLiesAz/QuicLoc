@@ -45,9 +45,6 @@ class NotificationListener : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val packageName = sbn.packageName
-
-        // Filter to known messaging apps (remove this check to catch everything)
-        if (packageName !in MESSAGING_PACKAGES) return
         val appName = MESSAGING_PACKAGES[packageName] ?: packageName
 
         val notification = sbn.notification ?: return
