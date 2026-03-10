@@ -3,16 +3,52 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+import java.util.Properties
+import java.io.FileInputStream
+import java.io.FileOutputStream
+
 android {
     namespace = "com.hereliesaz.quicloc"
     compileSdk = 36
+
+    val versionPropsFile = file("version.properties")
+    val versionProps = Properties()
+
+    if (versionPropsFile.canRead()) {
+        versionProps.load(FileInputStream(versionPropsFile))
+    } else {
+        versionProps["VERSION_A"] = "1"
+        versionProps["VERSION_B"] = "0"
+        versionProps["VERSION_C"] = "0"
+        versionProps["VERSION_D"] = "0"
+    }
+
+    // Only increment when assembling or bundling (not syncing/cleaning)
+    val runTasks = gradle.startParameter.taskNames
+    val isBuilding = runTasks.any { it.contains("assemble") || it.contains("bundle") }
+
+    var vA = versionProps["VERSION_A"].toString().toInt()
+    var vB = versionProps["VERSION_B"].toString().toInt()
+    var vC = versionProps["VERSION_C"].toString().toInt()
+    var vD = versionProps["VERSION_D"].toString().toInt()
+
+    if (isBuilding) {
+        vD += 1
+        vC += 1
+        versionProps["VERSION_D"] = vD.toString()
+        versionProps["VERSION_C"] = vC.toString()
+        versionProps.store(FileOutputStream(versionPropsFile), null)
+    }
+
+    val finalVersionName = "${vA}.${vB}.${vC}.${vD}"
+    val finalVersionCode = vD
 
     defaultConfig {
         applicationId = "com.hereliesaz.quicloc"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = finalVersionCode
+        versionName = finalVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -19,7 +19,13 @@ QuicLoc is built using Kotlin and utilizes the following core components:
 - **`LocationHelper`**: A utility object that interacts with Google Play Services (`LocationServices.getFusedLocationProviderClient`) to retrieve the user's high-accuracy location and format the SMS reply.
 - **`WhitelistManager`**: Manages the persistence of trusted phone numbers using `SharedPreferences`.
 
-## Building the App
-QuicLoc is a standard Gradle-based Android project.
-1. Ensure you have the Android SDK (API 33) installed.
-2. Run `./gradlew assembleDebug` to build the debug APK.
+## Building the App & Versioning
+QuicLoc is a standard Gradle-based Android project with an automated versioning scheme modeled as **A.B.C.D**:
+- `A`: Major user-managed version. Should only be incremented manually by the app owner.
+- `B`: Feature increment. Incremented by the AI/developer when major features are added.
+- `C`: The number of times the app has been built within the current `B` version. Automatically increments on every build.
+- `D`: The absolute total number of times the app has been built. Automatically increments on every build and corresponds to the internal Android `versionCode`.
+
+Version variables are stored and tracked in `app/version.properties`. To build:
+1. Ensure you have the Android SDK (API 36) installed.
+2. Run `./gradlew assembleDebug` to build the debug APK. The version `C` and `D` parameters will automatically increment and be compiled into the final output.
