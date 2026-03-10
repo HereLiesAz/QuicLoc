@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    38bd5eafb5389f1a20b5a4a6a2240c910e89e083
-  Timestamp: 2026-03-10 17:58:27 UTC
+  Commit:    2d9b88a18e3d6e9d43150f16a4662f69fd274469
+  Timestamp: 2026-03-10 17:59:39 UTC
 ======================================================
 
 
@@ -2099,71 +2099,6 @@ class WhitelistManager(context: Context) {
             // Wipe the old plaintext store
             legacyPrefs.edit().clear().apply()
         }
-    }
-}
-
-
-######################################################
-# FILE: app/src/main/java/com/hereliesaz/quicloc/WhitelistManager.kt.txt
-######################################################
-
-package com.hereliesaz.quicloc
-
-import android.content.Context
-import android.content.SharedPreferences
-import android.telephony.PhoneNumberUtils
-
-class WhitelistManager(context: Context) {
-    private val prefs: SharedPreferences =
-        context.getSharedPreferences("quicloc_prefs", Context.MODE_PRIVATE)
-
-    fun addNumber(number: String) {
-        val clean = cleanPhoneNumber(number)
-        if (clean.isNotEmpty()) {
-            val numbers = getNumbers().toMutableSet()
-            numbers.add(clean)
-            prefs.edit().putStringSet("whitelist", numbers).apply()
-        }
-    }
-
-    fun removeNumber(number: String) {
-        val numbers = getNumbers().toMutableSet()
-        numbers.remove(number)
-        prefs.edit().putStringSet("whitelist", numbers).apply()
-    }
-
-    fun getNumbers(): Set<String> {
-        return prefs.getStringSet("whitelist", emptySet()) ?: emptySet()
-    }
-
-    /**
-     * Used for SMS: compares by phone number (handles formatting differences).
-     */
-    fun isWhitelisted(number: String): Boolean {
-        val cleanIncoming = cleanPhoneNumber(number)
-        return getNumbers().any { whitelisted ->
-            PhoneNumberUtils.compare(cleanIncoming, whitelisted)
-        }
-    }
-
-    /**
-     * Used for notifications: matches by display name OR phone number.
-     * Notification senders show contact names (e.g. "John") not raw numbers.
-     * Whitelisted entries can be phone numbers OR names.
-     */
-    fun isWhitelistedByName(displayName: String): Boolean {
-        val nameLower = displayName.trim().lowercase()
-        return getNumbers().any { entry ->
-            val entryLower = entry.trim().lowercase()
-            // Exact name match
-            entryLower == nameLower
-                // Or phone number match (in case notification shows a number)
-                || PhoneNumberUtils.compare(cleanPhoneNumber(displayName), cleanPhoneNumber(entry))
-        }
-    }
-
-    private fun cleanPhoneNumber(number: String): String {
-        return number.replace(Regex("[^0-9+]"), "")
     }
 }
 
