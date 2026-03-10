@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    6bb8e8fc00025fc2dc5a5d9d6d14c8b110384064
-  Timestamp: 2026-03-10 14:57:03 UTC
+  Commit:    f6561846591818c566b39c1de3d4b3b9e9653505
+  Timestamp: 2026-03-10 14:57:36 UTC
 ======================================================
 
 
@@ -240,6 +240,595 @@ For more information, please refer to <https://unlicense.org>
 
 
 ######################################################
+# FILE: LocationHelper.kt.txt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.annotation.SuppressLint
+import android.app.Notification
+import android.app.RemoteInput
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.location.Location
+import android.os.Bundle
+import android.telephony.SmsManager
+import android.util.Log
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
+
+object LocationHelper {
+    private const val TAG = "QuicLoc.LocationHelper"
+
+    // -------------------------------------------------------------------------
+    // SMS reply path (original behavior, now fixed)
+    // -------------------------------------------------------------------------
+
+    @SuppressLint("MissingPermission")
+    fun getCurrentLocationAndReply(
+        context: Context,
+        phoneNumber: String,
+        pendingResult: BroadcastReceiver.PendingResult
+    ) {
+        fetchLocation(context,
+            onSuccess = { location ->
+                sendLocationSms(context, phoneNumber, location)
+            },
+            onFailure = { msg ->
+                sendErrorSms(context, phoneNumber, msg)
+            },
+            onComplete = {
+                pendingResult.finish()
+            }
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // Notification inline-reply path (for WhatsApp, Telegram, Signal, etc.)
+    // -------------------------------------------------------------------------
+
+    @SuppressLint("MissingPermission")
+    fun getCurrentLocationAndReplyViaNotification(
+        context: Context,
+        replyAction: Notification.Action,
+        notificationKey: String
+    ) {
+        fetchLocation(context,
+            onSuccess = { location ->
+                val lat = location.latitude
+                val lng = location.longitude
+                val mapsLink = "https://maps.google.com/?q=$lat,$lng"
+                sendNotificationReply(context, replyAction, "QuicLoc: $mapsLink")
+            },
+            onFailure = { msg ->
+                sendNotificationReply(context, replyAction, "QuicLoc Error: $msg")
+            },
+            onComplete = {}
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // Shared location fetch
+    // -------------------------------------------------------------------------
+
+    @SuppressLint("MissingPermission")
+    private fun fetchLocation(
+        context: Context,
+        onSuccess: (Location) -> Unit,
+        onFailure: (String) -> Unit,
+        onComplete: () -> Unit
+    ) {
+        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
+        try {
+            val cts = CancellationTokenSource()
+            fusedLocationClient.getCurrentLocation(
+                Priority.PRIORITY_HIGH_ACCURACY,
+                cts.token
+            ).addOnSuccessListener { location ->
+                if (location != null) {
+                    onSuccess(location)
+                } else {
+                    onFailure("Unable to determine current location.")
+                }
+            }.addOnFailureListener { e ->
+                Log.e(TAG, "Failed to get location", e)
+                onFailure("Error retrieving location.")
+            }.addOnCompleteListener {
+                onComplete()
+            }
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Missing location permissions", e)
+            onFailure("Missing location permissions.")
+            onComplete()
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // SMS sending
+    // -------------------------------------------------------------------------
+
+    private fun sendLocationSms(context: Context, phoneNumber: String, location: Location) {
+        val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
+        sendSms(context, phoneNumber, "QuicLoc Location:\n$mapsLink")
+    }
+
+    private fun sendErrorSms(context: Context, phoneNumber: String, errorMessage: String) {
+        sendSms(context, phoneNumber, "QuicLoc Error: $errorMessage")
+    }
+
+    private fun sendSms(context: Context, phoneNumber: String, message: String) {
+        try {
+            val smsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                context.getSystemService(SmsManager::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
+            }
+            if (smsManager != null) {
+                val parts = smsManager.divideMessage(message)
+                if (parts.size > 1) {
+                    smsManager.sendMultipartTextMessage(phoneNumber, null, parts, null, null)
+                } else {
+                    smsManager.sendTextMessage(phoneNumber, null, message, null, null)
+                }
+            } else {
+                Log.e(TAG, "Failed to get SmsManager")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send SMS", e)
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Notification inline reply sending
+    // -------------------------------------------------------------------------
+
+    private fun sendNotificationReply(
+        context: Context,
+        action: Notification.Action,
+        replyText: String
+    ) {
+        try {
+            val remoteInputs = action.remoteInputs ?: return
+            val intent = Intent()
+            val bundle = Bundle()
+            for (remoteInput in remoteInputs) {
+                bundle.putCharSequence(remoteInput.resultKey, replyText)
+            }
+            RemoteInput.addResultsToIntent(remoteInputs, intent, bundle)
+            action.actionIntent.send(context, 0, intent)
+            Log.d(TAG, "Sent notification reply: $replyText")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send notification reply", e)
+        }
+    }
+}
+
+
+######################################################
+# FILE: MainActivity.kt.txt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.Manifest
+import android.content.ComponentName
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.provider.Settings
+import android.text.TextUtils
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+
+class MainActivity : ComponentActivity() {
+
+    private lateinit var whitelistManager: WhitelistManager
+
+    private val REQUIRED_PERMISSIONS = arrayOf(
+        Manifest.permission.RECEIVE_SMS,
+        Manifest.permission.SEND_SMS,
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION
+    )
+
+    private val backgroundLocationLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (!isGranted) {
+            Toast.makeText(
+                this,
+                "Background location permission is required for QuicLoc to work when the app is closed.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        // After location permissions, prompt for notification access
+        checkNotificationListenerPermission()
+    }
+
+    private val multiplePermissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val hasSms = permissions[Manifest.permission.RECEIVE_SMS] == true &&
+                permissions[Manifest.permission.SEND_SMS] == true
+        val hasLocation = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+
+        if (hasSms && hasLocation) {
+            checkBackgroundLocationPermission()
+        } else {
+            Toast.makeText(
+                this,
+                "SMS and Location permissions are required for QuicLoc to function.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        whitelistManager = WhitelistManager(this)
+
+        setContent {
+            MaterialTheme {
+                var numbersList by remember { mutableStateOf(whitelistManager.getNumbers().toList()) }
+                var notificationAccessGranted by remember {
+                    mutableStateOf(isNotificationListenerEnabled())
+                }
+
+                Scaffold(
+                    topBar = {
+                        TopAppBar(
+                            title = { Text("QuicLoc") },
+                            colors = TopAppBarDefaults.topAppBarColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        )
+                    }
+                ) { innerPadding ->
+                    QuicLocScreen(
+                        modifier = Modifier.padding(innerPadding),
+                        numbersList = numbersList,
+                        notificationAccessGranted = notificationAccessGranted,
+                        onRequestNotificationAccess = {
+                            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        },
+                        onAddNumber = { number ->
+                            if (number.isNotBlank()) {
+                                whitelistManager.addNumber(number)
+                                numbersList = whitelistManager.getNumbers().toList()
+                                Toast.makeText(this, "Added to whitelist", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onRemoveNumber = { number ->
+                            whitelistManager.removeNumber(number)
+                            numbersList = whitelistManager.getNumbers().toList()
+                        }
+                    )
+                }
+            }
+        }
+
+        checkPermissions()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Re-check notification access when returning from settings
+    }
+
+    private fun checkPermissions() {
+        val hasSms = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
+        val hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasSms || !hasLocation) {
+            multiplePermissionsLauncher.launch(REQUIRED_PERMISSIONS)
+        } else {
+            checkBackgroundLocationPermission()
+        }
+    }
+
+    private fun checkBackgroundLocationPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                return
+            }
+        }
+        checkNotificationListenerPermission()
+    }
+
+    private fun checkNotificationListenerPermission() {
+        if (!isNotificationListenerEnabled()) {
+            // The UI will show a prompt — user taps the button to go to settings
+            Toast.makeText(
+                this,
+                "Grant Notification Access so QuicLoc can respond in WhatsApp, Telegram, and other apps.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    private fun isNotificationListenerEnabled(): Boolean {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+        if (!TextUtils.isEmpty(flat)) {
+            val names = flat.split(":").toTypedArray()
+            for (name in names) {
+                val cn = ComponentName.unflattenFromString(name)
+                if (cn != null && packageName == cn.packageName) return true
+            }
+        }
+        return false
+    }
+}
+
+@Composable
+fun QuicLocScreen(
+    modifier: Modifier = Modifier,
+    numbersList: List<String>,
+    notificationAccessGranted: Boolean,
+    onRequestNotificationAccess: () -> Unit,
+    onAddNumber: (String) -> Unit,
+    onRemoveNumber: (String) -> Unit
+) {
+    var phoneNumberInput by remember { mutableStateOf("") }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "QuicLoc Configuration",
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
+
+        // Notification access warning banner
+        if (!notificationAccessGranted) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer
+                )
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = "⚠ Notification Access Required",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Text(
+                        text = "To respond in WhatsApp, Telegram, Signal, and other apps, QuicLoc needs Notification Access permission.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                    )
+                    Button(
+                        onClick = onRequestNotificationAccess,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("Grant Notification Access")
+                    }
+                }
+            }
+        } else {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Text(
+                    text = "✓ Notification Access granted — QuicLoc will respond in all messaging apps.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+
+        Text(
+            text = "Whitelist a number or contact name:",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = phoneNumberInput,
+                onValueChange = { phoneNumberInput = it },
+                label = { Text("Phone number or contact name") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                modifier = Modifier.weight(1f),
+                singleLine = true
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Button(onClick = {
+                onAddNumber(phoneNumberInput)
+                phoneNumberInput = ""
+            }) {
+                Text("Add")
+            }
+        }
+
+        Text(
+            text = "Whitelisted:",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 24.dp, bottom = 8.dp)
+        )
+
+        LazyColumn(modifier = Modifier.fillMaxWidth()) {
+            items(numbersList) { number ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = number,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { onRemoveNumber(number) }) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Remove"
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+######################################################
+# FILE: NotificationListener.kt.txt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.app.Notification
+import android.content.Intent
+import android.os.Bundle
+import android.service.notification.NotificationListenerService
+import android.service.notification.StatusBarNotification
+import android.util.Log
+
+/**
+ * Listens for notifications from ANY messaging app and responds via
+ * the notification's inline reply action when a whitelisted contact
+ * sends the trigger word "loc" or "quicloc".
+ *
+ * Supports: WhatsApp, Telegram, Signal, Google Messages, Samsung Messages,
+ * Facebook Messenger, and any app that posts notifications with a reply action.
+ *
+ * Requires: User grants "Notification Access" to QuicLoc in system settings.
+ */
+class NotificationListener : NotificationListenerService() {
+
+    companion object {
+        private const val TAG = "QuicLoc.NotifListener"
+
+        // Packages we care about — covers the major messaging apps.
+        // Empty set = listen to all apps (broader but noisier).
+        private val MESSAGING_PACKAGES = setOf(
+            "com.whatsapp",
+            "com.whatsapp.w4b",               // WhatsApp Business
+            "org.telegram.messenger",
+            "org.thoughtcrime.securesms",      // Signal
+            "com.google.android.apps.messaging", // Google Messages
+            "com.samsung.android.messaging",
+            "com.facebook.orca",               // Messenger
+            "com.facebook.mlite",
+            "com.viber.voip",
+            "com.skype.raider",
+            "com.discord",
+            "io.github.nickcox.slank",         // Slack
+            "com.Slack",
+            "com.microsoft.teams",
+            "com.snapchat.android",
+        )
+    }
+
+    override fun onNotificationPosted(sbn: StatusBarNotification) {
+        val packageName = sbn.packageName
+
+        // Filter to known messaging apps (remove this check to catch everything)
+        if (packageName !in MESSAGING_PACKAGES) return
+
+        val notification = sbn.notification ?: return
+        val extras: Bundle = notification.extras ?: return
+
+        // Extract message text from notification
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+            ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+            ?: ""
+
+        val body = text.trim().lowercase()
+        Log.d(TAG, "Notification from $packageName | title='$title' | body='$body'")
+
+        if (body != "loc" && body != "quicloc") return
+
+        // Check whitelist — use title as sender identifier (display name or number)
+        val whitelistManager = WhitelistManager(applicationContext)
+        if (!whitelistManager.isWhitelistedByName(title)) {
+            Log.d(TAG, "Sender '$title' not whitelisted, ignoring.")
+            return
+        }
+
+        Log.d(TAG, "Trigger from '$title' via $packageName — fetching location")
+
+        // Get the inline reply action from the notification
+        val replyAction = findReplyAction(notification)
+
+        if (replyAction != null) {
+            // Reply via the notification's own reply action (works for WhatsApp, Signal, etc.)
+            LocationHelper.getCurrentLocationAndReplyViaNotification(
+                applicationContext,
+                replyAction,
+                sbn.key
+            )
+        } else {
+            Log.w(TAG, "No reply action found for notification from $packageName")
+        }
+    }
+
+    /**
+     * Finds the inline reply RemoteInput action on a notification.
+     * This is the action that powers "Reply" from notification shade.
+     */
+    private fun findReplyAction(notification: Notification): Notification.Action? {
+        val actions = notification.actions ?: return null
+        return actions.firstOrNull { action ->
+            action.remoteInputs?.isNotEmpty() == true
+        }
+    }
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        // Not needed, but required to override
+    }
+}
+
+
+######################################################
 # FILE: README.md
 ######################################################
 
@@ -274,6 +863,124 @@ QuicLoc is a standard Gradle-based Android project with an automated versioning 
 Version variables are stored and tracked in `app/version.properties`. To build:
 1. Ensure you have the Android SDK (API 36) installed.
 2. Run `./gradlew assembleDebug` to build the debug APK. The version `C` and `D` parameters will automatically increment and be compiled into the final output.
+
+
+######################################################
+# FILE: SmsReceiver.kt.txt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.provider.Telephony
+import android.util.Log
+
+class SmsReceiver : BroadcastReceiver() {
+
+    companion object {
+        private const val TAG = "QuicLoc.SmsReceiver"
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
+
+        val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
+        if (messages.isNullOrEmpty()) return
+
+        // Reassemble multi-part SMS by sender
+        val messagesBySender = mutableMapOf<String, StringBuilder>()
+        for (smsMessage in messages) {
+            val sender = smsMessage.displayOriginatingAddress ?: continue
+            messagesBySender.getOrPut(sender) { StringBuilder() }
+                .append(smsMessage.messageBody)
+        }
+
+        val whitelistManager = WhitelistManager(context)
+
+        for ((sender, bodyBuilder) in messagesBySender) {
+            val body = bodyBuilder.toString().trim().lowercase()
+            Log.d(TAG, "SMS from $sender: '$body'")
+
+            if (!whitelistManager.isWhitelisted(sender)) {
+                Log.d(TAG, "Sender $sender not whitelisted, ignoring.")
+                continue
+            }
+
+            if (body == "loc" || body == "quicloc") {
+                Log.d(TAG, "Trigger word received from $sender via SMS")
+                val pendingResult = goAsync()
+                LocationHelper.getCurrentLocationAndReply(context, sender, pendingResult)
+            }
+        }
+    }
+}
+
+
+######################################################
+# FILE: WhitelistManager.kt.txt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.telephony.PhoneNumberUtils
+
+class WhitelistManager(context: Context) {
+    private val prefs: SharedPreferences =
+        context.getSharedPreferences("quicloc_prefs", Context.MODE_PRIVATE)
+
+    fun addNumber(number: String) {
+        val clean = cleanPhoneNumber(number)
+        if (clean.isNotEmpty()) {
+            val numbers = getNumbers().toMutableSet()
+            numbers.add(clean)
+            prefs.edit().putStringSet("whitelist", numbers).apply()
+        }
+    }
+
+    fun removeNumber(number: String) {
+        val numbers = getNumbers().toMutableSet()
+        numbers.remove(number)
+        prefs.edit().putStringSet("whitelist", numbers).apply()
+    }
+
+    fun getNumbers(): Set<String> {
+        return prefs.getStringSet("whitelist", emptySet()) ?: emptySet()
+    }
+
+    /**
+     * Used for SMS: compares by phone number (handles formatting differences).
+     */
+    fun isWhitelisted(number: String): Boolean {
+        val cleanIncoming = cleanPhoneNumber(number)
+        return getNumbers().any { whitelisted ->
+            PhoneNumberUtils.compare(cleanIncoming, whitelisted)
+        }
+    }
+
+    /**
+     * Used for notifications: matches by display name OR phone number.
+     * Notification senders show contact names (e.g. "John") not raw numbers.
+     * Whitelisted entries can be phone numbers OR names.
+     */
+    fun isWhitelistedByName(displayName: String): Boolean {
+        val nameLower = displayName.trim().lowercase()
+        return getNumbers().any { entry ->
+            val entryLower = entry.trim().lowercase()
+            // Exact name match
+            entryLower == nameLower
+                // Or phone number match (in case notification shows a number)
+                || PhoneNumberUtils.compare(cleanPhoneNumber(displayName), cleanPhoneNumber(entry))
+        }
+    }
+
+    private fun cleanPhoneNumber(number: String): String {
+        return number.replace(Regex("[^0-9+]"), "")
+    }
+}
 
 
 ######################################################
