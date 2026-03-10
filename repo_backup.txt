@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    29435c003fd83f6427171833e1c05cc8fa58bcb5
-  Timestamp: 2026-03-10 17:38:57 UTC
+  Commit:    2cd277d8b736b72131daea17502caab26090a6bf
+  Timestamp: 2026-03-10 17:39:31 UTC
 ======================================================
 
 
@@ -2348,6 +2348,7 @@ class WhitelistManager(context: Context) {
 <resources>
     <string name="app_name">QuicLoc</string>
     <string name="remove_whitelist_entry">Remove</string>
+    <string name="notification_listener_label">QuicLoc Message Listener</string>
 </resources>
 
 
@@ -2356,11 +2357,18 @@ class WhitelistManager(context: Context) {
 ######################################################
 
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.QuicLoc" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
-        <item name="colorPrimary">@color/purple_500</item>
+
+    <!--
+        Force dark mode as default.
+        Using DayNight theme with uiMode=night override in MainActivity,
+        but also setting the base theme to Night here for fallback.
+    -->
+    <style name="Theme.QuicLoc" parent="Theme.Material3.DynamicColors.DayNight">
+        <item name="colorPrimary">@color/purple_200</item>
         <item name="colorPrimaryDark">@color/purple_700</item>
         <item name="colorAccent">@color/teal_200</item>
     </style>
+
 </resources>
 
 
