@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    06d37fd945a5707be6c1c1280066c38bea903d30
-  Timestamp: 2026-03-10 19:37:11 UTC
+  Commit:    72d6ba43f80e54634d37637c8915b9f434f746ab
+  Timestamp: 2026-03-10 19:45:33 UTC
 ======================================================
 
 
@@ -2468,11 +2468,11 @@ class WhitelistManager(context: Context) {
 # FILE: app/version.properties
 ######################################################
 
-#Tue Mar 10 14:27:52 CDT 2026
+#Tue Mar 10 14:42:42 CDT 2026
 VERSION_A=1
 VERSION_B=0
-VERSION_C=9
-VERSION_D=9
+VERSION_C=12
+VERSION_D=12
 
 
 ######################################################
