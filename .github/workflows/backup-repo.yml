@@ -1,0 +1,92 @@
+name: Backup Repository to TXT
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build backup TXT file
+        run: |
+          BACKUP_FILE="repo_backup.txt"
+          REPO_NAME="${{ github.repository }}"
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          COMMIT_SHA="${{ github.sha }}"
+          BRANCH="${{ github.ref_name }}"
+
+          echo "======================================================" > "$BACKUP_FILE"
+          echo "  REPOSITORY BACKUP" >> "$BACKUP_FILE"
+          echo "======================================================" >> "$BACKUP_FILE"
+          echo "  Repo:      $REPO_NAME" >> "$BACKUP_FILE"
+          echo "  Branch:    $BRANCH" >> "$BACKUP_FILE"
+          echo "  Commit:    $COMMIT_SHA" >> "$BACKUP_FILE"
+          echo "  Timestamp: $TIMESTAMP" >> "$BACKUP_FILE"
+          echo "======================================================" >> "$BACKUP_FILE"
+          echo "" >> "$BACKUP_FILE"
+
+          # Find all files, excluding .git and the backup file itself
+          find . \
+            -type f \
+            ! -path "./.git/*" \
+            ! -name "$BACKUP_FILE" \
+            | sort \
+            | while read -r filepath; do
+
+            # Strip leading ./
+            clean_path="${filepath#./}"
+
+            echo "" >> "$BACKUP_FILE"
+            echo "######################################################" >> "$BACKUP_FILE"
+            echo "# FILE: $clean_path" >> "$BACKUP_FILE"
+            echo "######################################################" >> "$BACKUP_FILE"
+            echo "" >> "$BACKUP_FILE"
+
+            # Check if file is binary
+            if file "$filepath" | grep -qE 'binary|executable|ELF|archive|compressed|image|audio|video'; then
+              echo "[BINARY FILE - SKIPPED]" >> "$BACKUP_FILE"
+            else
+              cat "$filepath" >> "$BACKUP_FILE" 2>/dev/null || echo "[COULD NOT READ FILE]" >> "$BACKUP_FILE"
+            fi
+
+            echo "" >> "$BACKUP_FILE"
+          done
+
+          echo "" >> "$BACKUP_FILE"
+          echo "======================================================" >> "$BACKUP_FILE"
+          echo "  END OF BACKUP" >> "$BACKUP_FILE"
+          echo "======================================================" >> "$BACKUP_FILE"
+
+          echo "Backup complete. Size: $(wc -c < "$BACKUP_FILE") bytes"
+
+      - name: Upload backup as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-backup-${{ github.ref_name }}-${{ github.sha }}
+          path: repo_backup.txt
+          retention-days: 90
+
+      - name: Commit backup to repo (optional)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Only commit if there are changes
+          if ! git diff --quiet repo_backup.txt 2>/dev/null || ! git ls-files --error-unmatch repo_backup.txt 2>/dev/null; then
+            git add repo_backup.txt
+            git commit -m "chore: update repo backup [skip ci]"
+            git push
+          else
+            echo "No changes to backup file, skipping commit."
+          fi
