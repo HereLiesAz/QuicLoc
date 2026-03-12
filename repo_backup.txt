@@ -3,9 +3,26 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    f31f8767f013e20f0f95b8d6614bb0b5b6f81ff6
-  Timestamp: 2026-03-10 20:46:54 UTC
+  Commit:    8c6ec543b91ad387c782e207f3b0dd4724efa9f5
+  Timestamp: 2026-03-12 15:23:26 UTC
 ======================================================
+
+
+######################################################
+# FILE: .claude/settings.local.json
+######################################################
+
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /home/az/StudioProjects/QuicLoc -path \"*/build\" -prune -o -type f -name \"*.kt\" -o -name \"*.java\" 2>/dev/null | grep -v build)",
+      "Bash(find /home/az/StudioProjects/QuicLoc -name \"*.xml\" -path \"*/layout/*\" 2>/dev/null | grep -v build)",
+      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -30)",
+      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -20)",
+      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -15)"
+    ]
+  }
+}
 
 
 ######################################################
@@ -2644,11 +2661,11 @@ class WhitelistManager(context: Context) {
 # FILE: app/version.properties
 ######################################################
 
-#Tue Mar 10 14:42:42 CDT 2026
+#Tue Mar 10 15:51:34 CDT 2026
 VERSION_A=1
 VERSION_B=0
-VERSION_C=12
-VERSION_D=12
+VERSION_C=13
+VERSION_D=13
 
 
 ######################################################
