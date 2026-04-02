@@ -40,6 +40,7 @@ class NotificationListener : NotificationListenerService() {
             "com.Slack"                           to "Slack",
             "com.microsoft.teams"                 to "Teams",
             "com.snapchat.android"                to "Snapchat",
+            "com.google.android.apps.googlevoice" to "Google Voice",
         )
     }
 
@@ -52,9 +53,16 @@ class NotificationListener : NotificationListenerService() {
 
         // Extract message text from notification
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+        var text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
             ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
             ?: ""
+
+        // Google Voice often formats EXTRA_TEXT as "Sender Name: Message text"
+        if (packageName == "com.google.android.apps.googlevoice") {
+            if (title.isNotEmpty() && text.startsWith("$title: ")) {
+                text = text.substringAfter("$title: ")
+            }
+        }
 
         val body = text.trim().lowercase()
         Log.d(TAG, "Notification from $packageName | title='$title' | body='$body'")

@@ -60,6 +60,7 @@ class LocationReplyService : Service() {
             }
             context.startForegroundService(intent)
         }
+
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
