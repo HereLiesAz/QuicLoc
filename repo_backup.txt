@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    8c6ec543b91ad387c782e207f3b0dd4724efa9f5
-  Timestamp: 2026-03-12 15:23:26 UTC
+  Branch:    fix-google-voice-support-3733347394010487993
+  Commit:    07d7042d161e5422bbf77fe0df78d157067bb1c3
+  Timestamp: 2026-04-02 20:43:40 UTC
 ======================================================
 
 
@@ -1173,6 +1173,7 @@ class LocationReplyService : Service() {
             }
             context.startForegroundService(intent)
         }
+
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -1886,6 +1887,7 @@ class NotificationListener : NotificationListenerService() {
             "com.Slack"                           to "Slack",
             "com.microsoft.teams"                 to "Teams",
             "com.snapchat.android"                to "Snapchat",
+            "com.google.android.apps.googlevoice" to "Google Voice",
         )
     }
 
@@ -1898,9 +1900,16 @@ class NotificationListener : NotificationListenerService() {
 
         // Extract message text from notification
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+        var text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
             ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
             ?: ""
+
+        // Google Voice often formats EXTRA_TEXT as "Sender Name: Message text"
+        if (packageName == "com.google.android.apps.googlevoice") {
+            if (title.isNotEmpty() && text.startsWith("$title: ")) {
+                text = text.substringAfter("$title: ")
+            }
+        }
 
         val body = text.trim().lowercase()
         Log.d(TAG, "Notification from $packageName | title='$title' | body='$body'")
@@ -2661,11 +2670,11 @@ class WhitelistManager(context: Context) {
 # FILE: app/version.properties
 ######################################################
 
-#Tue Mar 10 15:51:34 CDT 2026
+#Thu Apr 02 20:39:38 UTC 2026
 VERSION_A=1
 VERSION_B=0
-VERSION_C=13
-VERSION_D=13
+VERSION_C=17
+VERSION_D=17
 
 
 ######################################################
