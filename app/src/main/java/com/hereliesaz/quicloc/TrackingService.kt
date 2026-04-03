@@ -64,6 +64,33 @@ class TrackingService : Service() {
     private var handler = Handler(Looper.getMainLooper())
     private var photoPathToSend: String? = null
 
+
+    private fun saveState() {
+        val prefs = getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString("sender", sender)
+            .putString("source", source)
+            .putBoolean("isPanicMode", isPanicMode)
+            .putString("photoPathToSend", photoPathToSend)
+            .apply()
+    }
+
+    private fun loadState(): Boolean {
+        val prefs = getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
+        sender = prefs.getString("sender", null)
+        source = prefs.getString("source", "Unknown") ?: "Unknown"
+        isPanicMode = prefs.getBoolean("isPanicMode", false)
+        photoPathToSend = prefs.getString("photoPathToSend", null)
+        return sender != null
+    }
+
+    private fun clearState() {
+        getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .apply()
+    }
+
     private val trackingRunnable = object : Runnable {
         override fun run() {
             sendLocationUpdate()
@@ -80,7 +107,17 @@ class TrackingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent == null) return START_NOT_STICKY
+        if (intent == null) {
+            // Restore state from SharedPreferences
+            if (!loadState()) {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            Log.d(TAG, "TrackingService restarted by system, restoring state for $sender")
+            showForegroundNotification()
+            handler.post(trackingRunnable)
+            return START_STICKY
+        }
 
         when (intent.action) {
             ACTION_STOP -> {
@@ -92,6 +129,7 @@ class TrackingService : Service() {
                 Log.d(TAG, "Entering panic mode")
                 isPanicMode = true
                 photoPathToSend = intent.getStringExtra(EXTRA_PHOTO_PATH)
+                saveState()
                 handler.removeCallbacks(trackingRunnable)
                 handler.post(trackingRunnable)
                 return START_STICKY
@@ -107,33 +145,34 @@ class TrackingService : Service() {
                 return START_NOT_STICKY
             }
 
+            saveState()
             Log.d(TAG, "Starting tracking for $sender via $source")
-
-            // Show lock screen immediately via intent
-            val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            }
-            startActivity(lockIntent)
-
-            val pendingIntent = PendingIntent.getActivity(
-                this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val notification = Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("QuicLoc Tracking Active")
-                .setContentText("Your device is currently locked and transmitting its location.")
-                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-                .setFullScreenIntent(pendingIntent, true)
-                .setOngoing(true)
-                .build()
-
-            startForeground(NOTIF_ID, notification)
-
-            // Start location ping loop
+            showForegroundNotification()
             handler.post(trackingRunnable)
         }
 
         return START_STICKY
+    }
+
+    private fun showForegroundNotification() {
+        val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+        startActivity(lockIntent)
+
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("QuicLoc Tracking Active")
+            .setContentText("Your device is currently locked and transmitting its location.")
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setFullScreenIntent(pendingIntent, true)
+            .setOngoing(true)
+            .build()
+
+        startForeground(NOTIF_ID, notification)
     }
 
     @SuppressLint("MissingPermission")
@@ -160,7 +199,7 @@ class TrackingService : Service() {
                 val settings = com.klinker.android.send_message.Settings().apply {
                     useSystemSending = true
                 }
-                val transaction = com.klinker.android.send_message.Transaction(this, settings)
+                val transaction = com.klinker.android.send_message.Transaction(this@TrackingService, settings)
                 val message = com.klinker.android.send_message.Message("QuicLoc Lock Image", targetSender)
 
                 // Add image
@@ -200,6 +239,7 @@ class TrackingService : Service() {
     }
 
     private fun stopTracking() {
+        clearState()
         handler.removeCallbacksAndMessages(null)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

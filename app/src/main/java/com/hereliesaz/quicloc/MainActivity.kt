@@ -527,11 +527,7 @@ fun QuicLocScreen(
         )
         Spacer(modifier = Modifier.height(8.dp))
         Button(
-            onClick = {
-                if (passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() }) {
-                    onSavePassphrase(passphraseInput, pinInput)
-                }
-            },
+            onClick = { onSavePassphrase(passphraseInput, pinInput) },
             enabled = passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
             modifier = Modifier.fillMaxWidth()
         ) {
