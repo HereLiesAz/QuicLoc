@@ -26,6 +26,33 @@ class WhitelistManager(context: Context) {
     // Public API
     // -------------------------------------------------------------------------
 
+    fun getMyNumber(): String {
+        return prefs.getString(KEY_MY_NUMBER, "") ?: ""
+    }
+
+    fun setMyNumber(number: String) {
+        prefs.edit().putString(KEY_MY_NUMBER, number).apply()
+    }
+
+    fun getStarredNumbers(): Set<String> {
+        return prefs.getStringSet(KEY_STARRED, emptySet()) ?: emptySet()
+    }
+
+    fun toggleStarred(number: String): Boolean {
+        val currentStarred = getStarredNumbers().toMutableSet()
+        if (currentStarred.contains(number)) {
+            currentStarred.remove(number)
+        } else {
+            if (currentStarred.size >= 3) {
+                return false // Limit reached
+            }
+            currentStarred.add(number)
+        }
+        prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+        return true
+    }
+
+
     fun addNumber(number: String) {
         val clean = cleanPhoneNumber(number)
         if (clean.isNotEmpty()) {
@@ -39,6 +66,13 @@ class WhitelistManager(context: Context) {
         val numbers = getNumbers().toMutableSet()
         numbers.remove(number)
         saveNumbers(numbers)
+
+        // Also remove from starred if deleted
+        val currentStarred = getStarredNumbers().toMutableSet()
+        if (currentStarred.contains(number)) {
+            currentStarred.remove(number)
+            prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+        }
     }
 
     fun getPassphrase(): String? {

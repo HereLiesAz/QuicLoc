@@ -28,6 +28,7 @@ class LocationReplyService : Service() {
         private const val CHANNEL_ID = "quicloc_reply"
         private const val NOTIF_ID = 1001
 
+        const val ACTION_WIDGET_TAP = "com.hereliesaz.quicloc.ACTION_WIDGET_TAP"
         const val EXTRA_SENDER = "sender"
         const val EXTRA_SOURCE = "source"         // "SMS", "WhatsApp", etc.
         const val EXTRA_REPLY_MODE = "reply_mode" // "sms" or "notification"
@@ -71,13 +72,41 @@ class LocationReplyService : Service() {
         startForeground(NOTIF_ID, buildNotification("Fetching location…"))
     }
 
+    // For handling widget taps (delay to distinguish single/double/triple taps)
+    private var widgetTapCount = 0
+    private var widgetStartId = -1
+    private val widgetTapHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val widgetTapRunnable = Runnable {
+        val count = widgetTapCount
+        val startId = widgetStartId
+        widgetTapCount = 0
+        Log.d(TAG, "Widget tap timer expired, tap count: $count")
+        LocationHelper.handleWidgetTaps(this, count) { succeeded ->
+            RequestHistoryManager(this).record("Widget ($count taps)", "Widget", succeeded)
+            stopSelf(startId)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        widgetTapHandler.removeCallbacksAndMessages(null)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) {
-            stopSelf()
+            stopSelf(startId)
             return START_NOT_STICKY
         }
 
-        val sender = intent.getStringExtra(EXTRA_SENDER) ?: run { stopSelf(); return START_NOT_STICKY }
+        if (intent.action == ACTION_WIDGET_TAP) {
+            widgetTapCount++
+            widgetStartId = startId
+            widgetTapHandler.removeCallbacks(widgetTapRunnable)
+            widgetTapHandler.postDelayed(widgetTapRunnable, 400)
+            return START_NOT_STICKY
+        }
+
+        val sender = intent.getStringExtra(EXTRA_SENDER) ?: run { stopSelf(startId); return START_NOT_STICKY }
         val source = intent.getStringExtra(EXTRA_SOURCE) ?: "Unknown"
         val replyMode = intent.getStringExtra(EXTRA_REPLY_MODE) ?: "sms"
 
@@ -90,7 +119,7 @@ class LocationReplyService : Service() {
                     phoneNumber = sender,
                     onResult = { succeeded ->
                         RequestHistoryManager(this).record(sender, source, succeeded)
-                        stopSelf()
+                        stopSelf(startId)
                     }
                 )
             }
@@ -99,7 +128,7 @@ class LocationReplyService : Service() {
                 if (action == null) {
                     Log.e(TAG, "No pending notification action found")
                     RequestHistoryManager(this).record(sender, source, false)
-                    stopSelf()
+                    stopSelf(startId)
                     return START_NOT_STICKY
                 }
                 pendingNotificationAction = null
@@ -109,11 +138,11 @@ class LocationReplyService : Service() {
                     notificationKey = "",
                     onResult = { succeeded ->
                         RequestHistoryManager(this).record(sender, source, succeeded)
-                        stopSelf()
+                        stopSelf(startId)
                     }
                 )
             }
-            else -> stopSelf()
+            else -> stopSelf(startId)
         }
 
         return START_NOT_STICKY
