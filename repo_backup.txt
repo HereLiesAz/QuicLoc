@@ -1,0 +1,3585 @@
+======================================================
+  REPOSITORY BACKUP
+======================================================
+  Repo:      HereLiesAz/QuicLoc
+  Branch:    feature/passphrase-tracking-11988746183152168490
+  Commit:    e45cfc62b06c9de249586af1f520995f3c476087
+  Timestamp: 2026-04-03 10:22:09 UTC
+======================================================
+
+
+######################################################
+# FILE: .claude/settings.local.json
+######################################################
+
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /home/az/StudioProjects/QuicLoc -path \"*/build\" -prune -o -type f -name \"*.kt\" -o -name \"*.java\" 2>/dev/null | grep -v build)",
+      "Bash(find /home/az/StudioProjects/QuicLoc -name \"*.xml\" -path \"*/layout/*\" 2>/dev/null | grep -v build)",
+      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -30)",
+      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -20)",
+      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -15)"
+    ]
+  }
+}
+
+
+######################################################
+# FILE: .github/workflows/backup-repo.yml
+######################################################
+
+name: Backup Repository to TXT
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build backup TXT file
+        run: |
+          BACKUP_FILE="repo_backup.txt"
+          REPO_NAME="${{ github.repository }}"
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          COMMIT_SHA="${{ github.sha }}"
+          BRANCH="${{ github.ref_name }}"
+
+          echo "======================================================" > "$BACKUP_FILE"
+          echo "  REPOSITORY BACKUP" >> "$BACKUP_FILE"
+          echo "======================================================" >> "$BACKUP_FILE"
+          echo "  Repo:      $REPO_NAME" >> "$BACKUP_FILE"
+          echo "  Branch:    $BRANCH" >> "$BACKUP_FILE"
+          echo "  Commit:    $COMMIT_SHA" >> "$BACKUP_FILE"
+          echo "  Timestamp: $TIMESTAMP" >> "$BACKUP_FILE"
+          echo "======================================================" >> "$BACKUP_FILE"
+          echo "" >> "$BACKUP_FILE"
+
+          # Find all files, excluding .git and the backup file itself
+          find . \
+            -type f \
+            ! -path "./.git/*" \
+            ! -name "$BACKUP_FILE" \
+            | sort \
+            | while read -r filepath; do
+
+            # Strip leading ./
+            clean_path="${filepath#./}"
+
+            echo "" >> "$BACKUP_FILE"
+            echo "######################################################" >> "$BACKUP_FILE"
+            echo "# FILE: $clean_path" >> "$BACKUP_FILE"
+            echo "######################################################" >> "$BACKUP_FILE"
+            echo "" >> "$BACKUP_FILE"
+
+            # Check if file is binary
+            if file "$filepath" | grep -qE 'binary|executable|ELF|archive|compressed|image|audio|video'; then
+              echo "[BINARY FILE - SKIPPED]" >> "$BACKUP_FILE"
+            else
+              cat "$filepath" >> "$BACKUP_FILE" 2>/dev/null || echo "[COULD NOT READ FILE]" >> "$BACKUP_FILE"
+            fi
+
+            echo "" >> "$BACKUP_FILE"
+          done
+
+          echo "" >> "$BACKUP_FILE"
+          echo "======================================================" >> "$BACKUP_FILE"
+          echo "  END OF BACKUP" >> "$BACKUP_FILE"
+          echo "======================================================" >> "$BACKUP_FILE"
+
+          echo "Backup complete. Size: $(wc -c < "$BACKUP_FILE") bytes"
+      - name: Sanitize branch name
+        run: |
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
+
+      - name: Sanitize branch name for artifact
+        id: sanitize
+        run: |
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "safe_branch=$SAFE_BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Upload backup as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-backup-${{ env.SAFE_BRANCH }}-${{ github.sha }}
+          path: repo_backup.txt
+          retention-days: 90
+
+
+      - name: Commit backup to repo (optional)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Only commit if there are changes
+          if ! git diff --quiet repo_backup.txt 2>/dev/null || ! git ls-files --error-unmatch repo_backup.txt 2>/dev/null; then
+            git add repo_backup.txt
+            git commit -m "chore: update repo backup [skip ci]"
+            git push
+          else
+            echo "No changes to backup file, skipping commit."
+          fi
+
+
+######################################################
+# FILE: .github/workflows/build-apk.yml
+######################################################
+
+name: Build and Publish QuicLoc APK
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant Execute Permission to Gradle Wrapper
+        run: chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Get App Version
+        id: version
+        run: |
+          VERSION_NAME=$(./gradlew -q :app:printVersionName)
+          echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_ENV
+
+      - name: Rename APK
+        run: |
+          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
+      - name: Sanitize branch name
+        run: |
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quicloc-apk-${{ env.SAFE_BRANCH }}-${{ github.sha }}
+          path: app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
+
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+######################################################
+# FILE: .gitignore
+######################################################
+
+# Gradle files
+.gradle/
+build/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Log/OS Files
+*.log
+
+# Android Studio generated files and folders
+captures/
+.externalNativeBuild/
+.cxx/
+*.aab
+*.apk
+output-metadata.json
+
+# IntelliJ
+*.iml
+.idea/
+misc.xml
+deploymentTargetDropDown.xml
+render.experimental.xml
+
+# Keystore files
+*.jks
+*.keystore
+
+# Google Services (e.g. APIs or Firebase)
+google-services.json
+
+# Android Profiling
+*.hprof
+/app/release/baselineProfiles/0/app-release.dm
+/app/release/baselineProfiles/1/app-release.dm
+
+
+######################################################
+# FILE: DECLARATIONS.md
+######################################################
+
+# Google Play Declarations for QuicLoc
+
+This document contains the text to submit for each sensitive permission declaration
+required by Google Play. Navigate to **Play Console → App content** and complete
+each section below.
+
+---
+
+## 1. SMS or Call Log Permissions Declaration
+
+**Location in Play Console:**
+> App content → Sensitive app permissions → SMS or Call Log
+
+**Is your app's core functionality an SMS/MMS app, or does it require SMS access for a reason not available through the SMS Intent API?**
+Select: **No — SMS access is needed but it is not a messaging app**
+
+**Describe why your app needs SMS permissions:**
+
+> QuicLoc is a personal safety utility. It monitors incoming SMS messages solely to detect a user-defined trigger word ("loc" or "quicloc") sent by phone numbers the user has explicitly pre-approved in a private, encrypted whitelist. When the trigger word is detected from an approved number, the app automatically replies with the device's current GPS location as a Google Maps link. No SMS content is stored, logged, uploaded, or shared. The app never reads, modifies, or transmits any SMS message content other than detecting the trigger word and sending a single automated reply. SMS intent APIs cannot be used because the app must function passively in the background while the device is idle.
+
+---
+
+## 2. Notification Listener Permission Declaration
+
+**Location in Play Console:**
+> App content → Sensitive app permissions → Notification access
+
+**Does your app use NotificationListenerService?**
+Select: **Yes**
+
+**Describe what your app does with notification access and why it is necessary:**
+
+> QuicLoc uses NotificationListenerService to extend its location-sharing trigger detection to messaging apps beyond SMS (such as WhatsApp, Telegram, and Signal). The service reads only the notification title and body text to check whether they contain the trigger word "loc" or "quicloc" from a pre-approved contact. If the trigger is detected from an approved contact, the app replies via the notification's built-in inline reply action with the device's GPS location as a Google Maps link. No notification content is stored, logged, uploaded, or transmitted anywhere. The service does not read, record, or process notification content from any app or contact not on the user's encrypted whitelist.
+
+---
+
+## 3. Background Location Declaration
+
+**Location in Play Console:**
+> App content → Sensitive app permissions → Background location
+
+**Does your app access location in the background?**
+Select: **Yes**
+
+**Describe why your app needs background location access:**
+
+> QuicLoc's core function is to respond to incoming location requests automatically, including when the device screen is off and the app is not in the foreground. When a trigger message is received from a whitelisted contact, the app must obtain the device's current GPS coordinates to send a location reply. This is the sole purpose of background location access. The location is used only to generate a Google Maps link sent to the requesting contact. Location is never obtained proactively, stored, logged, or transmitted to any server or third party.
+
+**Provide a video demonstrating the background location use:**
+> Record a short screen recording showing:
+> 1. Opening QuicLoc and adding a phone number to the whitelist
+> 2. Locking the device / closing the app
+> 3. Sending "loc" from another device to trigger a response
+> 4. The automatic GPS reply arriving on the sending device
+>
+> Upload this to YouTube (unlisted) and paste the link in the Play Console form.
+
+---
+
+## 4. Data Safety Section
+
+**Location in Play Console:**
+> App content → Data safety
+
+Fill in the Data safety form as follows:
+
+### Does your app collect or share any of the required user data types?
+**No** — QuicLoc does not collect any data. It does not transmit any user data to the developer or any third party. The only outbound data is the location reply sent directly from the device to the requesting contact via SMS or notification reply, which is the explicit intended function of the app.
+
+### Data types to declare as NOT collected:
+- Location — not collected (obtained on demand, used in-memory, discarded)
+- Personal info — not collected
+- Financial info — not collected
+- Health and fitness — not collected
+- Messages — not collected
+- Photos and videos — not collected
+- Audio files — not collected
+- Files and docs — not collected
+- Calendar — not collected
+- Contacts — not collected
+- App activity — not collected
+- Web browsing — not collected
+- App info and performance — not collected
+- Device or other IDs — not collected
+
+### Is all data encrypted in transit?
+**N/A** — No data is transmitted to any server. The only transmission is the SMS/notification reply sent directly to the requesting contact through standard Android system APIs.
+
+### Can users request data deletion?
+**Yes** — All user data (the whitelist) is stored locally on-device and can be deleted at any time by removing entries in the app or uninstalling the app entirely.
+
+---
+
+## 5. App Category and Content Rating
+
+**Category:** Tools / Utilities
+
+**Content Rating Questionnaire:**
+Answer **No** to all questions about violence, sexual content, and controlled substances.
+
+The app will receive a rating of **Everyone**.
+
+---
+
+## Notes for Review
+
+If Google Play reviewers contact you for additional clarification, use this response template:
+
+> QuicLoc is a single-purpose personal safety tool. Its only function is to allow a user's pre-approved trusted contacts to request the user's location by sending a keyword. The app responds automatically with a Google Maps link. All sensitive permissions (SMS, notification access, background location) are used exclusively for this single function. No data is collected, stored server-side, or shared with any third party including the developer. The whitelist of approved contacts is encrypted on-device using Android Keystore-backed AES-256 encryption and is protected by biometric authentication. The app has no network connectivity of its own — it uses only Android system APIs and Google Play Services for GPS.
+
+
+######################################################
+# FILE: LICENSE
+######################################################
+
+This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or
+distribute this software, either in source code form or as a compiled
+binary, for any purpose, commercial or non-commercial, and by any
+means.
+
+In jurisdictions that recognize copyright laws, the author or authors
+of this software dedicate any and all copyright interest in the
+software to the public domain. We make this dedication for the benefit
+of the public at large and to the detriment of our heirs and
+successors. We intend this dedication to be an overt act of
+relinquishment in perpetuity of all present and future rights to this
+software under copyright law.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+For more information, please refer to <https://unlicense.org>
+
+
+######################################################
+# FILE: PRIVACY_POLICY.md
+######################################################
+
+# Privacy Policy for QuicLoc
+
+**Last updated:** March 10, 2026
+**App:** QuicLoc (`com.hereliesaz.quicloc`)
+**Developer:** HereLiesAz
+
+---
+
+## Overview
+
+QuicLoc is a personal utility that allows trusted contacts to request your location by sending a specific trigger word via SMS or any messaging app. This policy explains exactly what data the app accesses, what it does with it, and what it never does.
+
+The short version: **QuicLoc does not collect, store, transmit, or share any of your data with anyone — including the developer.** Everything stays on your device.
+
+---
+
+## Data the App Accesses
+
+### 1. SMS Messages
+QuicLoc receives incoming SMS messages to check whether they contain the trigger words `loc` or `quicloc`. It reads only the sender's phone number and the message body. No message content is stored, logged, or transmitted anywhere. Messages from numbers not on your whitelist are ignored immediately and discarded.
+
+### 2. Notifications
+QuicLoc listens to incoming notifications from messaging apps (such as WhatsApp, Telegram, and Signal) to detect the same trigger words. It reads only the notification title (used as the sender identifier) and the notification text. No notification content is stored, logged, or transmitted anywhere. Notifications from contacts not on your whitelist are ignored immediately and discarded.
+
+### 3. Location
+When a valid trigger is received from a whitelisted contact, QuicLoc obtains the device's current GPS location. This location is used solely to generate a Google Maps link, which is sent back to the requesting contact via SMS or inline notification reply. The location is never stored, logged, or sent anywhere other than directly to the requesting contact.
+
+### 4. Whitelist (Phone Numbers and Contact Names)
+The whitelist of trusted contacts you configure is stored locally on your device using Android's `EncryptedSharedPreferences`, backed by the Android Keystore with AES-256-GCM encryption. This data never leaves your device.
+
+---
+
+## Data the App Does NOT Access
+
+- Your contacts list
+- Your call history
+- Your camera or microphone
+- Your files or photos
+- Any account credentials
+- Any data from messaging apps beyond detecting the trigger word in a notification
+
+---
+
+## Data Sharing
+
+QuicLoc shares **no data** with the developer, third parties, analytics services, advertising networks, or any external server. There are no SDKs, no analytics libraries, no crash reporters, and no network calls made by the app other than the Google Play Services location API (used locally on-device to obtain GPS coordinates).
+
+The only outbound data is the Google Maps location link sent as an SMS reply or notification reply directly to the contact who requested it — which is the entire intended function of the app.
+
+---
+
+## Data Retention
+
+QuicLoc retains no data beyond what is explicitly stored by you:
+
+- **Whitelist entries** — stored on-device, encrypted, until you delete them via the app UI.
+- **Location** — obtained on demand, used to construct a reply, then immediately discarded. Never written to disk.
+- **Messages and notifications** — read in memory, checked against the whitelist, then immediately discarded. Never written to disk.
+
+---
+
+## Security
+
+- The whitelist is encrypted using `EncryptedSharedPreferences` with AES-256-GCM (values) and AES-256-SIV (keys), backed by the Android Keystore.
+- The app requires biometric authentication (fingerprint, face, or device PIN) to open and modify the whitelist.
+- Background location and SMS/notification processing occur without displaying any UI, and cannot be accessed or modified without passing biometric authentication.
+
+---
+
+## Permissions Explained
+
+| Permission | Why it is needed |
+|---|---|
+| `RECEIVE_SMS` | To detect the trigger word in incoming SMS messages |
+| `SEND_SMS` | To send the location reply via SMS |
+| `ACCESS_FINE_LOCATION` | To obtain a precise GPS location to share |
+| `ACCESS_COARSE_LOCATION` | Fallback if fine location is unavailable |
+| `ACCESS_BACKGROUND_LOCATION` | To obtain location while the app is not in the foreground (required for the core function) |
+| `USE_BIOMETRIC` / `USE_FINGERPRINT` | To authenticate the user before allowing access to the whitelist |
+| `BIND_NOTIFICATION_LISTENER_SERVICE` | To detect the trigger word in notifications from non-SMS messaging apps |
+
+---
+
+## Children's Privacy
+
+QuicLoc is not directed at children under the age of 13 and does not knowingly collect any information from children.
+
+---
+
+## Changes to This Policy
+
+If this policy is updated, the "Last updated" date at the top will change. Continued use of the app after any changes constitutes acceptance of the updated policy.
+
+---
+
+## Contact
+
+If you have questions about this privacy policy, please open an issue at:
+**https://github.com/HereLiesAz/QuicLoc**
+
+
+######################################################
+# FILE: README.md
+######################################################
+
+# QuicLoc
+
+**QuicLoc** is an Android utility that lets trusted contacts request your real-time GPS location by sending a single keyword — via SMS or any messaging app. It responds automatically, even when your screen is off.
+
+---
+
+## How It Works
+
+1. You add a contact's phone number or display name to an encrypted, biometric-protected whitelist.
+2. That contact sends you the message `loc` or `quicloc` (case-insensitive) from any messaging app.
+3. QuicLoc detects the trigger, fetches your current GPS location, and replies automatically with a Google Maps link.
+
+No app needs to be open. No buttons need to be pressed.
+
+---
+
+## Features
+
+- **Works across messaging apps** — responds to SMS, WhatsApp, Telegram, Signal, Google Messages, Messenger, and any app that supports notification inline replies.
+- **Encrypted whitelist** — trusted contacts are stored using AES-256-GCM encryption backed by the Android Keystore. The data never leaves your device.
+- **Biometric protection** — the app requires fingerprint, face unlock, or device PIN to open. Falls back to PIN/pattern if no biometric is enrolled.
+- **Reliable location** — uses a three-stage fallback (GPS fix → cached location → forced update) to ensure a location is returned even from a cold start.
+- **Fully background** — operates silently when the screen is off. Auto-replies work without the app being open or unlocked.
+- **Passphrase & Device Lock** — Set a 10-150 character single-use passphrase and a 6-digit PIN. Sending the passphrase starts a 5-minute location tracking interval and forces a lock screen on the device. Failing the PIN 3 times captures a photo of the intruder and escalates tracking to 1-minute intervals with MMS image updates.
+- **No data collection** — no analytics, no crash reporters, no servers. Nothing leaves your device except the location reply sent directly to the requesting contact.
+
+---
+
+## Permissions
+
+| Permission | Purpose |
+|---|---|
+| `RECEIVE_SMS` | Detect the trigger word in incoming SMS messages |
+| `SEND_SMS` | Send the location reply via SMS |
+| `ACCESS_FINE_LOCATION` | Obtain a precise GPS location |
+| `ACCESS_COARSE_LOCATION` | Fallback if fine location is unavailable |
+| `ACCESS_BACKGROUND_LOCATION` | Obtain location while the app is not in the foreground |
+| `USE_BIOMETRIC` / `USE_FINGERPRINT` | Authenticate the user before allowing whitelist access |
+| `BIND_NOTIFICATION_LISTENER_SERVICE` | Detect the trigger word in non-SMS messaging apps |
+
+---
+
+## Setup
+
+1. Install the APK (download from [Releases](../../releases)).
+2. Open QuicLoc and authenticate with your fingerprint or PIN.
+3. Grant all requested permissions. When prompted, also grant **Notification Access** in system settings — this enables responses in WhatsApp, Telegram, and other apps.
+4. Add the phone numbers or contact names of people you want to allow to request your location.
+5. Done. QuicLoc runs silently in the background.
+
+### First-time permission note
+
+Android requires **Background Location** to be granted separately after foreground location. The app will walk you through this. On Android 11+, you must tap *"Allow all the time"* in the location settings screen — the app cannot request this directly.
+
+---
+
+## Privacy
+
+QuicLoc does not collect, store, transmit, or share any user data with the developer or any third party. See [PRIVACY_POLICY.md](./PRIVACY_POLICY.md) for the full policy.
+
+---
+
+## Architecture
+
+QuicLoc is written in Kotlin using Jetpack Compose for the UI. Core components:
+
+- **`SmsReceiver`** — `BroadcastReceiver` that intercepts incoming SMS and checks for the trigger word from whitelisted numbers. Uses `goAsync()` for safe background work.
+- **`NotificationListener`** — `NotificationListenerService` that monitors incoming notifications from all messaging apps and replies via their inline reply action.
+- **`LocationHelper`** — obtains the device's GPS location using Fused Location Provider with a three-stage fallback: `getCurrentLocation()` → `lastLocation` → `requestLocationUpdates()` with a 15-second timeout.
+- **`WhitelistManager`** — manages trusted contacts using `EncryptedSharedPreferences` (AES-256-GCM, Android Keystore). Automatically migrates any existing plaintext data on first upgrade.
+- **`BiometricHelper`** — wraps `BiometricPrompt` to gate UI access with fingerprint, face, or device PIN. The background components are unaffected by authentication state.
+
+---
+
+## Building
+
+QuicLoc is a standard Gradle Android project targeting API 36 with a minimum of API 26 (Android 8.0).
+
+```bash
+./gradlew assembleDebug
+```
+
+The APK will be at `app/build/outputs/apk/debug/`.
+
+### Versioning
+
+Versions follow the scheme **A.B.C.D**:
+
+| Segment | Meaning |
+|---|---|
+| `A` | Major version — incremented manually by the developer |
+| `B` | Feature version — incremented when significant features are added |
+| `C` | Build count within the current `B` version — auto-increments on every build |
+| `D` | Absolute total build count — auto-increments on every build, used as `versionCode` |
+
+Version state is tracked in `app/version.properties`.
+
+---
+
+## Google Play
+
+This app uses sensitive permissions (`NotificationListenerService`, background location, SMS) that require manual review by Google Play. See [DECLARATIONS.md](./DECLARATIONS.md) for the full Play Console declaration text and Data Safety form guidance.
+
+---
+
+## License
+
+This is free and unencumbered software released into the public domain. See [LICENSE](./LICENSE) for details.
+
+
+######################################################
+# FILE: app/build.gradle.kts
+######################################################
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+import java.util.Properties
+import java.io.FileInputStream
+import java.io.FileOutputStream
+
+android {
+    namespace = "com.hereliesaz.quicloc"
+    compileSdk = 36
+
+    val versionPropsFile = file("version.properties")
+    val versionProps = Properties()
+
+    if (versionPropsFile.canRead()) {
+        versionProps.load(FileInputStream(versionPropsFile))
+    } else {
+        versionProps["VERSION_A"] = "1"
+        versionProps["VERSION_B"] = "0"
+        versionProps["VERSION_C"] = "0"
+        versionProps["VERSION_D"] = "0"
+    }
+
+    val runTasks = gradle.startParameter.taskNames
+    val isBuilding = runTasks.any { it.contains("assemble") || it.contains("bundle") }
+
+    var vA = versionProps["VERSION_A"].toString().toInt()
+    var vB = versionProps["VERSION_B"].toString().toInt()
+    var vC = versionProps["VERSION_C"].toString().toInt()
+    var vD = versionProps["VERSION_D"].toString().toInt()
+
+    if (isBuilding) {
+        vD += 1
+        vC += 1
+        versionProps["VERSION_D"] = vD.toString()
+        versionProps["VERSION_C"] = vC.toString()
+        versionProps.store(FileOutputStream(versionPropsFile), null)
+    }
+
+    val finalVersionName = "${vA}.${vB}.${vC}.${vD}"
+    val finalVersionCode = vD
+
+    defaultConfig {
+        applicationId = "com.hereliesaz.quicloc"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = finalVersionCode
+        versionName = finalVersionName
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+    buildFeatures {
+        compose = true
+    }
+}
+
+tasks.register("printVersionName") {
+    doLast {
+        println(android.defaultConfig.versionName)
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("com.google.android.material:material:1.13.0")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+
+    // MMS Sending
+    implementation("com.klinkerapps:android-smsmms:5.2.6")
+
+    // CameraX
+    val camerax_version = "1.3.1"
+    implementation("androidx.camera:camera-core:${camerax_version}")
+    implementation("androidx.camera:camera-camera2:${camerax_version}")
+    implementation("androidx.camera:camera-lifecycle:${camerax_version}")
+    implementation("androidx.camera:camera-view:${camerax_version}")
+
+
+    // Encrypted SharedPreferences — keys managed by Android Keystore
+    implementation("androidx.security:security-crypto:1.1.0")
+
+    // Biometric authentication
+    implementation("androidx.biometric:biometric:1.2.0-alpha05")
+
+    val composeBom = platform("androidx.compose:compose-bom:2025.01.00")
+    implementation(composeBom)
+    androidTestImplementation(composeBom)
+
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+
+    implementation("androidx.activity:activity-compose:1.12.4")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
+
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+}
+
+
+######################################################
+# FILE: app/src/main/AndroidManifest.xml
+######################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@drawable/icon"
+        android:roundIcon="@drawable/icon"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.QuicLoc">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <receiver
+            android:name=".SmsReceiver"
+            android:exported="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            Foreground service that handles location fetch + reply.
+            Uses foregroundServiceType="location" so Android 14+ allows
+            background location access from a foreground service.
+        -->
+        <service
+            android:name=".LocationReplyService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <!--
+            NotificationListenerService — triggers Google Play manual review.
+            You MUST submit a Declaration in Play Console:
+              App content > Sensitive app permissions > Notification access
+            Suggested text: "QuicLoc reads incoming message notifications solely
+            to detect the trigger word 'loc' from user-approved contacts and
+            reply with the device's location. No message content is stored,
+            logged, transmitted, or shared with any third party."
+        -->
+        <service
+            android:name=".NotificationListener"
+            android:label="@string/notification_listener_label"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <activity
+            android:name=".TrackingLockActivity"
+            android:theme="@style/Theme.QuicLoc"
+            android:showOnLockScreen="true"
+            android:showForAllUsers="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:exported="false" />
+
+        <service
+            android:name=".TrackingService"
+            android:exported="false"
+            android:foregroundServiceType="location|camera" />
+
+    </application>
+</manifest>
+
+
+######################################################
+# FILE: app/src/main/ic_launcher-playstore.png
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/BiometricHelper-1.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
+import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
+
+object BiometricHelper {
+
+    // Allow fingerprint, face, iris — fall back to PIN/pattern/password
+    // if no biometric is enrolled. This way the app is never locked out.
+    private const val AUTHENTICATORS = BIOMETRIC_STRONG or DEVICE_CREDENTIAL
+
+    /**
+     * Returns true if this device can authenticate at all.
+     * If false, skip biometric gating entirely (don't lock users out on
+     * devices with no security set up).
+     */
+    fun canAuthenticate(activity: FragmentActivity): Boolean {
+        val manager = BiometricManager.from(activity)
+        return when (manager.canAuthenticate(AUTHENTICATORS)) {
+            BiometricManager.BIOMETRIC_SUCCESS -> true
+            else -> false
+        }
+    }
+
+    /**
+     * Show the biometric prompt. Calls [onSuccess] if authenticated,
+     * [onFailure] with a human-readable reason if not.
+     *
+     * Falls back to PIN/pattern/password automatically if no biometric
+     * is enrolled — the user will never be hard-locked out.
+     */
+    fun authenticate(
+        activity: FragmentActivity,
+        title: String = "Verify it's you",
+        subtitle: String = "Authenticate to access QuicLoc",
+        onSuccess: () -> Unit,
+        onFailure: (reason: String) -> Unit
+    ) {
+        if (!canAuthenticate(activity)) {
+            // Device has no lock screen set up at all — let them in
+            // but show a warning (handled in MainActivity)
+            onSuccess()
+            return
+        }
+
+        val executor = ContextCompat.getMainExecutor(activity)
+
+        val callback = object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                onSuccess()
+            }
+
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                // User cancelled or too many attempts — don't let them in
+                onFailure(errString.toString())
+            }
+
+            override fun onAuthenticationFailed() {
+                // Single failed attempt (wrong finger etc.) — prompt stays open,
+                // the system handles retry UI, so no action needed here
+            }
+        }
+
+        val prompt = BiometricPrompt(activity, executor, callback)
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle(title)
+            .setSubtitle(subtitle)
+            .setAllowedAuthenticators(AUTHENTICATORS)
+            .build()
+
+        prompt.authenticate(promptInfo)
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/LocationHelper.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.annotation.SuppressLint
+import android.app.Notification
+import android.app.RemoteInput
+import android.content.Context
+import android.content.Intent
+import android.location.Location
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.telephony.SmsManager
+import android.util.Log
+import com.google.android.gms.location.*
+import com.google.android.gms.tasks.CancellationTokenSource
+
+object LocationHelper {
+    private const val TAG = "QuicLoc.LocationHelper"
+
+    // Total time we'll wait across all three stages before giving up.
+    // 30 seconds is enough for a cold GPS fix in most conditions.
+    private const val LOCATION_TIMEOUT_MS = 30_000L
+
+    // -------------------------------------------------------------------------
+    // SMS reply — called from LocationReplyService (no PendingResult needed)
+    // -------------------------------------------------------------------------
+
+    @SuppressLint("MissingPermission")
+    fun getCurrentLocationAndReply(
+        context: Context,
+        phoneNumber: String,
+        onResult: ((succeeded: Boolean) -> Unit)? = null
+    ) {
+        fetchLocation(context,
+            onSuccess = { location ->
+                val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
+                sendSms(context, phoneNumber, "QuicLoc Location:\n$mapsLink")
+                onResult?.invoke(true)
+            },
+            onFailure = { msg ->
+                sendSms(context, phoneNumber, "QuicLoc Error: $msg")
+                onResult?.invoke(false)
+            }
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // Notification inline-reply — called from LocationReplyService
+    // -------------------------------------------------------------------------
+
+    @SuppressLint("MissingPermission")
+    fun getCurrentLocationAndReplyViaNotification(
+        context: Context,
+        replyAction: Notification.Action,
+        notificationKey: String,
+        onResult: ((succeeded: Boolean) -> Unit)? = null
+    ) {
+        fetchLocation(context,
+            onSuccess = { location ->
+                val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
+                sendNotificationReply(context, replyAction, "QuicLoc: $mapsLink")
+                onResult?.invoke(true)
+            },
+            onFailure = { msg ->
+                sendNotificationReply(context, replyAction, "QuicLoc Error: $msg")
+                onResult?.invoke(false)
+            }
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // Widget tap handling
+    // -------------------------------------------------------------------------
+
+    @SuppressLint("MissingPermission")
+    fun handleWidgetTaps(context: Context, tapCount: Int, onResult: ((succeeded: Boolean) -> Unit)? = null) {
+        val whitelistManager = WhitelistManager(context)
+        val destinations = mutableListOf<String>()
+        var suffix = ""
+
+        if (tapCount == 1) {
+            val myNumber = whitelistManager.getMyNumber()
+            if (myNumber.isNotBlank()) {
+                destinations.add(myNumber)
+            }
+            suffix = " #Parking"
+        } else if (tapCount == 2) {
+            destinations.addAll(whitelistManager.getStarredNumbers())
+            suffix = " #SafetyCheck"
+        } else if (tapCount >= 3) {
+            destinations.addAll(whitelistManager.getNumbers())
+            suffix = " #Emergency"
+        }
+
+        if (destinations.isEmpty()) {
+            Log.e(TAG, "No destinations configured for tap count $tapCount")
+            onResult?.invoke(false)
+            return
+        }
+
+        fetchLocation(context,
+            onSuccess = { location ->
+                val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
+                val message = "QuicLoc Location:\n$mapsLink$suffix"
+                for (dest in destinations) {
+                    sendSms(context, dest, message)
+                }
+                onResult?.invoke(true)
+            },
+            onFailure = { msg ->
+                val message = "QuicLoc Error: $msg$suffix"
+                for (dest in destinations) {
+                    sendSms(context, dest, message)
+                }
+                onResult?.invoke(false)
+            }
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // Core location fetch — three-stage fallback with a single 30s deadline:
+    //
+    //   Stage 1: getCurrentLocation() HIGH_ACCURACY
+    //            Fast if a recent fix exists. Returns null on cold start.
+    //
+    //   Stage 2: lastLocation
+    //            Instant. May be stale but better than nothing if stages 1 & 3
+    //            both fail.
+    //
+    //   Stage 3: requestLocationUpdates()
+    //            Forces the GPS radio on. Always works if location services are
+    //            enabled. May take 20-30 seconds on a cold start outdoors.
+    //
+    // The 30-second deadline applies to the entire chain. If all three stages
+    // are exhausted or time runs out, onFailure is called and the service stops.
+    // -------------------------------------------------------------------------
+
+    @SuppressLint("MissingPermission")
+    private fun fetchLocation(
+        context: Context,
+        onSuccess: (Location) -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        val fusedClient = LocationServices.getFusedLocationProviderClient(context)
+        val deadline = System.currentTimeMillis() + LOCATION_TIMEOUT_MS
+        val handler = Handler(Looper.getMainLooper())
+        var done = false
+
+        fun finish(success: Boolean, location: Location? = null, msg: String = "") {
+            if (done) return
+            done = true
+            handler.removeCallbacksAndMessages(null)
+            if (success && location != null) onSuccess(location) else onFailure(msg)
+        }
+
+        // Hard deadline — fires if all stages are still running
+        handler.postDelayed({
+            finish(false, msg = "Location timed out after ${LOCATION_TIMEOUT_MS / 1000}s. Is GPS enabled?")
+        }, LOCATION_TIMEOUT_MS)
+
+        try {
+            // Stage 1
+            val cts = CancellationTokenSource()
+            fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
+                .addOnCompleteListener { task ->
+                    if (done) return@addOnCompleteListener
+                    val loc = task.result
+                    if (task.isSuccessful && loc != null) {
+                        Log.d(TAG, "Stage 1 success")
+                        finish(true, loc)
+                    } else {
+                        Log.w(TAG, "Stage 1 null — trying lastLocation")
+                        // Stage 2
+                        fusedClient.lastLocation.addOnCompleteListener { t2 ->
+                            if (done) return@addOnCompleteListener
+                            val loc2 = t2.result
+                            if (t2.isSuccessful && loc2 != null) {
+                                Log.d(TAG, "Stage 2 success (age ${System.currentTimeMillis() - loc2.time}ms)")
+                                finish(true, loc2)
+                            } else {
+                                Log.w(TAG, "Stage 2 null — requesting fresh update")
+                                // Stage 3
+                                val timeLeft = deadline - System.currentTimeMillis()
+                                if (timeLeft <= 0) {
+                                    finish(false, msg = "Location timed out before stage 3 could start.")
+                                    return@addOnCompleteListener
+                                }
+                                val request = LocationRequest.Builder(
+                                    Priority.PRIORITY_HIGH_ACCURACY, 1000L
+                                )
+                                    .setMaxUpdates(1)
+                                    .setWaitForAccurateLocation(false)
+                                    .setMaxUpdateDelayMillis(timeLeft)
+                                    .build()
+
+                                val callback = object : LocationCallback() {
+                                    override fun onLocationResult(result: LocationResult) {
+                                        fusedClient.removeLocationUpdates(this)
+                                        val loc3 = result.lastLocation
+                                        if (loc3 != null) {
+                                            Log.d(TAG, "Stage 3 success")
+                                            finish(true, loc3)
+                                        } else {
+                                            finish(false, msg = "Could not obtain a location fix.")
+                                        }
+                                    }
+
+                                    override fun onLocationAvailability(avail: LocationAvailability) {
+                                        if (!avail.isLocationAvailable) {
+                                            fusedClient.removeLocationUpdates(this)
+                                            finish(false, msg = "Location services are disabled on this device.")
+                                        }
+                                    }
+                                }
+                                fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
+                            }
+                        }
+                    }
+                }
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Missing location permission", e)
+            finish(false, msg = "Location permission not granted.")
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // SMS sending
+    // -------------------------------------------------------------------------
+
+    private fun sendSms(context: Context, phoneNumber: String, message: String) {
+        try {
+            val smsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                context.getSystemService(SmsManager::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
+            }
+            if (smsManager != null) {
+                val parts = smsManager.divideMessage(message)
+                if (parts.size > 1) {
+                    smsManager.sendMultipartTextMessage(phoneNumber, null, parts, null, null)
+                } else {
+                    smsManager.sendTextMessage(phoneNumber, null, message, null, null)
+                }
+            } else {
+                Log.e(TAG, "Failed to get SmsManager")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send SMS", e)
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Notification inline reply
+    // -------------------------------------------------------------------------
+
+    private fun sendNotificationReply(
+        context: Context,
+        action: Notification.Action,
+        replyText: String
+    ) {
+        try {
+            val remoteInputs = action.remoteInputs ?: return
+            val intent = Intent()
+            val bundle = Bundle()
+            for (remoteInput in remoteInputs) {
+                bundle.putCharSequence(remoteInput.resultKey, replyText)
+            }
+            RemoteInput.addResultsToIntent(remoteInputs, intent, bundle)
+            action.actionIntent.send(context, 0, intent)
+            Log.d(TAG, "Sent notification reply: $replyText")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send notification reply", e)
+        }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/LocationReplyService.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.os.IBinder
+import android.util.Log
+
+/**
+ * Foreground service that fetches the device's location and sends a reply.
+ *
+ * Why a Service instead of goAsync():
+ *   BroadcastReceiver.goAsync() only buys 10 seconds before Android kills the
+ *   process. GPS acquisition from a cold start can take 20-30 seconds in poor
+ *   conditions. A foreground service has no such time limit and survives as long
+ *   as needed (up to our own 30-second timeout), then stops itself.
+ *
+ * Started by SmsReceiver and NotificationListener. Stops itself once a reply
+ * is sent or the timeout is reached.
+ */
+class LocationReplyService : Service() {
+
+    companion object {
+        private const val TAG = "QuicLoc.ReplyService"
+        private const val CHANNEL_ID = "quicloc_reply"
+        private const val NOTIF_ID = 1001
+
+        const val ACTION_WIDGET_TAP = "com.hereliesaz.quicloc.ACTION_WIDGET_TAP"
+        const val EXTRA_SENDER = "sender"
+        const val EXTRA_SOURCE = "source"         // "SMS", "WhatsApp", etc.
+        const val EXTRA_REPLY_MODE = "reply_mode" // "sms" or "notification"
+
+        // Parcelable-friendly: pass notification action fields separately
+        // (Notification.Action isn't easily parcelable across process boundaries)
+        // For notification replies we pass the action via a static holder instead.
+        var pendingNotificationAction: Notification.Action? = null
+
+        fun startForSms(context: Context, sender: String) {
+            val intent = Intent(context, LocationReplyService::class.java).apply {
+                putExtra(EXTRA_SENDER, sender)
+                putExtra(EXTRA_SOURCE, "SMS")
+                putExtra(EXTRA_REPLY_MODE, "sms")
+            }
+            context.startForegroundService(intent)
+        }
+
+        fun startForNotification(
+            context: Context,
+            sender: String,
+            source: String,
+            action: Notification.Action
+        ) {
+            pendingNotificationAction = action
+            val intent = Intent(context, LocationReplyService::class.java).apply {
+                putExtra(EXTRA_SENDER, sender)
+                putExtra(EXTRA_SOURCE, source)
+                putExtra(EXTRA_REPLY_MODE, "notification")
+            }
+            context.startForegroundService(intent)
+        }
+
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+        startForeground(NOTIF_ID, buildNotification("Fetching location…"))
+    }
+
+    // For handling widget taps (delay to distinguish single/double/triple taps)
+    private var widgetTapCount = 0
+    private var widgetStartId = -1
+    private val widgetTapHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val widgetTapRunnable = Runnable {
+        val count = widgetTapCount
+        val startId = widgetStartId
+        widgetTapCount = 0
+        Log.d(TAG, "Widget tap timer expired, tap count: $count")
+        LocationHelper.handleWidgetTaps(this, count) { succeeded ->
+            RequestHistoryManager(this).record("Widget ($count taps)", "Widget", succeeded)
+            stopSelf(startId)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        widgetTapHandler.removeCallbacksAndMessages(null)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent == null) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+
+        if (intent.action == ACTION_WIDGET_TAP) {
+            widgetTapCount++
+            widgetStartId = startId
+            widgetTapHandler.removeCallbacks(widgetTapRunnable)
+            widgetTapHandler.postDelayed(widgetTapRunnable, 400)
+            return START_NOT_STICKY
+        }
+
+        val sender = intent.getStringExtra(EXTRA_SENDER) ?: run { stopSelf(startId); return START_NOT_STICKY }
+        val source = intent.getStringExtra(EXTRA_SOURCE) ?: "Unknown"
+        val replyMode = intent.getStringExtra(EXTRA_REPLY_MODE) ?: "sms"
+
+        Log.d(TAG, "Starting location fetch for $sender via $source (mode=$replyMode)")
+
+        when (replyMode) {
+            "sms" -> {
+                LocationHelper.getCurrentLocationAndReply(
+                    context = this,
+                    phoneNumber = sender,
+                    onResult = { succeeded ->
+                        RequestHistoryManager(this).record(sender, source, succeeded)
+                        stopSelf(startId)
+                    }
+                )
+            }
+            "notification" -> {
+                val action = pendingNotificationAction
+                if (action == null) {
+                    Log.e(TAG, "No pending notification action found")
+                    RequestHistoryManager(this).record(sender, source, false)
+                    stopSelf(startId)
+                    return START_NOT_STICKY
+                }
+                pendingNotificationAction = null
+                LocationHelper.getCurrentLocationAndReplyViaNotification(
+                    context = this,
+                    replyAction = action,
+                    notificationKey = "",
+                    onResult = { succeeded ->
+                        RequestHistoryManager(this).record(sender, source, succeeded)
+                        stopSelf(startId)
+                    }
+                )
+            }
+            else -> stopSelf(startId)
+        }
+
+        return START_NOT_STICKY
+    }
+
+    // -------------------------------------------------------------------------
+    // Foreground notification (required to keep the service alive)
+    // -------------------------------------------------------------------------
+
+    private fun buildNotification(text: String): Notification {
+        return Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("QuicLoc")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setOngoing(true)
+            .build()
+    }
+
+    private fun createNotificationChannel() {
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "QuicLoc Location Reply",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Shown briefly while QuicLoc is fetching your location to reply to a request."
+            setShowBadge(false)
+        }
+        getSystemService(NotificationManager::class.java)
+            .createNotificationChannel(channel)
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.Manifest
+import android.content.ComponentName
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Bundle
+import android.provider.ContactsContract
+import android.provider.Settings
+import android.text.TextUtils
+import android.widget.Toast
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.biometric.BiometricManager
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
+
+class MainActivity : FragmentActivity() {   // FragmentActivity required by BiometricPrompt
+
+    private lateinit var whitelistManager: WhitelistManager
+
+    // Tracks whether the user has passed biometric auth this session.
+    // Set to false whenever the app is backgrounded, so re-auth is required on return.
+    private var isAuthenticated = false
+
+    private val REQUIRED_PERMISSIONS = arrayOf(
+        Manifest.permission.RECEIVE_SMS,
+        Manifest.permission.SEND_SMS,
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION
+    )
+
+    private val backgroundLocationLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (!isGranted) {
+            Toast.makeText(
+                this,
+                "Background location permission is required for QuicLoc to work when the app is closed.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        checkNotificationListenerPermission()
+    }
+
+    private val multiplePermissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val hasSms = permissions[Manifest.permission.RECEIVE_SMS] == true &&
+                permissions[Manifest.permission.SEND_SMS] == true
+        val hasLocation = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+
+        if (hasSms && hasLocation) {
+            checkBackgroundLocationPermission()
+        } else {
+            Toast.makeText(
+                this,
+                "SMS and Location permissions are required for QuicLoc to function.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    // Compose state — hoisted so biometric callback and launchers can update it
+    private var authState = mutableStateOf(false)
+    private var numbersState = mutableStateOf<List<String>>(emptyList())
+    private var starredState = mutableStateOf<Set<String>>(emptySet())
+    private var myNumberState = mutableStateOf("")
+
+    private val readContactsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        // Whether granted or not, open the picker — we'll get name regardless,
+        // and phone numbers only if READ_CONTACTS was granted.
+        contactPickerLauncher.launch(null)
+    }
+
+    private val contactPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.PickContact()
+    ) { uri ->
+        if (uri != null) handleContactPicked(uri)
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
+        whitelistManager = WhitelistManager(this)
+        numbersState.value = whitelistManager.getNumbers().toList()
+        starredState.value = whitelistManager.getStarredNumbers()
+        myNumberState.value = whitelistManager.getMyNumber()
+
+        setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                val authenticated by authState
+
+                if (!authenticated) {
+                    BiometricGateScreen(
+                        onRetry = { promptBiometric() }
+                    )
+                } else {
+
+                    val numbersList by numbersState
+                    val starredSet by starredState
+                    val myNumber by myNumberState
+                    var currentPassphrase by remember { mutableStateOf(whitelistManager.getPassphrase() ?: "") }
+                    var currentPin by remember { mutableStateOf(whitelistManager.getPin() ?: "") }
+
+                    var notificationAccessGranted by remember {
+                        mutableStateOf(isNotificationListenerEnabled())
+                    }
+                    var showHistory by remember { mutableStateOf(false) }
+
+                    Scaffold(
+                        topBar = {
+                            TopAppBar(
+                                title = { Text(if (showHistory) "Request History" else "QuicLoc") },
+                                colors = TopAppBarDefaults.topAppBarColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                ),
+                                actions = {
+                                    IconButton(onClick = { showHistory = !showHistory }) {
+                                        Icon(
+                                            imageVector = Icons.Default.List,
+                                            contentDescription = if (showHistory) "Back to config" else "View history",
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                }
+                            )
+                        }
+                    ) { innerPadding ->
+                        if (showHistory) {
+                            HistoryScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                historyManager = RequestHistoryManager(this@MainActivity)
+                            )
+                        } else {
+                            QuicLocScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                numbersList = numbersList,
+                                starredSet = starredSet,
+                                myNumber = myNumber,
+                                notificationAccessGranted = notificationAccessGranted,
+                                noLockScreenWarning = !BiometricHelper.canAuthenticate(this@MainActivity),
+                                onRequestNotificationAccess = {
+                                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                                },
+                                onAddNumber = { number ->
+                                    if (number.isNotBlank()) {
+                                        whitelistManager.addNumber(number)
+                                        numbersState.value = whitelistManager.getNumbers().toList()
+                                        Toast.makeText(this, "Added to whitelist", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                onRemoveNumber = { number ->
+                                    whitelistManager.removeNumber(number)
+                                    numbersState.value = whitelistManager.getNumbers().toList()
+                                    starredState.value = whitelistManager.getStarredNumbers()
+                                },
+                                onPickContact = { launchContactPicker() },
+                                onToggleStar = { number ->
+                                    val success = whitelistManager.toggleStarred(number)
+                                    if (!success) {
+                                        Toast.makeText(this@MainActivity, "You can only star up to 3 contacts.", Toast.LENGTH_SHORT).show()
+                                    }
+                                    starredState.value = whitelistManager.getStarredNumbers()
+                                },
+                                                                onMyNumberChanged = { number ->
+                                    whitelistManager.setMyNumber(number)
+                                    myNumberState.value = whitelistManager.getMyNumber()
+                                },
+                                currentPassphrase = currentPassphrase,
+                                currentPin = currentPin,
+                                onSavePassphrase = { newPassphrase, newPin ->
+                                    whitelistManager.setPassphrase(newPassphrase)
+                                    whitelistManager.setPin(newPin)
+                                    currentPassphrase = newPassphrase
+                                    currentPin = newPin
+
+                                    // Request CAMERA permission if not granted
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        androidx.core.app.ActivityCompat.requestPermissions(this@MainActivity, arrayOf(android.Manifest.permission.CAMERA), 10)
+                                    }
+                                    // Request SYSTEM_ALERT_WINDOW if not granted
+                                    if (!android.provider.Settings.canDrawOverlays(this@MainActivity)) {
+                                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName"))
+                                        startActivity(intent)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Re-auth every time the app comes to the foreground
+        if (!isAuthenticated) {
+            promptBiometric()
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Lock the app when it goes to the background
+        isAuthenticated = false
+        authState.value = false
+    }
+
+    // -------------------------------------------------------------------------
+    // Biometric prompt
+    // -------------------------------------------------------------------------
+
+    private fun promptBiometric() {
+        BiometricHelper.authenticate(
+            activity = this,
+            onSuccess = {
+                isAuthenticated = true
+                authState.value = true
+                checkPermissions()
+            },
+            onFailure = { reason ->
+                isAuthenticated = false
+                authState.value = false
+                // User cancelled or failed — show the lock screen UI with retry
+                Toast.makeText(this, "Authentication required: $reason", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // Contact picker
+    // -------------------------------------------------------------------------
+
+    private fun launchContactPicker() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            readContactsLauncher.launch(Manifest.permission.READ_CONTACTS)
+        } else {
+            contactPickerLauncher.launch(null)
+        }
+    }
+
+    private fun handleContactPicked(uri: Uri) {
+        val contactProjection = arrayOf(
+            ContactsContract.Contacts._ID,
+            ContactsContract.Contacts.DISPLAY_NAME_PRIMARY
+        )
+        contentResolver.query(uri, contactProjection, null, null, null)?.use { cursor ->
+            if (!cursor.moveToFirst()) return
+            val id = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.Contacts._ID))
+            val name = cursor.getString(
+                cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
+            ) ?: return
+
+            // Always store the display name — this is what notification-based apps send
+            whitelistManager.addNumber(name)
+
+            // Also store phone numbers for SMS matching
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
+                == PackageManager.PERMISSION_GRANTED
+            ) {
+                contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                    "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                    arrayOf(id),
+                    null
+                )?.use { phoneCursor ->
+                    while (phoneCursor.moveToNext()) {
+                        val number = phoneCursor.getString(
+                            phoneCursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                        )
+                        if (!number.isNullOrBlank()) whitelistManager.addNumber(number)
+                    }
+                }
+            }
+
+            numbersState.value = whitelistManager.getNumbers().toList()
+            Toast.makeText(this, "Added $name to whitelist", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Permissions
+    // -------------------------------------------------------------------------
+
+    private fun checkPermissions() {
+        val hasSms = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
+        val hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasSms || !hasLocation) {
+            multiplePermissionsLauncher.launch(REQUIRED_PERMISSIONS)
+        } else {
+            checkBackgroundLocationPermission()
+        }
+    }
+
+    private fun checkBackgroundLocationPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                return
+            }
+        }
+        checkNotificationListenerPermission()
+    }
+
+    private fun checkNotificationListenerPermission() {
+        if (!isNotificationListenerEnabled()) {
+            Toast.makeText(
+                this,
+                "Grant Notification Access so QuicLoc can respond in WhatsApp, Telegram, and other apps.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    private fun isNotificationListenerEnabled(): Boolean {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+        if (!TextUtils.isEmpty(flat)) {
+            val names = flat.split(":").toTypedArray()
+            for (name in names) {
+                val cn = ComponentName.unflattenFromString(name)
+                if (cn != null && packageName == cn.packageName) return true
+            }
+        }
+        return false
+    }
+}
+
+// -------------------------------------------------------------------------
+// Lock screen shown before auth passes
+// -------------------------------------------------------------------------
+
+@Composable
+fun BiometricGateScreen(onRetry: () -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "🔒",
+                style = MaterialTheme.typography.displayLarge
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "QuicLoc",
+                style = MaterialTheme.typography.headlineMedium
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Authentication required",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(onClick = onRetry) {
+                Text("Unlock")
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// Main UI
+// -------------------------------------------------------------------------
+
+@Composable
+fun QuicLocScreen(
+    modifier: Modifier = Modifier,
+    numbersList: List<String>,
+    starredSet: Set<String>,
+    myNumber: String,
+    notificationAccessGranted: Boolean,
+    noLockScreenWarning: Boolean,
+    onRequestNotificationAccess: () -> Unit,
+    onAddNumber: (String) -> Unit,
+    onRemoveNumber: (String) -> Unit,
+    onPickContact: () -> Unit,
+    currentPassphrase: String = "",
+    currentPin: String = "",
+    onSavePassphrase: (String, String) -> Unit = { _, _ -> },
+    onToggleStar: (String) -> Unit = {},
+    onMyNumberChanged: (String) -> Unit = {}
+) {
+    var phoneNumberInput by remember { mutableStateOf("") }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "QuicLoc Configuration",
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
+
+        // Warn if device has no lock screen (biometrics were bypassed)
+        if (noLockScreenWarning) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+            ) {
+                Text(
+                    text = "⚠ No lock screen set up. Set a PIN, pattern, or fingerprint in system settings to protect this app.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+
+        // Notification access banner
+        if (!notificationAccessGranted) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = "⚠ Notification Access Required",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Text(
+                        text = "To respond in WhatsApp, Telegram, Signal, and other apps, QuicLoc needs Notification Access permission.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                    )
+                    Button(
+                        onClick = onRequestNotificationAccess,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Grant Notification Access")
+                    }
+                }
+            }
+        } else {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            ) {
+                Text(
+                    text = "✓ Notification Access granted — QuicLoc will respond in all messaging apps.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Single-Use Tracking Passphrase",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        var passphraseInput by remember(currentPassphrase) { mutableStateOf(currentPassphrase) }
+        var pinInput by remember(currentPin) { mutableStateOf(currentPin) }
+
+        OutlinedTextField(
+            value = passphraseInput,
+            onValueChange = { if (it.length <= 150) passphraseInput = it },
+            label = { Text("Passphrase (10-150 chars)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = pinInput,
+            onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) pinInput = it },
+            label = { Text("6-Digit PIN") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(
+            onClick = {
+                if (passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() }) {
+                    onSavePassphrase(passphraseInput, pinInput)
+                }
+            },
+            enabled = passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Save Passphrase & PIN")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = "Whitelist a contact:",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        OutlinedTextField(
+            value = myNumber,
+            onValueChange = { onMyNumberChanged(it) },
+            label = { Text("My Phone Number (For Parking Widget)") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            singleLine = true
+        )
+
+        Button(
+            onClick = onPickContact,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(
+                imageVector = Icons.Default.Person,
+                contentDescription = null,
+                modifier = Modifier.padding(end = 8.dp)
+            )
+            Text("Pick from Contacts")
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = phoneNumberInput,
+                onValueChange = { phoneNumberInput = it },
+                label = { Text("Or type name / number manually") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                modifier = Modifier.weight(1f),
+                singleLine = true
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Button(onClick = {
+                onAddNumber(phoneNumberInput)
+                phoneNumberInput = ""
+            }) {
+                Text("Add")
+            }
+        }
+
+        Text(
+            text = "Whitelisted:",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 24.dp, bottom = 8.dp)
+        )
+
+        LazyColumn(modifier = Modifier.fillMaxWidth()) {
+            items(numbersList) { number ->
+                val isStarred = starredSet.contains(number)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = number,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { onToggleStar(number) }) {
+                        Icon(
+                            imageVector = if (isStarred) Icons.Default.Star else Icons.Outlined.Star,
+                            contentDescription = if (isStarred) "Unstar" else "Star",
+                            tint = if (isStarred) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = { onRemoveNumber(number) }) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Remove"
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// History screen
+// -------------------------------------------------------------------------
+
+@Composable
+fun HistoryScreen(
+    modifier: Modifier = Modifier,
+    historyManager: RequestHistoryManager
+) {
+    val history = remember { historyManager.getHistory() }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        if (history.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "No location requests yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                items(history) { event ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (event.succeeded)
+                                MaterialTheme.colorScheme.surfaceVariant
+                            else
+                                MaterialTheme.colorScheme.errorContainer
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = event.sender,
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Text(
+                                    text = "${event.source} · ${event.formattedTime}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = if (event.succeeded) "✓" else "✗",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (event.succeeded)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/NotificationListener.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.app.Notification
+import android.content.Intent
+import android.os.Bundle
+import android.service.notification.NotificationListenerService
+import android.service.notification.StatusBarNotification
+import android.util.Log
+
+/**
+ * Listens for notifications from ANY messaging app and responds via
+ * the notification's inline reply action when a whitelisted contact
+ * sends the trigger word "loc" or "quicloc".
+ *
+ * Supports: WhatsApp, Telegram, Signal, Google Messages, Samsung Messages,
+ * Facebook Messenger, and any app that posts notifications with a reply action.
+ *
+ * Requires: User grants "Notification Access" to QuicLoc in system settings.
+ */
+class NotificationListener : NotificationListenerService() {
+
+    companion object {
+        private const val TAG = "QuicLoc.NotifListener"
+
+        // Packages we care about — covers the major messaging apps.
+        // Empty set = listen to all apps (broader but noisier).
+        private val MESSAGING_PACKAGES = mapOf(
+            "com.whatsapp"                        to "WhatsApp",
+            "com.whatsapp.w4b"                    to "WhatsApp Business",
+            "org.telegram.messenger"              to "Telegram",
+            "org.thoughtcrime.securesms"          to "Signal",
+            "com.google.android.apps.messaging"   to "Google Messages",
+            "com.samsung.android.messaging"       to "Samsung Messages",
+            "com.facebook.orca"                   to "Messenger",
+            "com.facebook.mlite"                  to "Messenger Lite",
+            "com.viber.voip"                      to "Viber",
+            "com.skype.raider"                    to "Skype",
+            "com.discord"                         to "Discord",
+            "io.github.nickcox.slank"             to "Slack",
+            "com.Slack"                           to "Slack",
+            "com.microsoft.teams"                 to "Teams",
+            "com.snapchat.android"                to "Snapchat",
+            "com.google.android.apps.googlevoice" to "Google Voice",
+        )
+    }
+
+    override fun onNotificationPosted(sbn: StatusBarNotification) {
+        val packageName = sbn.packageName
+        val appName = MESSAGING_PACKAGES[packageName] ?: packageName
+
+        val notification = sbn.notification ?: return
+        val extras: Bundle = notification.extras ?: return
+
+        // Extract message text from notification
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
+        var text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+            ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+            ?: ""
+
+        // Google Voice often formats EXTRA_TEXT as "Sender Name: Message text"
+        if (packageName == "com.google.android.apps.googlevoice") {
+            if (title.isNotEmpty() && text.startsWith("$title: ")) {
+                text = text.substringAfter("$title: ")
+            }
+        }
+
+        val body = text.trim().lowercase()
+        Log.d(TAG, "Notification from $packageName | title='$title' | body='$body'")
+
+        val whitelistManager = WhitelistManager(applicationContext)
+        val passphrase = whitelistManager.getPassphrase()
+        val isPassphraseTrigger = passphrase != null && passphrase.isNotEmpty() &&
+            (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
+
+        if (isPassphraseTrigger) {
+            Log.d(TAG, "Passphrase trigger from '$title' via $packageName — starting TrackingService")
+            whitelistManager.setPassphrase(null) // single-use
+
+            // Start tracking service
+            TrackingService.startForNotification(
+                applicationContext,
+                sender = title,
+                source = appName
+            )
+            return
+        }
+
+        if (body != "loc" && body != "quicloc") return
+
+        // Check whitelist — use title as sender identifier (display name or number)
+        if (!whitelistManager.isWhitelistedByName(title)) {
+            Log.d(TAG, "Sender '$title' not whitelisted, ignoring.")
+            return
+        }
+
+        Log.d(TAG, "Trigger from '$title' via $packageName — fetching location")
+
+        // Get the inline reply action from the notification
+        val replyAction = findReplyAction(notification)
+
+        if (replyAction != null) {
+            Log.d(TAG, "Starting LocationReplyService for '$title' via $appName")
+            LocationReplyService.startForNotification(
+                applicationContext,
+                sender = title,
+                source = appName,
+                action = replyAction
+            )
+        } else {
+            Log.w(TAG, "No reply action found for notification from $packageName")
+            RequestHistoryManager(applicationContext).record(
+                sender = title,
+                source = appName,
+                succeeded = false
+            )
+        }
+    }
+
+    /**
+     * Finds the inline reply RemoteInput action on a notification.
+     * This is the action that powers "Reply" from notification shade.
+     */
+    private fun findReplyAction(notification: Notification): Notification.Action? {
+        val actions = notification.actions ?: return null
+        return actions.firstOrNull { action ->
+            action.remoteInputs?.isNotEmpty() == true
+        }
+    }
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        // Not needed, but required to override
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/RequestHistoryManager.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import org.json.JSONArray
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+data class RequestEvent(
+    val timestamp: Long,
+    val sender: String,
+    val source: String,       // "SMS", "WhatsApp", "Telegram", etc.
+    val succeeded: Boolean,   // false if location fetch failed
+) {
+    val formattedTime: String
+        get() = SimpleDateFormat("MMM d, yyyy  h:mm a", Locale.getDefault())
+            .format(Date(timestamp))
+}
+
+class RequestHistoryManager(context: Context) {
+
+    companion object {
+        private const val TAG = "QuicLoc.History"
+        private const val PREFS_FILE = "quicloc_history"
+        private const val KEY_HISTORY = "history"
+        private const val MAX_ENTRIES = 100
+    }
+
+    private val prefs: SharedPreferences = createEncryptedPrefs(context)
+
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
+    fun record(sender: String, source: String, succeeded: Boolean) {
+        val events = getHistory().toMutableList()
+        events.add(0, RequestEvent(
+            timestamp = System.currentTimeMillis(),
+            sender = sender,
+            source = source,
+            succeeded = succeeded
+        ))
+        // Cap at MAX_ENTRIES to avoid unbounded growth
+        val trimmed = if (events.size > MAX_ENTRIES) events.take(MAX_ENTRIES) else events
+        saveHistory(trimmed)
+        Log.d(TAG, "Recorded request from $sender via $source (success=$succeeded)")
+    }
+
+    fun getHistory(): List<RequestEvent> {
+        val json = prefs.getString(KEY_HISTORY, null) ?: return emptyList()
+        return try {
+            val array = JSONArray(json)
+            (0 until array.length()).map { i ->
+                val obj = array.getJSONObject(i)
+                RequestEvent(
+                    timestamp = obj.getLong("timestamp"),
+                    sender = obj.getString("sender"),
+                    source = obj.getString("source"),
+                    succeeded = obj.getBoolean("succeeded")
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse history", e)
+            emptyList()
+        }
+    }
+
+    fun clearHistory() {
+        prefs.edit().remove(KEY_HISTORY).apply()
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal
+    // -------------------------------------------------------------------------
+
+    private fun saveHistory(events: List<RequestEvent>) {
+        val array = JSONArray()
+        for (event in events) {
+            val obj = JSONObject()
+            obj.put("timestamp", event.timestamp)
+            obj.put("sender", event.sender)
+            obj.put("source", event.source)
+            obj.put("succeeded", event.succeeded)
+            array.put(obj)
+        }
+        prefs.edit().putString(KEY_HISTORY, array.toString()).apply()
+    }
+
+    private fun createEncryptedPrefs(context: Context): SharedPreferences {
+        return try {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            EncryptedSharedPreferences.create(
+                context,
+                PREFS_FILE,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Falling back to plaintext prefs for history", e)
+            context.getSharedPreferences("${PREFS_FILE}_fallback", Context.MODE_PRIVATE)
+        }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/SmsReceiver.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.provider.Telephony
+import android.util.Log
+
+class SmsReceiver : BroadcastReceiver() {
+
+    companion object {
+        private const val TAG = "QuicLoc.SmsReceiver"
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
+
+        val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
+        if (messages.isNullOrEmpty()) return
+
+        // Reassemble multi-part SMS by sender
+        val messagesBySender = mutableMapOf<String, StringBuilder>()
+        for (smsMessage in messages) {
+            val sender = smsMessage.displayOriginatingAddress ?: continue
+            messagesBySender.getOrPut(sender) { StringBuilder() }
+                .append(smsMessage.messageBody)
+        }
+
+        val whitelistManager = WhitelistManager(context)
+
+        for ((sender, bodyBuilder) in messagesBySender) {
+            val body = bodyBuilder.toString().trim().lowercase()
+            Log.d(TAG, "SMS from $sender: '$body'")
+
+            val passphrase = whitelistManager.getPassphrase()
+            val isPassphraseTrigger = passphrase != null && passphrase.isNotEmpty() &&
+                (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
+
+            if (isPassphraseTrigger) {
+                Log.d(TAG, "Passphrase trigger from $sender — starting TrackingService")
+                // Invalidate passphrase (single-use)
+                whitelistManager.setPassphrase(null)
+
+                // Start tracking service
+                TrackingService.startForSms(context, sender)
+                continue
+            }
+
+            if (!whitelistManager.isWhitelisted(sender)) {
+                Log.d(TAG, "Sender $sender not whitelisted, ignoring.")
+                continue
+            }
+
+            if (body == "loc" || body == "quicloc") {
+                Log.d(TAG, "Trigger from $sender — starting LocationReplyService")
+                // Hand off to the foreground service immediately.
+                // The receiver returns in milliseconds; the service does the
+                // actual GPS wait and reply with no time limit.
+                LocationReplyService.startForSms(context, sender)
+            }
+        }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import java.io.File
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+
+class TrackingLockActivity : ComponentActivity() {
+
+    companion object {
+        private const val TAG = "QuicLoc.TrackingLockActivity"
+    }
+
+    private var failCount = 0
+    private var imageCapture: ImageCapture? = null
+    private lateinit var cameraExecutor: ExecutorService
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Window flags for lock screen behavior
+        window.addFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+            android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+            android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+            android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+        )
+
+        cameraExecutor = Executors.newSingleThreadExecutor()
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            startCamera()
+        } else {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
+        }
+
+        setContent {
+            MaterialTheme {
+                LockScreenUI(
+                    onPinEntered = { pin ->
+                        val expectedPin = WhitelistManager(this).getPin()
+                        if (pin == expectedPin) {
+                            TrackingService.stopTracking(this)
+                            finishAndRemoveTask()
+                        } else {
+                            failCount++
+                            if (failCount >= 3) {
+                                triggerPanicMode()
+                            } else {
+                                Toast.makeText(this, "Incorrect PIN", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    override fun onBackPressed() {
+        // Prevent back button
+    }
+
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 10 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            startCamera()
+        }
+    }
+
+    override fun onUserLeaveHint() {
+
+        super.onUserLeaveHint()
+        if (!isFinishing) {
+            val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            startActivity(intent)
+        }
+    }
+
+
+    private fun startCamera() {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+        cameraProviderFuture.addListener({
+            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
+            imageCapture = ImageCapture.Builder().build()
+            val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+            try {
+                cameraProvider.unbindAll()
+                cameraProvider.bindToLifecycle(this, cameraSelector, imageCapture)
+            } catch(exc: Exception) {
+                Log.e(TAG, "Use case binding failed", exc)
+            }
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+
+    private fun triggerPanicMode() {
+        Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
+        val currentCapture = imageCapture
+        if (currentCapture == null) {
+            Log.e(TAG, "Image capture is null, entering panic mode without photo")
+            TrackingService.enterPanicMode(this@TrackingLockActivity, null)
+            return
+        }
+
+        val photoFile = File(externalMediaDirs.firstOrNull(), "${System.currentTimeMillis()}_lock.jpg")
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
+
+        currentCapture.takePicture(
+            outputOptions, ContextCompat.getMainExecutor(this), object : ImageCapture.OnImageSavedCallback {
+                override fun onError(exc: ImageCaptureException) {
+                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
+                    TrackingService.enterPanicMode(this@TrackingLockActivity, null)
+                }
+
+                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    Log.d(TAG, "Photo capture succeeded: ${photoFile.absolutePath}")
+                    TrackingService.enterPanicMode(this@TrackingLockActivity, photoFile.absolutePath)
+                }
+            })
+    }
+override fun onDestroy() {
+        super.onDestroy()
+        cameraExecutor.shutdown()
+    }
+}
+
+@Composable
+fun LockScreenUI(onPinEntered: (String) -> Unit) {
+    var pin by remember { mutableStateOf("") }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "Device Tracking Active",
+                style = MaterialTheme.typography.headlineMedium
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(
+                value = pin,
+                onValueChange = { pin = it },
+                label = { Text("Enter 6-digit PIN to unlock") },
+                singleLine = true
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(onClick = { onPinEntered(pin) }) {
+                Text("Unlock")
+            }
+        }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.annotation.SuppressLint
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.util.Log
+
+class TrackingService : Service() {
+
+    companion object {
+        private const val TAG = "QuicLoc.TrackingService"
+        private const val CHANNEL_ID = "quicloc_tracking"
+        private const val NOTIF_ID = 2002
+
+        const val EXTRA_SENDER = "sender"
+        const val EXTRA_SOURCE = "source"
+        const val ACTION_STOP = "com.hereliesaz.quicloc.STOP_TRACKING"
+        const val ACTION_PANIC_MODE = "com.hereliesaz.quicloc.PANIC_MODE"
+        const val EXTRA_PHOTO_PATH = "photo_path"
+
+        fun startForSms(context: Context, sender: String) {
+            val intent = Intent(context, TrackingService::class.java).apply {
+                putExtra(EXTRA_SENDER, sender)
+                putExtra(EXTRA_SOURCE, "SMS")
+            }
+            context.startForegroundService(intent)
+        }
+
+        fun startForNotification(context: Context, sender: String, source: String) {
+            val intent = Intent(context, TrackingService::class.java).apply {
+                putExtra(EXTRA_SENDER, sender)
+                putExtra(EXTRA_SOURCE, source)
+            }
+            context.startForegroundService(intent)
+        }
+
+        fun stopTracking(context: Context) {
+            val intent = Intent(context, TrackingService::class.java).apply {
+                action = ACTION_STOP
+            }
+            context.startService(intent)
+        }
+
+        fun enterPanicMode(context: Context, photoPath: String?) {
+            val intent = Intent(context, TrackingService::class.java).apply {
+                action = ACTION_PANIC_MODE
+                putExtra(EXTRA_PHOTO_PATH, photoPath)
+            }
+            context.startService(intent)
+        }
+    }
+
+    private var sender: String? = null
+    private var source: String = "Unknown"
+    private var isPanicMode = false
+    private var handler = Handler(Looper.getMainLooper())
+    private var photoPathToSend: String? = null
+
+    private val trackingRunnable = object : Runnable {
+        override fun run() {
+            sendLocationUpdate()
+            val interval = if (isPanicMode) 60_000L else 300_000L // 1 min or 5 min
+            handler.postDelayed(this, interval)
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent == null) return START_NOT_STICKY
+
+        when (intent.action) {
+            ACTION_STOP -> {
+                Log.d(TAG, "Stopping tracking service")
+                stopTracking()
+                return START_NOT_STICKY
+            }
+            ACTION_PANIC_MODE -> {
+                Log.d(TAG, "Entering panic mode")
+                isPanicMode = true
+                photoPathToSend = intent.getStringExtra(EXTRA_PHOTO_PATH)
+                handler.removeCallbacks(trackingRunnable)
+                handler.post(trackingRunnable)
+                return START_STICKY
+            }
+        }
+
+        if (sender == null) {
+            sender = intent.getStringExtra(EXTRA_SENDER)
+            source = intent.getStringExtra(EXTRA_SOURCE) ?: "Unknown"
+
+            if (sender == null) {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+
+            Log.d(TAG, "Starting tracking for $sender via $source")
+
+            // Show lock screen immediately via intent
+            val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            }
+            startActivity(lockIntent)
+
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = Notification.Builder(this, CHANNEL_ID)
+                .setContentTitle("QuicLoc Tracking Active")
+                .setContentText("Your device is currently locked and transmitting its location.")
+                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+                .setFullScreenIntent(pendingIntent, true)
+                .setOngoing(true)
+                .build()
+
+            startForeground(NOTIF_ID, notification)
+
+            // Start location ping loop
+            handler.post(trackingRunnable)
+        }
+
+        return START_STICKY
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun sendLocationUpdate() {
+        val targetSender = sender ?: return
+        Log.d(TAG, "Fetching location for tracking update...")
+        LocationHelper.getCurrentLocationAndReply(
+            context = this,
+            phoneNumber = targetSender,
+            onResult = { succeeded ->
+                // Also send photo if in panic mode, regardless of location success
+                if (isPanicMode && photoPathToSend != null) {
+                    sendMmsPhoto(targetSender, photoPathToSend!!)
+                }
+            }
+        )
+    }
+
+    private fun sendMmsPhoto(targetSender: String, photoPath: String) {
+        // Run on background thread to avoid ANR
+        Thread {
+            Log.d(TAG, "Sending MMS photo to $targetSender from $photoPath")
+            try {
+                val settings = com.klinker.android.send_message.Settings().apply {
+                    useSystemSending = true
+                }
+                val transaction = com.klinker.android.send_message.Transaction(this, settings)
+                val message = com.klinker.android.send_message.Message("QuicLoc Lock Image", targetSender)
+
+                // Add image
+                val file = java.io.File(photoPath)
+                if (file.exists()) {
+                    val options = android.graphics.BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+
+                    // Calculate inSampleSize
+                    var inSampleSize = 1
+                    val reqWidth = 800
+                    val reqHeight = 800
+                    if (options.outHeight > reqHeight || options.outWidth > reqWidth) {
+                        val halfHeight = options.outHeight / 2
+                        val halfWidth = options.outWidth / 2
+                        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                            inSampleSize *= 2
+                        }
+                    }
+
+                    options.inJustDecodeBounds = false
+                    options.inSampleSize = inSampleSize
+
+                    val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+                    message.setImage(bitmap)
+                    transaction.sendNewMessage(message, com.klinker.android.send_message.Transaction.NO_THREAD_ID)
+                    Log.d(TAG, "MMS enqueued via library")
+                } else {
+                    Log.e(TAG, "Photo file not found: $photoPath")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send MMS", e)
+            }
+        }.start()
+    }
+
+    private fun stopTracking() {
+        handler.removeCallbacksAndMessages(null)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun createNotificationChannel() {
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "QuicLoc Tracking",
+            NotificationManager.IMPORTANCE_HIGH // HIGH required for full screen intent
+        ).apply {
+            description = "Active when your device is locked and being tracked."
+        }
+        getSystemService(NotificationManager::class.java)
+            .createNotificationChannel(channel)
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/WhitelistAdapter.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageButton
+import android.widget.TextView
+import androidx.recyclerview.widget.RecyclerView
+
+class WhitelistAdapter(
+    private var numbers: List<String>,
+    private val onDeleteClick: (String) -> Unit
+) : RecyclerView.Adapter<WhitelistAdapter.ViewHolder>() {
+
+    class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val phoneText: TextView = view.findViewById(R.id.phoneNumberText)
+        val deleteBtn: ImageButton = view.findViewById(R.id.deleteButton)
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+        val view = LayoutInflater.from(parent.context)
+            .inflate(R.layout.whitelist_item, parent, false)
+        return ViewHolder(view)
+    }
+
+    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+        val number = numbers[position]
+        holder.phoneText.text = number
+        holder.deleteBtn.setOnClickListener { onDeleteClick(number) }
+    }
+
+    override fun getItemCount() = numbers.size
+
+    fun updateNumbers(newNumbers: List<String>) {
+        numbers = newNumbers
+        notifyDataSetChanged()
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/WhitelistManager.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.telephony.PhoneNumberUtils
+import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+
+class WhitelistManager(context: Context) {
+
+    companion object {
+        private const val TAG = "QuicLoc.Whitelist"
+        private const val ENCRYPTED_PREFS_FILE = "quicloc_secure_prefs"
+        private const val LEGACY_PREFS_FILE = "quicloc_prefs"
+        private const val KEY_WHITELIST = "whitelist"
+        private const val KEY_MY_NUMBER = "my_number"
+        private const val KEY_STARRED = "starred"
+    private const val KEY_PASSPHRASE = "passphrase"
+    private const val KEY_PIN = "pin"
+    }
+
+    private val prefs: SharedPreferences = createEncryptedPrefs(context).also {
+        migrateLegacyPrefs(context, it)
+    }
+
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
+    fun getMyNumber(): String {
+        return prefs.getString(KEY_MY_NUMBER, "") ?: ""
+    }
+
+    fun setMyNumber(number: String) {
+        prefs.edit().putString(KEY_MY_NUMBER, number).apply()
+    }
+
+    fun getStarredNumbers(): Set<String> {
+        return prefs.getStringSet(KEY_STARRED, emptySet()) ?: emptySet()
+    }
+
+    fun toggleStarred(number: String): Boolean {
+        val currentStarred = getStarredNumbers().toMutableSet()
+        if (currentStarred.contains(number)) {
+            currentStarred.remove(number)
+        } else {
+            if (currentStarred.size >= 3) {
+                return false // Limit reached
+            }
+            currentStarred.add(number)
+        }
+        prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+        return true
+    }
+
+
+    fun addNumber(number: String) {
+        val clean = cleanPhoneNumber(number)
+        if (clean.isNotEmpty()) {
+            val numbers = getNumbers().toMutableSet()
+            numbers.add(clean)
+            saveNumbers(numbers)
+        }
+    }
+
+    fun removeNumber(number: String) {
+        val numbers = getNumbers().toMutableSet()
+        numbers.remove(number)
+        saveNumbers(numbers)
+
+        // Also remove from starred if deleted
+        val currentStarred = getStarredNumbers().toMutableSet()
+        if (currentStarred.contains(number)) {
+            currentStarred.remove(number)
+            prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+        }
+    }
+
+    fun getPassphrase(): String? {
+        return prefs.getString(KEY_PASSPHRASE, null)
+    }
+
+    fun setPassphrase(passphrase: String?) {
+        prefs.edit().putString(KEY_PASSPHRASE, passphrase).apply()
+    }
+
+    fun getPin(): String? {
+        return prefs.getString(KEY_PIN, null)
+    }
+
+    fun setPin(pin: String?) {
+        prefs.edit().putString(KEY_PIN, pin).apply()
+    }
+
+    fun getNumbers(): Set<String> {
+        return prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
+    }
+
+    /**
+     * Used for SMS: matches by phone number, tolerating formatting differences
+     * (+1, dashes, spaces, etc.)
+     */
+    fun isWhitelisted(number: String): Boolean {
+        val cleanIncoming = cleanPhoneNumber(number)
+        return getNumbers().any { whitelisted ->
+            PhoneNumberUtils.compare(cleanIncoming, whitelisted)
+        }
+    }
+
+    /**
+     * Used for notifications: matches by display name OR phone number.
+     * Notification senders may show a contact name rather than a raw number.
+     */
+    fun isWhitelistedByName(displayName: String): Boolean {
+        val nameLower = displayName.trim().lowercase()
+        return getNumbers().any { entry ->
+            val entryLower = entry.trim().lowercase()
+            entryLower == nameLower ||
+                PhoneNumberUtils.compare(cleanPhoneNumber(displayName), cleanPhoneNumber(entry))
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal helpers
+    // -------------------------------------------------------------------------
+
+    private fun saveNumbers(numbers: Set<String>) {
+        prefs.edit().putStringSet(KEY_WHITELIST, numbers).apply()
+    }
+
+    private fun cleanPhoneNumber(number: String): String {
+        return number.replace(Regex("[^0-9+]"), "")
+    }
+
+    // -------------------------------------------------------------------------
+    // Encryption setup
+    // -------------------------------------------------------------------------
+
+    private fun createEncryptedPrefs(context: Context): SharedPreferences {
+        return try {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+
+            EncryptedSharedPreferences.create(
+                context,
+                ENCRYPTED_PREFS_FILE,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (e: Exception) {
+            // If the Keystore is unavailable (e.g. after a factory reset with
+            // Direct Boot), fall back to plaintext so the app doesn't hard-crash.
+            // The next cold boot after the user unlocks will recreate the key.
+            Log.e(TAG, "Failed to create EncryptedSharedPreferences, falling back to plaintext", e)
+            context.getSharedPreferences(ENCRYPTED_PREFS_FILE + "_fallback", Context.MODE_PRIVATE)
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // One-time migration from old plaintext prefs
+    // -------------------------------------------------------------------------
+
+    private fun migrateLegacyPrefs(context: Context, encryptedPrefs: SharedPreferences) {
+        val legacyPrefs = context.getSharedPreferences(LEGACY_PREFS_FILE, Context.MODE_PRIVATE)
+        val legacyNumbers = legacyPrefs.getStringSet(KEY_WHITELIST, null) ?: return
+
+        // Only migrate if the encrypted store is empty and legacy store has data
+        val alreadyMigrated = encryptedPrefs.contains(KEY_WHITELIST)
+        if (!alreadyMigrated && legacyNumbers.isNotEmpty()) {
+            Log.i(TAG, "Migrating ${legacyNumbers.size} entries from plaintext to encrypted prefs")
+            encryptedPrefs.edit().putStringSet(KEY_WHITELIST, legacyNumbers).apply()
+            // Wipe the old plaintext store
+            legacyPrefs.edit().clear().apply()
+        }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/res/drawable/icon.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/layout/activity_main.xml
+######################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp"
+    tools:context=".MainActivity">
+
+    <TextView
+        android:id="@+id/textView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="QuicLoc Configuration"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <EditText
+        android:id="@+id/phoneNumberInput"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:hint="Enter phone number to whitelist"
+        android:inputType="phone"
+        app:layout_constraintEnd_toStartOf="@+id/addButton"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/textView" />
+
+    <Button
+        android:id="@+id/addButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:text="Add"
+        app:layout_constraintBottom_toBottomOf="@+id/phoneNumberInput"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@+id/phoneNumberInput"
+        app:layout_constraintTop_toTopOf="@+id/phoneNumberInput" />
+
+    <TextView
+        android:id="@+id/whitelistTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="Whitelisted Numbers:"
+        android:textStyle="bold"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/phoneNumberInput" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/whitelistRecyclerView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginTop="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/whitelistTitle" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>
+
+
+######################################################
+# FILE: app/src/main/res/layout/whitelist_item.xml
+######################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="8dp"
+    android:gravity="center_vertical">
+
+    <TextView
+        android:id="@+id/phoneNumberText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:textSize="16sp" />
+
+    <ImageButton
+        android:id="@+id/deleteButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:src="@android:drawable/ic_menu_delete"
+        android:background="?android:attr/selectableItemBackground"
+        android:contentDescription="Remove" />
+</LinearLayout>
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+######################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/ic_launcher_background"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome"/>
+</adaptive-icon>
+
+######################################################
+# FILE: app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+######################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/ic_launcher_background"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome"/>
+</adaptive-icon>
+
+######################################################
+# FILE: app/src/main/res/mipmap-hdpi/ic_launcher.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-hdpi/ic_launcher_background.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-hdpi/ic_launcher_foreground.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-hdpi/ic_launcher_monochrome.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-hdpi/ic_launcher_round.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-mdpi/ic_launcher.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-mdpi/ic_launcher_background.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-mdpi/ic_launcher_foreground.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-mdpi/ic_launcher_monochrome.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-mdpi/ic_launcher_round.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xhdpi/ic_launcher.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xhdpi/ic_launcher_background.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xhdpi/ic_launcher_monochrome.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xhdpi/ic_launcher_round.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xxhdpi/ic_launcher.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xxhdpi/ic_launcher_background.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xxhdpi/ic_launcher_monochrome.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xxhdpi/ic_launcher_round.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xxxhdpi/ic_launcher_background.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xxxhdpi/ic_launcher_monochrome.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/values/colors.xml
+######################################################
+
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>
+
+
+######################################################
+# FILE: app/src/main/res/values/strings.xml
+######################################################
+
+<resources>
+    <string name="app_name">QuicLoc</string>
+    <string name="remove_whitelist_entry">Remove</string>
+    <string name="notification_listener_label">QuicLoc Message Listener</string>
+</resources>
+
+
+######################################################
+# FILE: app/src/main/res/values/themes.xml
+######################################################
+
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+        Force dark mode as default.
+        Using DayNight theme with uiMode=night override in MainActivity,
+        but also setting the base theme to Night here for fallback.
+    -->
+    <style name="Theme.QuicLoc" parent="Theme.Material3.DynamicColors.DayNight">
+        <item name="colorPrimary">@color/purple_200</item>
+        <item name="colorPrimaryDark">@color/purple_700</item>
+        <item name="colorAccent">@color/teal_200</item>
+    </style>
+
+</resources>
+
+
+######################################################
+# FILE: app/src/main/res/xml/iclauncher.xml
+######################################################
+
+<?xml version="1.0" encoding="UTF-8" standalone="no"?><!DOCTYPE properties SYSTEM
+    "http://java.sun.com/dtd/properties.dtd">
+<properties />
+
+######################################################
+# FILE: app/version.properties
+######################################################
+
+#Fri Apr 03 09:36:54 UTC 2026
+VERSION_A=1
+VERSION_B=1
+VERSION_C=2
+VERSION_D=20
+
+
+######################################################
+# FILE: build.gradle.kts
+######################################################
+
+plugins {
+    id("com.android.application") version "9.1.0" apply false
+    id("org.jetbrains.kotlin.android") version "2.2.10" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.2.10" apply false
+}
+
+
+######################################################
+# FILE: gradle.properties
+######################################################
+
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+kotlin.code.style=official
+android.defaults.buildfeatures.resvalues=true
+android.sdk.defaultTargetSdkToCompileSdkIfUnset=false
+android.enableAppCompileTimeRClass=false
+android.usesSdkInManifest.disallowed=false
+android.uniquePackageNames=false
+android.dependency.useConstraints=true
+android.r8.strictFullModeForKeepRules=false
+android.r8.optimizedResourceShrinking=false
+android.builtInKotlin=false
+android.newDsl=false
+
+
+######################################################
+# FILE: gradle/wrapper/gradle-wrapper.jar
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: gradle/wrapper/gradle-wrapper.properties
+######################################################
+
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-9.4.0-rc-1-bin.zip
+networkTimeout=10000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+
+
+######################################################
+# FILE: gradlew
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: gradlew.bat
+######################################################
+
+@rem
+@rem Copyright 2015 the original author or authors.
+@rem
+@rem Licensed under the Apache License, Version 2.0 (the "License");
+@rem you may not use this file except in compliance with the License.
+@rem You may obtain a copy of the License at
+@rem
+@rem      https://www.apache.org/licenses/LICENSE-2.0
+@rem
+@rem Unless required by applicable law or agreed to in writing, software
+@rem distributed under the License is distributed on an "AS IS" BASIS,
+@rem WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+@rem See the License for the specific language governing permissions and
+@rem limitations under the License.
+@rem
+
+@if "%DEBUG%"=="" @echo off
+@rem ##########################################################################
+@rem
+@rem  Gradle startup script for Windows
+@rem
+@rem ##########################################################################
+
+@rem Set local scope for the variables with windows NT shell
+if "%OS%"=="Windows_NT" setlocal
+
+set DIRNAME=%~dp0
+if "%DIRNAME%"=="" set DIRNAME=.
+@rem This is normally unused
+set APP_BASE_NAME=%~n0
+set APP_HOME=%DIRNAME%
+
+@rem Resolve any "." and ".." in APP_HOME to make it shorter.
+for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
+
+@rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
+
+@rem Find java.exe
+if defined JAVA_HOME goto findJavaFromJavaHome
+
+set JAVA_EXE=java.exe
+%JAVA_EXE% -version >NUL 2>&1
+if %ERRORLEVEL% equ 0 goto execute
+
+echo. 1>&2
+echo ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH. 1>&2
+echo. 1>&2
+echo Please set the JAVA_HOME variable in your environment to match the 1>&2
+echo location of your Java installation. 1>&2
+
+goto fail
+
+:findJavaFromJavaHome
+set JAVA_HOME=%JAVA_HOME:"=%
+set JAVA_EXE=%JAVA_HOME%/bin/java.exe
+
+if exist "%JAVA_EXE%" goto execute
+
+echo. 1>&2
+echo ERROR: JAVA_HOME is set to an invalid directory: %JAVA_HOME% 1>&2
+echo. 1>&2
+echo Please set the JAVA_HOME variable in your environment to match the 1>&2
+echo location of your Java installation. 1>&2
+
+goto fail
+
+:execute
+@rem Setup the command line
+
+set CLASSPATH=%APP_HOME%\gradle\wrapper\gradle-wrapper.jar
+
+
+@rem Execute Gradle
+"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %GRADLE_OPTS% "-Dorg.gradle.appname=%APP_BASE_NAME%" -classpath "%CLASSPATH%" org.gradle.wrapper.GradleWrapperMain %*
+
+:end
+@rem End local scope for the variables with windows NT shell
+if %ERRORLEVEL% equ 0 goto mainEnd
+
+:fail
+rem Set variable GRADLE_EXIT_CONSOLE if you need the _script_ return code instead of
+rem the _cmd.exe /c_ return code!
+set EXIT_CODE=%ERRORLEVEL%
+if %EXIT_CODE% equ 0 set EXIT_CODE=1
+if not ""=="%GRADLE_EXIT_CONSOLE%" exit %EXIT_CODE%
+exit /b %EXIT_CODE%
+
+:mainEnd
+if "%OS%"=="Windows_NT" endlocal
+
+:omega
+
+
+######################################################
+# FILE: settings.gradle.kts
+######################################################
+
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "0.10.0"
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "QuicLoc"
+include(":app")
+
+
+======================================================
+  END OF BACKUP
+======================================================
