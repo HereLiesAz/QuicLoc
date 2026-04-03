@@ -22,6 +22,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -81,6 +83,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     // Compose state — hoisted so biometric callback and launchers can update it
     private var authState = mutableStateOf(false)
     private var numbersState = mutableStateOf<List<String>>(emptyList())
+    private var starredState = mutableStateOf<Set<String>>(emptySet())
+    private var myNumberState = mutableStateOf("")
 
     private val readContactsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -102,6 +106,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         whitelistManager = WhitelistManager(this)
         numbersState.value = whitelistManager.getNumbers().toList()
+        starredState.value = whitelistManager.getStarredNumbers()
+        myNumberState.value = whitelistManager.getMyNumber()
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
@@ -112,7 +118,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                         onRetry = { promptBiometric() }
                     )
                 } else {
+
                     val numbersList by numbersState
+                    val starredSet by starredState
+                    val myNumber by myNumberState
+                    var currentPassphrase by remember { mutableStateOf(whitelistManager.getPassphrase() ?: "") }
+                    var currentPin by remember { mutableStateOf(whitelistManager.getPin() ?: "") }
+
                     var notificationAccessGranted by remember {
                         mutableStateOf(isNotificationListenerEnabled())
                     }
@@ -147,6 +159,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             QuicLocScreen(
                                 modifier = Modifier.padding(innerPadding),
                                 numbersList = numbersList,
+                                starredSet = starredSet,
+                                myNumber = myNumber,
                                 notificationAccessGranted = notificationAccessGranted,
                                 noLockScreenWarning = !BiometricHelper.canAuthenticate(this@MainActivity),
                                 onRequestNotificationAccess = {
@@ -162,8 +176,38 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 onRemoveNumber = { number ->
                                     whitelistManager.removeNumber(number)
                                     numbersState.value = whitelistManager.getNumbers().toList()
+                                    starredState.value = whitelistManager.getStarredNumbers()
                                 },
-                                onPickContact = { launchContactPicker() }
+                                onPickContact = { launchContactPicker() },
+                                onToggleStar = { number ->
+                                    val success = whitelistManager.toggleStarred(number)
+                                    if (!success) {
+                                        Toast.makeText(this@MainActivity, "You can only star up to 3 contacts.", Toast.LENGTH_SHORT).show()
+                                    }
+                                    starredState.value = whitelistManager.getStarredNumbers()
+                                },
+                                                                onMyNumberChanged = { number ->
+                                    whitelistManager.setMyNumber(number)
+                                    myNumberState.value = whitelistManager.getMyNumber()
+                                },
+                                currentPassphrase = currentPassphrase,
+                                currentPin = currentPin,
+                                onSavePassphrase = { newPassphrase, newPin ->
+                                    whitelistManager.setPassphrase(newPassphrase)
+                                    whitelistManager.setPin(newPin)
+                                    currentPassphrase = newPassphrase
+                                    currentPin = newPin
+
+                                    // Request CAMERA permission if not granted
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        androidx.core.app.ActivityCompat.requestPermissions(this@MainActivity, arrayOf(android.Manifest.permission.CAMERA), 10)
+                                    }
+                                    // Request SYSTEM_ALERT_WINDOW if not granted
+                                    if (!android.provider.Settings.canDrawOverlays(this@MainActivity)) {
+                                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName"))
+                                        startActivity(intent)
+                                    }
+                                }
                             )
                         }
                     }
@@ -358,12 +402,19 @@ fun BiometricGateScreen(onRetry: () -> Unit) {
 fun QuicLocScreen(
     modifier: Modifier = Modifier,
     numbersList: List<String>,
+    starredSet: Set<String>,
+    myNumber: String,
     notificationAccessGranted: Boolean,
     noLockScreenWarning: Boolean,
     onRequestNotificationAccess: () -> Unit,
     onAddNumber: (String) -> Unit,
     onRemoveNumber: (String) -> Unit,
-    onPickContact: () -> Unit
+    onPickContact: () -> Unit,
+    currentPassphrase: String = "",
+    currentPin: String = "",
+    onSavePassphrase: (String, String) -> Unit = { _, _ -> },
+    onToggleStar: (String) -> Unit = {},
+    onMyNumberChanged: (String) -> Unit = {}
 ) {
     var phoneNumberInput by remember { mutableStateOf("") }
 
@@ -433,10 +484,61 @@ fun QuicLocScreen(
             }
         }
 
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Single-Use Tracking Passphrase",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        var passphraseInput by remember(currentPassphrase) { mutableStateOf(currentPassphrase) }
+        var pinInput by remember(currentPin) { mutableStateOf(currentPin) }
+
+        OutlinedTextField(
+            value = passphraseInput,
+            onValueChange = { if (it.length <= 150) passphraseInput = it },
+            label = { Text("Passphrase (10-150 chars)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = pinInput,
+            onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) pinInput = it },
+            label = { Text("6-Digit PIN") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(
+            onClick = {
+                if (passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() }) {
+                    onSavePassphrase(passphraseInput, pinInput)
+                }
+            },
+            enabled = passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Save Passphrase & PIN")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         Text(
             text = "Whitelist a contact:",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        OutlinedTextField(
+            value = myNumber,
+            onValueChange = { onMyNumberChanged(it) },
+            label = { Text("My Phone Number (For Parking Widget)") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            singleLine = true
         )
 
         Button(
@@ -482,6 +584,7 @@ fun QuicLocScreen(
 
         LazyColumn(modifier = Modifier.fillMaxWidth()) {
             items(numbersList) { number ->
+                val isStarred = starredSet.contains(number)
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -491,6 +594,13 @@ fun QuicLocScreen(
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.weight(1f)
                     )
+                    IconButton(onClick = { onToggleStar(number) }) {
+                        Icon(
+                            imageVector = if (isStarred) Icons.Default.Star else Icons.Outlined.Star,
+                            contentDescription = if (isStarred) "Unstar" else "Star",
+                            tint = if (isStarred) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     IconButton(onClick = { onRemoveNumber(number) }) {
                         Icon(
                             imageVector = Icons.Default.Delete,
