@@ -26,7 +26,7 @@ QuicLoc listens to incoming notifications from messaging apps (such as WhatsApp,
 When a valid trigger is received from a whitelisted contact, QuicLoc obtains the device's current GPS location. This location is used solely to generate a Google Maps link, which is sent back to the requesting contact via SMS or inline notification reply. The location is never stored, logged, or sent anywhere other than directly to the requesting contact.
 
 ### 4. Whitelist (Phone Numbers and Contact Names)
-The whitelist of trusted contacts you configure is stored locally on your device using Android's `EncryptedSharedPreferences`, backed by the Android Keystore with AES-256-GCM encryption. This data never leaves your device.
+The whitelist of trusted contacts, "My Phone Number" settings, and your priority "starred" contacts are stored locally on your device using Android's `EncryptedSharedPreferences`, backed by the Android Keystore with AES-256-GCM encryption. This data never leaves your device.
 
 ---
 
@@ -53,7 +53,7 @@ The only outbound data is the Google Maps location link sent as an SMS reply or 
 
 QuicLoc retains no data beyond what is explicitly stored by you:
 
-- **Whitelist entries** — stored on-device, encrypted, until you delete them via the app UI.
+- **Whitelist entries & settings** — the trusted contacts list, priority starred contacts, and user phone number are stored on-device, encrypted, until you delete them via the app UI.
 - **Location** — obtained on demand, used to construct a reply, then immediately discarded. Never written to disk.
 - **Messages and notifications** — read in memory, checked against the whitelist, then immediately discarded. Never written to disk.
 

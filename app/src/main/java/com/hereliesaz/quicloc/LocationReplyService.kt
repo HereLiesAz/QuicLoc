@@ -102,7 +102,7 @@ class LocationReplyService : Service() {
             widgetTapCount++
             widgetStartId = startId
             widgetTapHandler.removeCallbacks(widgetTapRunnable)
-            widgetTapHandler.postDelayed(widgetTapRunnable, 400)
+            widgetTapHandler.postDelayed(widgetTapRunnable, WIDGET_TAP_DELAY_MS)
             return START_NOT_STICKY
         }
 

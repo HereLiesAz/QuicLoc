@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    1b1504921a1fc99b9f6a937fc416ed54d695df6e
-  Timestamp: 2026-04-03 12:35:30 UTC
+  Branch:    feature/widget-location-taps-3050633539009412006
+  Commit:    14df14554ea63a6db49d181a50fdb07a14173caa
+  Timestamp: 2026-04-03 16:34:51 UTC
 ======================================================
 
 
@@ -111,10 +111,16 @@ jobs:
           SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
           echo "safe_branch=$SAFE_BRANCH" >> "$GITHUB_OUTPUT"
 
+      - name: Sanitize branch name for artifact
+        id: sanitize
+        run: |
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "safe_branch=$SAFE_BRANCH" >> "$GITHUB_OUTPUT"
+
       - name: Upload backup as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: repo-backup-${{ env.SAFE_BRANCH }}-${{ github.sha }}
+          name: repo-backup-${{ steps.sanitize.outputs.safe_branch }}-${{ github.sha }}
           path: repo_backup.txt
           retention-days: 90
 
@@ -421,7 +427,7 @@ QuicLoc listens to incoming notifications from messaging apps (such as WhatsApp,
 When a valid trigger is received from a whitelisted contact, QuicLoc obtains the device's current GPS location. This location is used solely to generate a Google Maps link, which is sent back to the requesting contact via SMS or inline notification reply. The location is never stored, logged, or sent anywhere other than directly to the requesting contact.
 
 ### 4. Whitelist (Phone Numbers and Contact Names)
-The whitelist of trusted contacts you configure is stored locally on your device using Android's `EncryptedSharedPreferences`, backed by the Android Keystore with AES-256-GCM encryption. This data never leaves your device.
+The whitelist of trusted contacts, "My Phone Number" settings, and your priority "starred" contacts are stored locally on your device using Android's `EncryptedSharedPreferences`, backed by the Android Keystore with AES-256-GCM encryption. This data never leaves your device.
 
 ---
 
@@ -448,7 +454,7 @@ The only outbound data is the Google Maps location link sent as an SMS reply or 
 
 QuicLoc retains no data beyond what is explicitly stored by you:
 
-- **Whitelist entries** — stored on-device, encrypted, until you delete them via the app UI.
+- **Whitelist entries & settings** — the trusted contacts list, priority starred contacts, and user phone number are stored on-device, encrypted, until you delete them via the app UI.
 - **Location** — obtained on demand, used to construct a reply, then immediately discarded. Never written to disk.
 - **Messages and notifications** — read in memory, checked against the whitelist, then immediately discarded. Never written to disk.
 
@@ -516,8 +522,9 @@ No app needs to be open. No buttons need to be pressed.
 
 ## Features
 
+- **Homescreen Widget** — Tap the widget once to mark your parking spot (texts your own number `#Parking`), double tap to alert up to 3 priority starred contacts (`#SafetyCheck`), or triple tap to alert your entire whitelist (`#Emergency`).
 - **Works across messaging apps** — responds to SMS, WhatsApp, Telegram, Signal, Google Messages, Messenger, and any app that supports notification inline replies.
-- **Encrypted whitelist** — trusted contacts are stored using AES-256-GCM encryption backed by the Android Keystore. The data never leaves your device.
+- **Encrypted whitelist & Priority Contacts** — trusted contacts, "My Phone Number", and up to 3 "starred" priority contacts are stored using AES-256-GCM encryption backed by the Android Keystore. The data never leaves your device.
 - **Biometric protection** — the app requires fingerprint, face unlock, or device PIN to open. Falls back to PIN/pattern if no biometric is enrolled.
 - **Reliable location** — uses a three-stage fallback (GPS fix → cached location → forced update) to ensure a location is returned even from a cold start.
 - **Fully background** — operates silently when the screen is off. Auto-replies work without the app being open or unlocked.
@@ -545,8 +552,9 @@ No app needs to be open. No buttons need to be pressed.
 1. Install the APK (download from [Releases](../../releases)).
 2. Open QuicLoc and authenticate with your fingerprint or PIN.
 3. Grant all requested permissions. When prompted, also grant **Notification Access** in system settings — this enables responses in WhatsApp, Telegram, and other apps.
-4. Add the phone numbers or contact names of people you want to allow to request your location.
-5. Done. QuicLoc runs silently in the background.
+4. Set "My Phone Number" to enable single-tap parking reminders.
+5. Add the phone numbers or contact names of people you want to allow to request your location. You can "star" up to 3 contacts for priority `#SafetyCheck` alerts.
+6. Done. QuicLoc runs silently in the background. You can also add the QuicLoc widget to your homescreen.
 
 ### First-time permission note
 
@@ -810,19 +818,16 @@ dependencies {
             </intent-filter>
         </service>
 
-        <activity
-            android:name=".TrackingLockActivity"
-            android:theme="@style/Theme.QuicLoc"
-            android:showOnLockScreen="true"
-            android:showForAllUsers="true"
-            android:excludeFromRecents="true"
-            android:launchMode="singleInstance"
-            android:exported="false" />
-
-        <service
-            android:name=".TrackingService"
-            android:exported="false"
-            android:foregroundServiceType="location|camera" />
+        <receiver
+            android:name=".QuicLocWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info" />
+        </receiver>
 
     </application>
 </manifest>
@@ -1511,9 +1516,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                     val numbersList by numbersState
                     val starredSet by starredState
                     val myNumber by myNumberState
-                    var currentPassphrase by remember { mutableStateOf(whitelistManager.getPassphrase() ?: "") }
-                    var currentPin by remember { mutableStateOf(whitelistManager.getPin() ?: "") }
-
                     var notificationAccessGranted by remember {
                         mutableStateOf(isNotificationListenerEnabled())
                     }
@@ -1575,27 +1577,9 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     }
                                     starredState.value = whitelistManager.getStarredNumbers()
                                 },
-                                                                onMyNumberChanged = { number ->
+                                onMyNumberChanged = { number ->
                                     whitelistManager.setMyNumber(number)
                                     myNumberState.value = whitelistManager.getMyNumber()
-                                },
-                                currentPassphrase = currentPassphrase,
-                                currentPin = currentPin,
-                                onSavePassphrase = { newPassphrase, newPin ->
-                                    whitelistManager.setPassphrase(newPassphrase)
-                                    whitelistManager.setPin(newPin)
-                                    currentPassphrase = newPassphrase
-                                    currentPin = newPin
-
-                                    // Request CAMERA permission if not granted
-                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                        androidx.core.app.ActivityCompat.requestPermissions(this@MainActivity, arrayOf(android.Manifest.permission.CAMERA), 10)
-                                    }
-                                    // Request SYSTEM_ALERT_WINDOW if not granted
-                                    if (!android.provider.Settings.canDrawOverlays(this@MainActivity)) {
-                                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName"))
-                                        startActivity(intent)
-                                    }
                                 }
                             )
                         }
@@ -1799,11 +1783,8 @@ fun QuicLocScreen(
     onAddNumber: (String) -> Unit,
     onRemoveNumber: (String) -> Unit,
     onPickContact: () -> Unit,
-    currentPassphrase: String = "",
-    currentPin: String = "",
-    onSavePassphrase: (String, String) -> Unit = { _, _ -> },
-    onToggleStar: (String) -> Unit = {},
-    onMyNumberChanged: (String) -> Unit = {}
+    onToggleStar: (String) -> Unit,
+    onMyNumberChanged: (String) -> Unit
 ) {
     var phoneNumberInput by remember { mutableStateOf("") }
 
@@ -2493,26 +2474,13 @@ class TrackingLockActivity : ComponentActivity() {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
         }
 
-        setContent {
-            MaterialTheme {
-                LockScreenUI(
-                    onPinEntered = { pin ->
-                        val expectedPin = WhitelistManager(this).getPin()
-                        if (pin == expectedPin) {
-                            TrackingService.stopTracking(this)
-                            finishAndRemoveTask()
-                        } else {
-                            failCount++
-                            if (failCount >= 3) {
-                                triggerPanicMode()
-                            } else {
-                                Toast.makeText(this, "Incorrect PIN", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                )
-            }
-        }
+    companion object {
+        private const val TAG = "QuicLoc.Whitelist"
+        private const val ENCRYPTED_PREFS_FILE = "quicloc_secure_prefs"
+        private const val LEGACY_PREFS_FILE = "quicloc_prefs"
+        private const val KEY_WHITELIST = "whitelist"
+        private const val KEY_MY_NUMBER = "my_number"
+        private const val KEY_STARRED = "starred_numbers"
     }
 
     override fun onBackPressed() {
@@ -2520,14 +2488,54 @@ class TrackingLockActivity : ComponentActivity() {
     }
 
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 10 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            startCamera()
+    fun getMyNumber(): String {
+        return prefs.getString(KEY_MY_NUMBER, "") ?: ""
+    }
+
+    fun setMyNumber(number: String) {
+        prefs.edit().putString(KEY_MY_NUMBER, number).apply()
+    }
+
+    fun getStarredNumbers(): Set<String> {
+        return prefs.getStringSet(KEY_STARRED, emptySet()) ?: emptySet()
+    }
+
+    fun toggleStarred(number: String): Boolean {
+        val currentStarred = getStarredNumbers().toMutableSet()
+        if (currentStarred.contains(number)) {
+            currentStarred.remove(number)
+        } else {
+            if (currentStarred.size >= 3) {
+                return false // Limit reached
+            }
+            currentStarred.add(number)
+        }
+        prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+        return true
+    }
+
+
+    fun addNumber(number: String) {
+        val clean = cleanPhoneNumber(number)
+        if (clean.isNotEmpty()) {
+            val numbers = getNumbers().toMutableSet()
+            numbers.add(clean)
+            saveNumbers(numbers)
         }
     }
 
-    override fun onUserLeaveHint() {
+    fun removeNumber(number: String) {
+        val numbers = getNumbers().toMutableSet()
+        numbers.remove(number)
+        saveNumbers(numbers)
+
+        // Also remove from starred if deleted
+        val currentStarred = getStarredNumbers().toMutableSet()
+        if (currentStarred.contains(number)) {
+            currentStarred.remove(number)
+            prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+        }
+    }
 
         super.onUserLeaveHint()
         if (!isFinishing) {
@@ -3692,8 +3700,25 @@ content = re.sub(
     content
 )
 
-with open('.github/workflows/build-apk.yml', 'w') as f:
-    f.write(content)
+######################################################
+# FILE: app/src/main/res/layout/widget_quicloc.xml
+######################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:background="@drawable/icon"
+    android:orientation="vertical">
+
+</LinearLayout>
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+######################################################
 
 
 ######################################################
@@ -4359,19 +4384,29 @@ with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'w') as
 with open('app/version.properties', 'r') as f:
     lines = f.readlines()
 
-new_lines = []
-for line in lines:
-    if line.startswith('VERSION_B='):
-        parts = line.split('=')
-        val = int(parts[1].strip())
-        new_lines.append(f'VERSION_B={val + 1}\n')
-    elif line.startswith('VERSION_C='):
-        new_lines.append('VERSION_C=0\n')
-    else:
-        new_lines.append(line)
+######################################################
+# FILE: app/src/main/res/xml/widget_info.xml
+######################################################
 
-with open('app/version.properties', 'w') as f:
-    f.writelines(new_lines)
+<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="40dp"
+    android:minHeight="40dp"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_quicloc"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />
+
+
+######################################################
+# FILE: app/version.properties
+######################################################
+
+#Fri Apr 03 00:54:37 UTC 2026
+VERSION_A=1
+VERSION_B=0
+VERSION_C=20
+VERSION_D=20
 
 
 ######################################################
