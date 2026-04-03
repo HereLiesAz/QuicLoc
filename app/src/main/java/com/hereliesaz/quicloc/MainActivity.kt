@@ -457,7 +457,7 @@ fun QuicLocScreen(
         Spacer(modifier = Modifier.height(8.dp))
         OutlinedTextField(
             value = pinInput,
-            onValueChange = { pinInput = it },
+            onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) pinInput = it },
             label = { Text("6-Digit PIN") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
