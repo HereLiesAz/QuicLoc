@@ -30,11 +30,17 @@ The whitelist of trusted contacts, "My Phone Number" settings, and your priority
 
 ---
 
+### 5. Camera (Photos)
+When QuicLoc enters Panic Mode (triggered by entering an incorrect PIN 3 times on the lock screen), the app uses the front-facing camera to capture a photo of the user. This photo is attached to an MMS message along with the location link and sent exclusively to the trusted contact who requested the location. The photo is never uploaded to external servers, processed by third-party APIs, or shared with the developer.
+
+### 6. Passphrase and PIN
+You can optionally configure a single-use passphrase and a 6-digit PIN. These are securely encrypted on your device alongside your whitelist. They are never transmitted off your device.
+
 ## Data the App Does NOT Access
 
 - Your contacts list
 - Your call history
-- Your camera or microphone
+- Your microphone
 - Your files or photos
 - Any account credentials
 - Any data from messaging apps beyond detecting the trigger word in a notification
@@ -78,6 +84,7 @@ QuicLoc retains no data beyond what is explicitly stored by you:
 | `ACCESS_BACKGROUND_LOCATION` | To obtain location while the app is not in the foreground (required for the core function) |
 | `USE_BIOMETRIC` / `USE_FINGERPRINT` | To authenticate the user before allowing access to the whitelist |
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | To detect the trigger word in notifications from non-SMS messaging apps |
+| `CAMERA` | To capture a photo of the intruder if Panic Mode is triggered |
 
 ---
 

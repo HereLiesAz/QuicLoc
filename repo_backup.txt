@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    feature/widget-location-taps-3050633539009412006
-  Commit:    14df14554ea63a6db49d181a50fdb07a14173caa
-  Timestamp: 2026-04-03 16:34:51 UTC
+  Branch:    feature/passphrase-tracking-11988746183152168490
+  Commit:    c899728c5b78604464f9486057812933b7a715a8
+  Timestamp: 2026-04-03 16:51:34 UTC
 ======================================================
 
 
@@ -111,16 +111,10 @@ jobs:
           SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
           echo "safe_branch=$SAFE_BRANCH" >> "$GITHUB_OUTPUT"
 
-      - name: Sanitize branch name for artifact
-        id: sanitize
-        run: |
-          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
-          echo "safe_branch=$SAFE_BRANCH" >> "$GITHUB_OUTPUT"
-
       - name: Upload backup as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: repo-backup-${{ steps.sanitize.outputs.safe_branch }}-${{ github.sha }}
+          name: repo-backup-${{ env.SAFE_BRANCH }}-${{ github.sha }}
           path: repo_backup.txt
           retention-days: 90
 
@@ -313,7 +307,20 @@ Select: **Yes**
 
 ---
 
-## 4. Data Safety Section
+---
+
+## 4. Camera Permission Declaration
+
+**Location in Play Console:**
+> App content → App access
+
+**Describe why your app needs camera access:**
+
+> QuicLoc uses the device's front-facing camera solely for its Panic Mode security feature. If an unauthorized user attempts to bypass the device lock screen by entering an incorrect PIN 3 times, QuicLoc silently captures a photo of the intruder and sends it to the trusted contact who initiated the location request via MMS. The photo is captured locally, transmitted directly to the trusted contact's phone number, and is never uploaded, stored on external servers, or shared with the developer or third parties.
+
+---
+
+## 5. Data Safety Section
 
 **Location in Play Console:**
 > App content → Data safety
@@ -347,7 +354,7 @@ Fill in the Data safety form as follows:
 
 ---
 
-## 5. App Category and Content Rating
+## 6. App Category and Content Rating
 
 **Category:** Tools / Utilities
 
@@ -431,11 +438,17 @@ The whitelist of trusted contacts, "My Phone Number" settings, and your priority
 
 ---
 
+### 5. Camera (Photos)
+When QuicLoc enters Panic Mode (triggered by entering an incorrect PIN 3 times on the lock screen), the app uses the front-facing camera to capture a photo of the user. This photo is attached to an MMS message along with the location link and sent exclusively to the trusted contact who requested the location. The photo is never uploaded to external servers, processed by third-party APIs, or shared with the developer.
+
+### 6. Passphrase and PIN
+You can optionally configure a single-use passphrase and a 6-digit PIN. These are securely encrypted on your device alongside your whitelist. They are never transmitted off your device.
+
 ## Data the App Does NOT Access
 
 - Your contacts list
 - Your call history
-- Your camera or microphone
+- Your microphone
 - Your files or photos
 - Any account credentials
 - Any data from messaging apps beyond detecting the trigger word in a notification
@@ -479,6 +492,7 @@ QuicLoc retains no data beyond what is explicitly stored by you:
 | `ACCESS_BACKGROUND_LOCATION` | To obtain location while the app is not in the foreground (required for the core function) |
 | `USE_BIOMETRIC` / `USE_FINGERPRINT` | To authenticate the user before allowing access to the whitelist |
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | To detect the trigger word in notifications from non-SMS messaging apps |
+| `CAMERA` | To capture a photo of the intruder if Panic Mode is triggered |
 
 ---
 
@@ -554,7 +568,7 @@ No app needs to be open. No buttons need to be pressed.
 3. Grant all requested permissions. When prompted, also grant **Notification Access** in system settings — this enables responses in WhatsApp, Telegram, and other apps.
 4. Set "My Phone Number" to enable single-tap parking reminders.
 5. Add the phone numbers or contact names of people you want to allow to request your location. You can "star" up to 3 contacts for priority `#SafetyCheck` alerts.
-6. Done. QuicLoc runs silently in the background. You can also add the QuicLoc widget to your homescreen.
+6. Done. QuicLoc runs silently in the background. You can also add the QuicLoc widget to your home screen.
 
 ### First-time permission note
 
@@ -818,16 +832,19 @@ dependencies {
             </intent-filter>
         </service>
 
-        <receiver
-            android:name=".QuicLocWidgetProvider"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_info" />
-        </receiver>
+        <activity
+            android:name=".TrackingLockActivity"
+            android:theme="@style/Theme.QuicLoc"
+            android:showOnLockScreen="true"
+            android:showForAllUsers="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:exported="false" />
+
+        <service
+            android:name=".TrackingService"
+            android:exported="false"
+            android:foregroundServiceType="location|camera" />
 
     </application>
 </manifest>
@@ -1516,6 +1533,9 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                     val numbersList by numbersState
                     val starredSet by starredState
                     val myNumber by myNumberState
+                    var currentPassphrase by remember { mutableStateOf(whitelistManager.getPassphrase() ?: "") }
+                    var currentPin by remember { mutableStateOf(whitelistManager.getPin() ?: "") }
+
                     var notificationAccessGranted by remember {
                         mutableStateOf(isNotificationListenerEnabled())
                     }
@@ -1577,9 +1597,27 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     }
                                     starredState.value = whitelistManager.getStarredNumbers()
                                 },
-                                onMyNumberChanged = { number ->
+                                                                onMyNumberChanged = { number ->
                                     whitelistManager.setMyNumber(number)
                                     myNumberState.value = whitelistManager.getMyNumber()
+                                },
+                                currentPassphrase = currentPassphrase,
+                                currentPin = currentPin,
+                                onSavePassphrase = { newPassphrase, newPin ->
+                                    whitelistManager.setPassphrase(newPassphrase)
+                                    whitelistManager.setPin(newPin)
+                                    currentPassphrase = newPassphrase
+                                    currentPin = newPin
+
+                                    // Request CAMERA permission if not granted
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        androidx.core.app.ActivityCompat.requestPermissions(this@MainActivity, arrayOf(android.Manifest.permission.CAMERA), 10)
+                                    }
+                                    // Request SYSTEM_ALERT_WINDOW if not granted
+                                    if (!android.provider.Settings.canDrawOverlays(this@MainActivity)) {
+                                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName"))
+                                        startActivity(intent)
+                                    }
                                 }
                             )
                         }
@@ -1783,8 +1821,11 @@ fun QuicLocScreen(
     onAddNumber: (String) -> Unit,
     onRemoveNumber: (String) -> Unit,
     onPickContact: () -> Unit,
-    onToggleStar: (String) -> Unit,
-    onMyNumberChanged: (String) -> Unit
+    currentPassphrase: String = "",
+    currentPin: String = "",
+    onSavePassphrase: (String, String) -> Unit = { _, _ -> },
+    onToggleStar: (String) -> Unit = {},
+    onMyNumberChanged: (String) -> Unit = {}
 ) {
     var phoneNumberInput by remember { mutableStateOf("") }
 
@@ -2474,13 +2515,26 @@ class TrackingLockActivity : ComponentActivity() {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
         }
 
-    companion object {
-        private const val TAG = "QuicLoc.Whitelist"
-        private const val ENCRYPTED_PREFS_FILE = "quicloc_secure_prefs"
-        private const val LEGACY_PREFS_FILE = "quicloc_prefs"
-        private const val KEY_WHITELIST = "whitelist"
-        private const val KEY_MY_NUMBER = "my_number"
-        private const val KEY_STARRED = "starred_numbers"
+        setContent {
+            MaterialTheme {
+                LockScreenUI(
+                    onPinEntered = { pin ->
+                        val expectedPin = WhitelistManager(this).getPin()
+                        if (pin == expectedPin) {
+                            TrackingService.stopTracking(this)
+                            finishAndRemoveTask()
+                        } else {
+                            failCount++
+                            if (failCount >= 3) {
+                                triggerPanicMode()
+                            } else {
+                                Toast.makeText(this, "Incorrect PIN", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                )
+            }
+        }
     }
 
     override fun onBackPressed() {
@@ -2488,54 +2542,14 @@ class TrackingLockActivity : ComponentActivity() {
     }
 
 
-    fun getMyNumber(): String {
-        return prefs.getString(KEY_MY_NUMBER, "") ?: ""
-    }
-
-    fun setMyNumber(number: String) {
-        prefs.edit().putString(KEY_MY_NUMBER, number).apply()
-    }
-
-    fun getStarredNumbers(): Set<String> {
-        return prefs.getStringSet(KEY_STARRED, emptySet()) ?: emptySet()
-    }
-
-    fun toggleStarred(number: String): Boolean {
-        val currentStarred = getStarredNumbers().toMutableSet()
-        if (currentStarred.contains(number)) {
-            currentStarred.remove(number)
-        } else {
-            if (currentStarred.size >= 3) {
-                return false // Limit reached
-            }
-            currentStarred.add(number)
-        }
-        prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
-        return true
-    }
-
-
-    fun addNumber(number: String) {
-        val clean = cleanPhoneNumber(number)
-        if (clean.isNotEmpty()) {
-            val numbers = getNumbers().toMutableSet()
-            numbers.add(clean)
-            saveNumbers(numbers)
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 10 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            startCamera()
         }
     }
 
-    fun removeNumber(number: String) {
-        val numbers = getNumbers().toMutableSet()
-        numbers.remove(number)
-        saveNumbers(numbers)
-
-        // Also remove from starred if deleted
-        val currentStarred = getStarredNumbers().toMutableSet()
-        if (currentStarred.contains(number)) {
-            currentStarred.remove(number)
-            prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
-        }
-    }
+    override fun onUserLeaveHint() {
 
         super.onUserLeaveHint()
         if (!isFinishing) {
@@ -3700,25 +3714,36 @@ content = re.sub(
     content
 )
 
-######################################################
-# FILE: app/src/main/res/layout/widget_quicloc.xml
-######################################################
-
-<?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/widget_container"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:gravity="center"
-    android:background="@drawable/icon"
-    android:orientation="vertical">
-
-</LinearLayout>
+with open('.github/workflows/build-apk.yml', 'w') as f:
+    f.write(content)
 
 
 ######################################################
-# FILE: app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+# FILE: patch_declarations.py
 ######################################################
+
+with open('DECLARATIONS.md', 'r') as f:
+    content = f.read()
+
+new_section = """
+---
+
+## 4. Camera Permission Declaration
+
+**Location in Play Console:**
+> App content → App access
+
+**Describe why your app needs camera access:**
+
+> QuicLoc uses the device's front-facing camera solely for its Panic Mode security feature. If an unauthorized user attempts to bypass the device lock screen by entering an incorrect PIN 3 times, QuicLoc silently captures a photo of the intruder and sends it to the trusted contact who initiated the location request via MMS. The photo is captured locally, transmitted directly to the trusted contact's phone number, and is never uploaded, stored on external servers, or shared with the developer or third parties.
+"""
+
+# Insert before "4. Data Safety Section"
+content = content.replace('## 4. Data Safety Section', new_section.strip() + '\n\n---\n\n## 5. Data Safety Section')
+content = content.replace('## 5. App Category and Content Rating', '## 6. App Category and Content Rating')
+
+with open('DECLARATIONS.md', 'w') as f:
+    f.write(content)
 
 
 ######################################################
@@ -4001,6 +4026,52 @@ content = re.sub(
 )
 
 with open('app/src/main/java/com/hereliesaz/quicloc/NotificationListener.kt', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_privacy.py
+######################################################
+
+with open('PRIVACY_POLICY.md', 'r') as f:
+    content = f.read()
+
+# Add camera, passphrase, and photo data
+import re
+
+content = re.sub(
+    r'- Your camera or microphone',
+    '- Your microphone',
+    content
+)
+
+camera_data = """### 5. Camera (Photos)
+When QuicLoc enters Panic Mode (triggered by entering an incorrect PIN 3 times on the lock screen), the app uses the front-facing camera to capture a photo of the user. This photo is attached to an MMS message along with the location link and sent exclusively to the trusted contact who requested the location. The photo is never uploaded to external servers, processed by third-party APIs, or shared with the developer.
+
+### 6. Passphrase and PIN
+You can optionally configure a single-use passphrase and a 6-digit PIN. These are securely encrypted on your device alongside your whitelist. They are never transmitted off your device.
+"""
+
+content = content.replace(
+    '---',
+    '---\n\n' + camera_data,
+    1 # Only the first occurrence? No we need to place it in Data the App Accesses
+)
+
+# A better way is to replace the start of Data the App Does NOT Access
+content = content.replace(
+    '## Data the App Does NOT Access',
+    camera_data + '\n## Data the App Does NOT Access'
+)
+
+# And add CAMERA permission
+perm_addition = "| `CAMERA` | To capture a photo of the intruder if Panic Mode is triggered |"
+content = content.replace(
+    '| `BIND_NOTIFICATION_LISTENER_SERVICE` | To detect the trigger word in notifications from non-SMS messaging apps |',
+    '| `BIND_NOTIFICATION_LISTENER_SERVICE` | To detect the trigger word in notifications from non-SMS messaging apps |\n' + perm_addition
+)
+
+with open('PRIVACY_POLICY.md', 'w') as f:
     f.write(content)
 
 
@@ -4384,29 +4455,19 @@ with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'w') as
 with open('app/version.properties', 'r') as f:
     lines = f.readlines()
 
-######################################################
-# FILE: app/src/main/res/xml/widget_info.xml
-######################################################
+new_lines = []
+for line in lines:
+    if line.startswith('VERSION_B='):
+        parts = line.split('=')
+        val = int(parts[1].strip())
+        new_lines.append(f'VERSION_B={val + 1}\n')
+    elif line.startswith('VERSION_C='):
+        new_lines.append('VERSION_C=0\n')
+    else:
+        new_lines.append(line)
 
-<?xml version="1.0" encoding="utf-8"?>
-<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:minWidth="40dp"
-    android:minHeight="40dp"
-    android:updatePeriodMillis="0"
-    android:initialLayout="@layout/widget_quicloc"
-    android:resizeMode="horizontal|vertical"
-    android:widgetCategory="home_screen" />
-
-
-######################################################
-# FILE: app/version.properties
-######################################################
-
-#Fri Apr 03 00:54:37 UTC 2026
-VERSION_A=1
-VERSION_B=0
-VERSION_C=20
-VERSION_D=20
+with open('app/version.properties', 'w') as f:
+    f.writelines(new_lines)
 
 
 ######################################################
