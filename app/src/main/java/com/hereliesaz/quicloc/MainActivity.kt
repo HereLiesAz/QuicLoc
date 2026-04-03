@@ -449,7 +449,7 @@ fun QuicLocScreen(
 
         OutlinedTextField(
             value = passphraseInput,
-            onValueChange = { passphraseInput = it },
+            onValueChange = { if (it.length <= 150) passphraseInput = it },
             label = { Text("Passphrase (10-150 chars)") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
