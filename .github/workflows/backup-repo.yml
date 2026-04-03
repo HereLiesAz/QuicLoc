@@ -69,6 +69,10 @@ jobs:
           echo "======================================================" >> "$BACKUP_FILE"
 
           echo "Backup complete. Size: $(wc -c < "$BACKUP_FILE") bytes"
+      - name: Sanitize branch name
+        run: |
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
 
       - name: Sanitize branch name for artifact
         id: sanitize
@@ -79,9 +83,10 @@ jobs:
       - name: Upload backup as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: repo-backup-${{ steps.sanitize.outputs.safe_branch }}-${{ github.sha }}
+          name: repo-backup-${{ env.SAFE_BRANCH }}-${{ github.sha }}
           path: repo_backup.txt
           retention-days: 90
+
 
       - name: Commit backup to repo (optional)
         run: |
