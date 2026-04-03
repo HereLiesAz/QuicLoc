@@ -16,8 +16,9 @@ No app needs to be open. No buttons need to be pressed.
 
 ## Features
 
+- **Homescreen Widget** — Tap the widget once to mark your parking spot (texts your own number `#Parking`), double tap to alert up to 3 priority starred contacts (`#SafetyCheck`), or triple tap to alert your entire whitelist (`#Emergency`).
 - **Works across messaging apps** — responds to SMS, WhatsApp, Telegram, Signal, Google Messages, Messenger, and any app that supports notification inline replies.
-- **Encrypted whitelist** — trusted contacts are stored using AES-256-GCM encryption backed by the Android Keystore. The data never leaves your device.
+- **Encrypted whitelist & Priority Contacts** — trusted contacts, "My Phone Number", and up to 3 "starred" priority contacts are stored using AES-256-GCM encryption backed by the Android Keystore. The data never leaves your device.
 - **Biometric protection** — the app requires fingerprint, face unlock, or device PIN to open. Falls back to PIN/pattern if no biometric is enrolled.
 - **Reliable location** — uses a three-stage fallback (GPS fix → cached location → forced update) to ensure a location is returned even from a cold start.
 - **Fully background** — operates silently when the screen is off. Auto-replies work without the app being open or unlocked.
@@ -44,8 +45,9 @@ No app needs to be open. No buttons need to be pressed.
 1. Install the APK (download from [Releases](../../releases)).
 2. Open QuicLoc and authenticate with your fingerprint or PIN.
 3. Grant all requested permissions. When prompted, also grant **Notification Access** in system settings — this enables responses in WhatsApp, Telegram, and other apps.
-4. Add the phone numbers or contact names of people you want to allow to request your location.
-5. Done. QuicLoc runs silently in the background.
+4. Set "My Phone Number" to enable single-tap parking reminders.
+5. Add the phone numbers or contact names of people you want to allow to request your location. You can "star" up to 3 contacts for priority `#SafetyCheck` alerts.
+6. Done. QuicLoc runs silently in the background. You can also add the QuicLoc widget to your homescreen.
 
 ### First-time permission note
 
