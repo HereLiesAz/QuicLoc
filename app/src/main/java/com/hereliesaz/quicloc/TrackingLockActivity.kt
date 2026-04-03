@@ -33,8 +33,15 @@ class TrackingLockActivity : ComponentActivity() {
     private var imageCapture: ImageCapture? = null
     private lateinit var cameraExecutor: ExecutorService
 
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("FAIL_COUNT", failCount)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        failCount = savedInstanceState?.getInt("FAIL_COUNT", 0) ?: 0
 
         // Window flags for lock screen behavior
         window.addFlags(
@@ -123,7 +130,13 @@ class TrackingLockActivity : ComponentActivity() {
             return
         }
 
-        val photoFile = File(externalMediaDirs.firstOrNull(), "${System.currentTimeMillis()}_lock.jpg")
+        val outputDirectory = externalMediaDirs.firstOrNull()
+        if (outputDirectory == null) {
+            Log.e(TAG, "No external media directory found, entering panic mode without photo")
+            TrackingService.enterPanicMode(this@TrackingLockActivity, null)
+            return
+        }
+        val photoFile = File(outputDirectory, "${System.currentTimeMillis()}_lock.jpg")
         val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
 
         currentCapture.takePicture(

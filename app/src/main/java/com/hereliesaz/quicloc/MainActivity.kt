@@ -198,14 +198,28 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     currentPassphrase = newPassphrase
                                     currentPin = newPin
 
-                                    // Request CAMERA permission if not granted
+                                    val perms = mutableListOf<String>()
                                     if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                        androidx.core.app.ActivityCompat.requestPermissions(this@MainActivity, arrayOf(android.Manifest.permission.CAMERA), 10)
+                                        perms.add(android.Manifest.permission.CAMERA)
                                     }
-                                    // Request SYSTEM_ALERT_WINDOW if not granted
-                                    if (!android.provider.Settings.canDrawOverlays(this@MainActivity)) {
-                                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName"))
-                                        startActivity(intent)
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.RECEIVE_SMS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        perms.add(android.Manifest.permission.RECEIVE_SMS)
+                                    }
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.SEND_SMS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        perms.add(android.Manifest.permission.SEND_SMS)
+                                    }
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        perms.add(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                                    }
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.ACCESS_COARSE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        perms.add(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                                    }
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.READ_CONTACTS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        perms.add(android.Manifest.permission.READ_CONTACTS)
+                                    }
+
+                                    if (perms.isNotEmpty()) {
+                                        androidx.core.app.ActivityCompat.requestPermissions(this@MainActivity, perms.toTypedArray(), 10)
                                     }
                                 }
                             )
@@ -513,11 +527,7 @@ fun QuicLocScreen(
         )
         Spacer(modifier = Modifier.height(8.dp))
         Button(
-            onClick = {
-                if (passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() }) {
-                    onSavePassphrase(passphraseInput, pinInput)
-                }
-            },
+            onClick = { onSavePassphrase(passphraseInput, pinInput) },
             enabled = passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
             modifier = Modifier.fillMaxWidth()
         ) {

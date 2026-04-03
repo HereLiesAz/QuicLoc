@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    8d1a75415b6c9b3f82a504d7b4b9f6d1c7b86913
-  Timestamp: 2026-04-03 16:52:16 UTC
+  Branch:    feature/passphrase-tracking-11988746183152168490
+  Commit:    c03bad1faa50648a609ea0cc9514933df7626229
+  Timestamp: 2026-04-03 17:59:34 UTC
 ======================================================
 
 
@@ -776,7 +776,6 @@ dependencies {
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:allowBackup="true"
@@ -1609,14 +1608,28 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     currentPassphrase = newPassphrase
                                     currentPin = newPin
 
-                                    // Request CAMERA permission if not granted
+                                    val perms = mutableListOf<String>()
                                     if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                        androidx.core.app.ActivityCompat.requestPermissions(this@MainActivity, arrayOf(android.Manifest.permission.CAMERA), 10)
+                                        perms.add(android.Manifest.permission.CAMERA)
                                     }
-                                    // Request SYSTEM_ALERT_WINDOW if not granted
-                                    if (!android.provider.Settings.canDrawOverlays(this@MainActivity)) {
-                                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName"))
-                                        startActivity(intent)
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.RECEIVE_SMS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        perms.add(android.Manifest.permission.RECEIVE_SMS)
+                                    }
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.SEND_SMS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        perms.add(android.Manifest.permission.SEND_SMS)
+                                    }
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        perms.add(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                                    }
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.ACCESS_COARSE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        perms.add(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                                    }
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.READ_CONTACTS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        perms.add(android.Manifest.permission.READ_CONTACTS)
+                                    }
+
+                                    if (perms.isNotEmpty()) {
+                                        androidx.core.app.ActivityCompat.requestPermissions(this@MainActivity, perms.toTypedArray(), 10)
                                     }
                                 }
                             )
@@ -1924,11 +1937,7 @@ fun QuicLocScreen(
         )
         Spacer(modifier = Modifier.height(8.dp))
         Button(
-            onClick = {
-                if (passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() }) {
-                    onSavePassphrase(passphraseInput, pinInput)
-                }
-            },
+            onClick = { onSavePassphrase(passphraseInput, pinInput) },
             enabled = passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -2496,8 +2505,15 @@ class TrackingLockActivity : ComponentActivity() {
     private var imageCapture: ImageCapture? = null
     private lateinit var cameraExecutor: ExecutorService
 
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("FAIL_COUNT", failCount)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        failCount = savedInstanceState?.getInt("FAIL_COUNT", 0) ?: 0
 
         // Window flags for lock screen behavior
         window.addFlags(
@@ -2586,7 +2602,13 @@ class TrackingLockActivity : ComponentActivity() {
             return
         }
 
-        val photoFile = File(externalMediaDirs.firstOrNull(), "${System.currentTimeMillis()}_lock.jpg")
+        val outputDirectory = externalMediaDirs.firstOrNull()
+        if (outputDirectory == null) {
+            Log.e(TAG, "No external media directory found, entering panic mode without photo")
+            TrackingService.enterPanicMode(this@TrackingLockActivity, null)
+            return
+        }
+        val photoFile = File(outputDirectory, "${System.currentTimeMillis()}_lock.jpg")
         val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
 
         currentCapture.takePicture(
@@ -2707,6 +2729,33 @@ class TrackingService : Service() {
     private var handler = Handler(Looper.getMainLooper())
     private var photoPathToSend: String? = null
 
+
+    private fun saveState() {
+        val prefs = getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString("sender", sender)
+            .putString("source", source)
+            .putBoolean("isPanicMode", isPanicMode)
+            .putString("photoPathToSend", photoPathToSend)
+            .apply()
+    }
+
+    private fun loadState(): Boolean {
+        val prefs = getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
+        sender = prefs.getString("sender", null)
+        source = prefs.getString("source", "Unknown") ?: "Unknown"
+        isPanicMode = prefs.getBoolean("isPanicMode", false)
+        photoPathToSend = prefs.getString("photoPathToSend", null)
+        return sender != null
+    }
+
+    private fun clearState() {
+        getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .apply()
+    }
+
     private val trackingRunnable = object : Runnable {
         override fun run() {
             sendLocationUpdate()
@@ -2723,7 +2772,17 @@ class TrackingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent == null) return START_NOT_STICKY
+        if (intent == null) {
+            // Restore state from SharedPreferences
+            if (!loadState()) {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            Log.d(TAG, "TrackingService restarted by system, restoring state for $sender")
+            showForegroundNotification()
+            handler.post(trackingRunnable)
+            return START_STICKY
+        }
 
         when (intent.action) {
             ACTION_STOP -> {
@@ -2735,6 +2794,7 @@ class TrackingService : Service() {
                 Log.d(TAG, "Entering panic mode")
                 isPanicMode = true
                 photoPathToSend = intent.getStringExtra(EXTRA_PHOTO_PATH)
+                saveState()
                 handler.removeCallbacks(trackingRunnable)
                 handler.post(trackingRunnable)
                 return START_STICKY
@@ -2750,33 +2810,34 @@ class TrackingService : Service() {
                 return START_NOT_STICKY
             }
 
+            saveState()
             Log.d(TAG, "Starting tracking for $sender via $source")
-
-            // Show lock screen immediately via intent
-            val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            }
-            startActivity(lockIntent)
-
-            val pendingIntent = PendingIntent.getActivity(
-                this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val notification = Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("QuicLoc Tracking Active")
-                .setContentText("Your device is currently locked and transmitting its location.")
-                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-                .setFullScreenIntent(pendingIntent, true)
-                .setOngoing(true)
-                .build()
-
-            startForeground(NOTIF_ID, notification)
-
-            // Start location ping loop
+            showForegroundNotification()
             handler.post(trackingRunnable)
         }
 
         return START_STICKY
+    }
+
+    private fun showForegroundNotification() {
+        val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+        startActivity(lockIntent)
+
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("QuicLoc Tracking Active")
+            .setContentText("Your device is currently locked and transmitting its location.")
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setFullScreenIntent(pendingIntent, true)
+            .setOngoing(true)
+            .build()
+
+        startForeground(NOTIF_ID, notification)
     }
 
     @SuppressLint("MissingPermission")
@@ -2803,7 +2864,7 @@ class TrackingService : Service() {
                 val settings = com.klinker.android.send_message.Settings().apply {
                     useSystemSending = true
                 }
-                val transaction = com.klinker.android.send_message.Transaction(this, settings)
+                val transaction = com.klinker.android.send_message.Transaction(this@TrackingService, settings)
                 val message = com.klinker.android.send_message.Message("QuicLoc Lock Image", targetSender)
 
                 // Add image
@@ -2843,6 +2904,7 @@ class TrackingService : Service() {
     }
 
     private fun stopTracking() {
+        clearState()
         handler.removeCallbacksAndMessages(null)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
