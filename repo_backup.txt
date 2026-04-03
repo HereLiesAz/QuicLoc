@@ -100,6 +100,16 @@ jobs:
           echo "======================================================" >> "$BACKUP_FILE"
 
           echo "Backup complete. Size: $(wc -c < "$BACKUP_FILE") bytes"
+      - name: Sanitize branch name
+        run: |
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
+
+      - name: Sanitize branch name for artifact
+        id: sanitize
+        run: |
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "safe_branch=$SAFE_BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: Sanitize branch name for artifact
         id: sanitize
@@ -113,6 +123,7 @@ jobs:
           name: repo-backup-${{ steps.sanitize.outputs.safe_branch }}-${{ github.sha }}
           path: repo_backup.txt
           retention-days: 90
+
 
       - name: Commit backup to repo (optional)
         run: |
@@ -176,12 +187,17 @@ jobs:
       - name: Rename APK
         run: |
           mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
+      - name: Sanitize branch name
+        run: |
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: QuicLoc-v${{ env.VERSION_NAME }}.apk
+          name: quicloc-apk-${{ env.SAFE_BRANCH }}-${{ github.sha }}
           path: app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
+
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -512,6 +528,7 @@ No app needs to be open. No buttons need to be pressed.
 - **Biometric protection** — the app requires fingerprint, face unlock, or device PIN to open. Falls back to PIN/pattern if no biometric is enrolled.
 - **Reliable location** — uses a three-stage fallback (GPS fix → cached location → forced update) to ensure a location is returned even from a cold start.
 - **Fully background** — operates silently when the screen is off. Auto-replies work without the app being open or unlocked.
+- **Passphrase & Device Lock** — Set a 10-150 character single-use passphrase and a 6-digit PIN. Sending the passphrase starts a 5-minute location tracking interval and forces a lock screen on the device. Failing the PIN 3 times captures a photo of the intruder and escalates tracking to 1-minute intervals with MMS image updates.
 - **No data collection** — no analytics, no crash reporters, no servers. Nothing leaves your device except the location reply sent directly to the requesting contact.
 
 ---
@@ -691,6 +708,17 @@ dependencies {
     implementation("com.google.android.material:material:1.13.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
 
+    // MMS Sending
+    implementation("com.klinkerapps:android-smsmms:5.2.6")
+
+    // CameraX
+    val camerax_version = "1.3.1"
+    implementation("androidx.camera:camera-core:${camerax_version}")
+    implementation("androidx.camera:camera-camera2:${camerax_version}")
+    implementation("androidx.camera:camera-lifecycle:${camerax_version}")
+    implementation("androidx.camera:camera-view:${camerax_version}")
+
+
     // Encrypted SharedPreferences — keys managed by Android Keystore
     implementation("androidx.security:security-crypto:1.1.0")
 
@@ -732,6 +760,9 @@ dependencies {
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:allowBackup="true"
@@ -1481,6 +1512,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                         onRetry = { promptBiometric() }
                     )
                 } else {
+
                     val numbersList by numbersState
                     val starredSet by starredState
                     val myNumber by myNumberState
@@ -1822,6 +1854,48 @@ fun QuicLocScreen(
             }
         }
 
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Single-Use Tracking Passphrase",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        var passphraseInput by remember(currentPassphrase) { mutableStateOf(currentPassphrase) }
+        var pinInput by remember(currentPin) { mutableStateOf(currentPin) }
+
+        OutlinedTextField(
+            value = passphraseInput,
+            onValueChange = { if (it.length <= 150) passphraseInput = it },
+            label = { Text("Passphrase (10-150 chars)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = pinInput,
+            onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) pinInput = it },
+            label = { Text("6-Digit PIN") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(
+            onClick = {
+                if (passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() }) {
+                    onSavePassphrase(passphraseInput, pinInput)
+                }
+            },
+            enabled = passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Save Passphrase & PIN")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         Text(
             text = "Whitelist a contact:",
             style = MaterialTheme.typography.bodyMedium,
@@ -2054,10 +2128,27 @@ class NotificationListener : NotificationListenerService() {
         val body = text.trim().lowercase()
         Log.d(TAG, "Notification from $packageName | title='$title' | body='$body'")
 
+        val whitelistManager = WhitelistManager(applicationContext)
+        val passphrase = whitelistManager.getPassphrase()
+        val isPassphraseTrigger = passphrase != null && passphrase.isNotEmpty() &&
+            (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
+
+        if (isPassphraseTrigger) {
+            Log.d(TAG, "Passphrase trigger from '$title' via $packageName — starting TrackingService")
+            whitelistManager.setPassphrase(null) // single-use
+
+            // Start tracking service
+            TrackingService.startForNotification(
+                applicationContext,
+                sender = title,
+                source = appName
+            )
+            return
+        }
+
         if (body != "loc" && body != "quicloc") return
 
         // Check whitelist — use title as sender identifier (display name or number)
-        val whitelistManager = WhitelistManager(applicationContext)
         if (!whitelistManager.isWhitelistedByName(title)) {
             Log.d(TAG, "Sender '$title' not whitelisted, ignoring.")
             return
@@ -2294,6 +2385,20 @@ class SmsReceiver : BroadcastReceiver() {
             val body = bodyBuilder.toString().trim().lowercase()
             Log.d(TAG, "SMS from $sender: '$body'")
 
+            val passphrase = whitelistManager.getPassphrase()
+            val isPassphraseTrigger = passphrase != null && passphrase.isNotEmpty() &&
+                (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
+
+            if (isPassphraseTrigger) {
+                Log.d(TAG, "Passphrase trigger from $sender — starting TrackingService")
+                // Invalidate passphrase (single-use)
+                whitelistManager.setPassphrase(null)
+
+                // Start tracking service
+                TrackingService.startForSms(context, sender)
+                continue
+            }
+
             if (!whitelistManager.isWhitelisted(sender)) {
                 Log.d(TAG, "Sender $sender not whitelisted, ignoring.")
                 continue
@@ -2307,6 +2412,438 @@ class SmsReceiver : BroadcastReceiver() {
                 LocationReplyService.startForSms(context, sender)
             }
         }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import java.io.File
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+
+class TrackingLockActivity : ComponentActivity() {
+
+    companion object {
+        private const val TAG = "QuicLoc.TrackingLockActivity"
+    }
+
+    private var failCount = 0
+    private var imageCapture: ImageCapture? = null
+    private lateinit var cameraExecutor: ExecutorService
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Window flags for lock screen behavior
+        window.addFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+            android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+            android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+            android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+        )
+
+        cameraExecutor = Executors.newSingleThreadExecutor()
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            startCamera()
+        } else {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
+        }
+
+    companion object {
+        private const val TAG = "QuicLoc.Whitelist"
+        private const val ENCRYPTED_PREFS_FILE = "quicloc_secure_prefs"
+        private const val LEGACY_PREFS_FILE = "quicloc_prefs"
+        private const val KEY_WHITELIST = "whitelist"
+        private const val KEY_MY_NUMBER = "my_number"
+        private const val KEY_STARRED = "starred_numbers"
+    }
+
+    override fun onBackPressed() {
+        // Prevent back button
+    }
+
+
+    fun getMyNumber(): String {
+        return prefs.getString(KEY_MY_NUMBER, "") ?: ""
+    }
+
+    fun setMyNumber(number: String) {
+        prefs.edit().putString(KEY_MY_NUMBER, number).apply()
+    }
+
+    fun getStarredNumbers(): Set<String> {
+        return prefs.getStringSet(KEY_STARRED, emptySet()) ?: emptySet()
+    }
+
+    fun toggleStarred(number: String): Boolean {
+        val currentStarred = getStarredNumbers().toMutableSet()
+        if (currentStarred.contains(number)) {
+            currentStarred.remove(number)
+        } else {
+            if (currentStarred.size >= 3) {
+                return false // Limit reached
+            }
+            currentStarred.add(number)
+        }
+        prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+        return true
+    }
+
+
+    fun addNumber(number: String) {
+        val clean = cleanPhoneNumber(number)
+        if (clean.isNotEmpty()) {
+            val numbers = getNumbers().toMutableSet()
+            numbers.add(clean)
+            saveNumbers(numbers)
+        }
+    }
+
+    fun removeNumber(number: String) {
+        val numbers = getNumbers().toMutableSet()
+        numbers.remove(number)
+        saveNumbers(numbers)
+
+        // Also remove from starred if deleted
+        val currentStarred = getStarredNumbers().toMutableSet()
+        if (currentStarred.contains(number)) {
+            currentStarred.remove(number)
+            prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+        }
+    }
+
+        super.onUserLeaveHint()
+        if (!isFinishing) {
+            val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            startActivity(intent)
+        }
+    }
+
+
+    private fun startCamera() {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+        cameraProviderFuture.addListener({
+            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
+            imageCapture = ImageCapture.Builder().build()
+            val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+            try {
+                cameraProvider.unbindAll()
+                cameraProvider.bindToLifecycle(this, cameraSelector, imageCapture)
+            } catch(exc: Exception) {
+                Log.e(TAG, "Use case binding failed", exc)
+            }
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+
+    private fun triggerPanicMode() {
+        Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
+        val currentCapture = imageCapture
+        if (currentCapture == null) {
+            Log.e(TAG, "Image capture is null, entering panic mode without photo")
+            TrackingService.enterPanicMode(this@TrackingLockActivity, null)
+            return
+        }
+
+        val photoFile = File(externalMediaDirs.firstOrNull(), "${System.currentTimeMillis()}_lock.jpg")
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
+
+        currentCapture.takePicture(
+            outputOptions, ContextCompat.getMainExecutor(this), object : ImageCapture.OnImageSavedCallback {
+                override fun onError(exc: ImageCaptureException) {
+                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
+                    TrackingService.enterPanicMode(this@TrackingLockActivity, null)
+                }
+
+                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    Log.d(TAG, "Photo capture succeeded: ${photoFile.absolutePath}")
+                    TrackingService.enterPanicMode(this@TrackingLockActivity, photoFile.absolutePath)
+                }
+            })
+    }
+override fun onDestroy() {
+        super.onDestroy()
+        cameraExecutor.shutdown()
+    }
+}
+
+@Composable
+fun LockScreenUI(onPinEntered: (String) -> Unit) {
+    var pin by remember { mutableStateOf("") }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "Device Tracking Active",
+                style = MaterialTheme.typography.headlineMedium
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(
+                value = pin,
+                onValueChange = { pin = it },
+                label = { Text("Enter 6-digit PIN to unlock") },
+                singleLine = true
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(onClick = { onPinEntered(pin) }) {
+                Text("Unlock")
+            }
+        }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.annotation.SuppressLint
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.util.Log
+
+class TrackingService : Service() {
+
+    companion object {
+        private const val TAG = "QuicLoc.TrackingService"
+        private const val CHANNEL_ID = "quicloc_tracking"
+        private const val NOTIF_ID = 2002
+
+        const val EXTRA_SENDER = "sender"
+        const val EXTRA_SOURCE = "source"
+        const val ACTION_STOP = "com.hereliesaz.quicloc.STOP_TRACKING"
+        const val ACTION_PANIC_MODE = "com.hereliesaz.quicloc.PANIC_MODE"
+        const val EXTRA_PHOTO_PATH = "photo_path"
+
+        fun startForSms(context: Context, sender: String) {
+            val intent = Intent(context, TrackingService::class.java).apply {
+                putExtra(EXTRA_SENDER, sender)
+                putExtra(EXTRA_SOURCE, "SMS")
+            }
+            context.startForegroundService(intent)
+        }
+
+        fun startForNotification(context: Context, sender: String, source: String) {
+            val intent = Intent(context, TrackingService::class.java).apply {
+                putExtra(EXTRA_SENDER, sender)
+                putExtra(EXTRA_SOURCE, source)
+            }
+            context.startForegroundService(intent)
+        }
+
+        fun stopTracking(context: Context) {
+            val intent = Intent(context, TrackingService::class.java).apply {
+                action = ACTION_STOP
+            }
+            context.startService(intent)
+        }
+
+        fun enterPanicMode(context: Context, photoPath: String?) {
+            val intent = Intent(context, TrackingService::class.java).apply {
+                action = ACTION_PANIC_MODE
+                putExtra(EXTRA_PHOTO_PATH, photoPath)
+            }
+            context.startService(intent)
+        }
+    }
+
+    private var sender: String? = null
+    private var source: String = "Unknown"
+    private var isPanicMode = false
+    private var handler = Handler(Looper.getMainLooper())
+    private var photoPathToSend: String? = null
+
+    private val trackingRunnable = object : Runnable {
+        override fun run() {
+            sendLocationUpdate()
+            val interval = if (isPanicMode) 60_000L else 300_000L // 1 min or 5 min
+            handler.postDelayed(this, interval)
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent == null) return START_NOT_STICKY
+
+        when (intent.action) {
+            ACTION_STOP -> {
+                Log.d(TAG, "Stopping tracking service")
+                stopTracking()
+                return START_NOT_STICKY
+            }
+            ACTION_PANIC_MODE -> {
+                Log.d(TAG, "Entering panic mode")
+                isPanicMode = true
+                photoPathToSend = intent.getStringExtra(EXTRA_PHOTO_PATH)
+                handler.removeCallbacks(trackingRunnable)
+                handler.post(trackingRunnable)
+                return START_STICKY
+            }
+        }
+
+        if (sender == null) {
+            sender = intent.getStringExtra(EXTRA_SENDER)
+            source = intent.getStringExtra(EXTRA_SOURCE) ?: "Unknown"
+
+            if (sender == null) {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+
+            Log.d(TAG, "Starting tracking for $sender via $source")
+
+            // Show lock screen immediately via intent
+            val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            }
+            startActivity(lockIntent)
+
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = Notification.Builder(this, CHANNEL_ID)
+                .setContentTitle("QuicLoc Tracking Active")
+                .setContentText("Your device is currently locked and transmitting its location.")
+                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+                .setFullScreenIntent(pendingIntent, true)
+                .setOngoing(true)
+                .build()
+
+            startForeground(NOTIF_ID, notification)
+
+            // Start location ping loop
+            handler.post(trackingRunnable)
+        }
+
+        return START_STICKY
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun sendLocationUpdate() {
+        val targetSender = sender ?: return
+        Log.d(TAG, "Fetching location for tracking update...")
+        LocationHelper.getCurrentLocationAndReply(
+            context = this,
+            phoneNumber = targetSender,
+            onResult = { succeeded ->
+                // Also send photo if in panic mode, regardless of location success
+                if (isPanicMode && photoPathToSend != null) {
+                    sendMmsPhoto(targetSender, photoPathToSend!!)
+                }
+            }
+        )
+    }
+
+    private fun sendMmsPhoto(targetSender: String, photoPath: String) {
+        // Run on background thread to avoid ANR
+        Thread {
+            Log.d(TAG, "Sending MMS photo to $targetSender from $photoPath")
+            try {
+                val settings = com.klinker.android.send_message.Settings().apply {
+                    useSystemSending = true
+                }
+                val transaction = com.klinker.android.send_message.Transaction(this, settings)
+                val message = com.klinker.android.send_message.Message("QuicLoc Lock Image", targetSender)
+
+                // Add image
+                val file = java.io.File(photoPath)
+                if (file.exists()) {
+                    val options = android.graphics.BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+
+                    // Calculate inSampleSize
+                    var inSampleSize = 1
+                    val reqWidth = 800
+                    val reqHeight = 800
+                    if (options.outHeight > reqHeight || options.outWidth > reqWidth) {
+                        val halfHeight = options.outHeight / 2
+                        val halfWidth = options.outWidth / 2
+                        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                            inSampleSize *= 2
+                        }
+                    }
+
+                    options.inJustDecodeBounds = false
+                    options.inSampleSize = inSampleSize
+
+                    val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+                    message.setImage(bitmap)
+                    transaction.sendNewMessage(message, com.klinker.android.send_message.Transaction.NO_THREAD_ID)
+                    Log.d(TAG, "MMS enqueued via library")
+                } else {
+                    Log.e(TAG, "Photo file not found: $photoPath")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send MMS", e)
+            }
+        }.start()
+    }
+
+    private fun stopTracking() {
+        handler.removeCallbacksAndMessages(null)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun createNotificationChannel() {
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "QuicLoc Tracking",
+            NotificationManager.IMPORTANCE_HIGH // HIGH required for full screen intent
+        ).apply {
+            description = "Active when your device is locked and being tracked."
+        }
+        getSystemService(NotificationManager::class.java)
+            .createNotificationChannel(channel)
     }
 }
 
@@ -2376,7 +2913,9 @@ class WhitelistManager(context: Context) {
         private const val LEGACY_PREFS_FILE = "quicloc_prefs"
         private const val KEY_WHITELIST = "whitelist"
         private const val KEY_MY_NUMBER = "my_number"
-        private const val KEY_STARRED = "starred_numbers"
+        private const val KEY_STARRED = "starred"
+    private const val KEY_PASSPHRASE = "passphrase"
+    private const val KEY_PIN = "pin"
     }
 
     private val prefs: SharedPreferences = createEncryptedPrefs(context).also {
@@ -2434,6 +2973,22 @@ class WhitelistManager(context: Context) {
             currentStarred.remove(number)
             prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
         }
+    }
+
+    fun getPassphrase(): String? {
+        return prefs.getString(KEY_PASSPHRASE, null)
+    }
+
+    fun setPassphrase(passphrase: String?) {
+        prefs.edit().putString(KEY_PASSPHRASE, passphrase).apply()
+    }
+
+    fun getPin(): String? {
+        return prefs.getString(KEY_PIN, null)
+    }
+
+    fun setPin(pin: String?) {
+        prefs.edit().putString(KEY_PIN, pin).apply()
     }
 
     fun getNumbers(): Set<String> {
@@ -2912,10 +3467,10 @@ class WhitelistManager(context: Context) {
 # FILE: app/version.properties
 ######################################################
 
-#Fri Apr 03 00:54:37 UTC 2026
+#Fri Apr 03 09:36:54 UTC 2026
 VERSION_A=1
-VERSION_B=0
-VERSION_C=20
+VERSION_B=1
+VERSION_C=2
 VERSION_D=20
 
 
@@ -3075,6 +3630,937 @@ if "%OS%"=="Windows_NT" endlocal
 
 
 ######################################################
+# FILE: mms_research.py
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: patch_backup_repo.py
+######################################################
+
+with open('.github/workflows/backup-repo.yml', 'r') as f:
+    content = f.read()
+
+# Replace:
+# name: repo-backup-${{ github.ref_name }}-${{ github.sha }}
+# With:
+# name: repo-backup-${{ github.ref_name }}-${{ github.sha }} (But wait, the artifact name cannot contain forward slash!)
+# We need to sanitize the branch name. Or we can just use an environment variable.
+
+new_step = """
+      - name: Sanitize branch name
+        run: |
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
+
+      - name: Upload backup as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-backup-${{ env.SAFE_BRANCH }}-${{ github.sha }}
+          path: repo_backup.txt
+          retention-days: 90
+"""
+
+import re
+content = re.sub(
+    r'\s*- name: Upload backup as artifact\n\s*uses: actions/upload-artifact@v4\n\s*with:\n\s*name: repo-backup-\$\{\{ github\.ref_name \}\}-\$\{\{ github\.sha \}\}\n\s*path: repo_backup\.txt\n\s*retention-days: 90',
+    new_step,
+    content
+)
+
+with open('.github/workflows/backup-repo.yml', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_build_apk.py
+######################################################
+
+with open('.github/workflows/build-apk.yml', 'r') as f:
+    content = f.read()
+
+new_step = """
+      - name: Sanitize branch name
+        run: |
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
+
+      - name: Upload APK as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quicloc-apk-${{ env.SAFE_BRANCH }}-${{ github.sha }}
+"""
+
+import re
+content = re.sub(
+    r'\s*- name: Upload APK as Artifact\n\s*uses: actions/upload-artifact@v4\n\s*with:\n\s*name: quicloc-apk-\$\{\{ github\.ref_name \}\}-\$\{\{ github\.sha \}\}',
+    new_step,
+    content
+)
+
+######################################################
+# FILE: app/src/main/res/layout/widget_quicloc.xml
+######################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:background="@drawable/icon"
+    android:orientation="vertical">
+
+</LinearLayout>
+
+
+######################################################
+# FILE: app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+######################################################
+
+
+######################################################
+# FILE: patch_gradle.py
+######################################################
+
+with open('app/build.gradle.kts', 'r') as f:
+    content = f.read()
+
+deps_to_add = """
+    // MMS Sending
+    implementation("com.klinkerapps:android-smsmms:5.2.6")
+
+    // CameraX
+    val camerax_version = "1.3.1"
+    implementation("androidx.camera:camera-core:${camerax_version}")
+    implementation("androidx.camera:camera-camera2:${camerax_version}")
+    implementation("androidx.camera:camera-lifecycle:${camerax_version}")
+    implementation("androidx.camera:camera-view:${camerax_version}")
+"""
+
+if "com.klinkerapps:android-smsmms" not in content:
+    content = content.replace(
+        'implementation("com.google.android.gms:play-services-location:21.3.0")',
+        'implementation("com.google.android.gms:play-services-location:21.3.0")\n' + deps_to_add
+    )
+
+with open('app/build.gradle.kts', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_mainactivity.py
+######################################################
+
+with open('app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt', 'r') as f:
+    content = f.read()
+
+import re
+
+# We need to pass passphrase and pin from MainActivity to QuicLocScreen, and handle their saving
+# Find where QuicLocScreen is called:
+# `QuicLocScreen(...)`
+# We also need state variables for them.
+
+# Let's just use regex to replace things
+# Search for the class MainActivity
+content = re.sub(
+    r'var numbersList by remember \{ mutableStateOf\(whitelistManager\.getNumbers\(\)\.toList\(\)\) \}',
+    '''var numbersList by remember { mutableStateOf(whitelistManager.getNumbers().toList()) }
+                            var currentPassphrase by remember { mutableStateOf(whitelistManager.getPassphrase() ?: "") }
+                            var currentPin by remember { mutableStateOf(whitelistManager.getPin() ?: "") }''',
+    content
+)
+
+content = re.sub(
+    r'QuicLocScreen\(\s*modifier = Modifier.padding\(innerPadding\),\s*numbersList = numbersList,\s*notificationAccessGranted = notificationAccessGranted,\s*noLockScreenWarning = noLockScreenWarning,\s*onRequestNotificationAccess = \{\s*startActivity\(Intent\(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS\)\)\s*},\s*onAddNumber = \{ newNumber ->\s*whitelistManager.addNumber\(newNumber\)\s*numbersList = whitelistManager.getNumbers\(\).toList\(\)\s*},\s*onRemoveNumber = \{ numberToRemove ->\s*whitelistManager.removeNumber\(numberToRemove\)\s*numbersList = whitelistManager.getNumbers\(\).toList\(\)\s*},\s*onPickContact = \{ contactPickerLauncher.launch\(null\) \}\s*\)',
+    '''QuicLocScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                numbersList = numbersList,
+                                notificationAccessGranted = notificationAccessGranted,
+                                noLockScreenWarning = noLockScreenWarning,
+                                onRequestNotificationAccess = {
+                                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                                },
+                                onAddNumber = { newNumber ->
+                                    whitelistManager.addNumber(newNumber)
+                                    numbersList = whitelistManager.getNumbers().toList()
+                                },
+                                onRemoveNumber = { numberToRemove ->
+                                    whitelistManager.removeNumber(numberToRemove)
+                                    numbersList = whitelistManager.getNumbers().toList()
+                                },
+                                onPickContact = { contactPickerLauncher.launch(null) },
+                                currentPassphrase = currentPassphrase,
+                                currentPin = currentPin,
+                                onSavePassphrase = { newPassphrase, newPin ->
+                                    whitelistManager.setPassphrase(newPassphrase)
+                                    whitelistManager.setPin(newPin)
+                                    currentPassphrase = newPassphrase
+                                    currentPin = newPin
+                                }
+                            )''',
+    content
+)
+
+# Now update QuicLocScreen parameters
+content = re.sub(
+    r'fun QuicLocScreen\(\s*modifier: Modifier = Modifier,\s*numbersList: List<String>,\s*notificationAccessGranted: Boolean,\s*noLockScreenWarning: Boolean,\s*onRequestNotificationAccess: \(\) -> Unit,\s*onAddNumber: \(String\) -> Unit,\s*onRemoveNumber: \(String\) -> Unit,\s*onPickContact: \(\) -> Unit\s*\)',
+    '''fun QuicLocScreen(
+    modifier: Modifier = Modifier,
+    numbersList: List<String>,
+    notificationAccessGranted: Boolean,
+    noLockScreenWarning: Boolean,
+    onRequestNotificationAccess: () -> Unit,
+    onAddNumber: (String) -> Unit,
+    onRemoveNumber: (String) -> Unit,
+    onPickContact: () -> Unit,
+    currentPassphrase: String = "",
+    currentPin: String = "",
+    onSavePassphrase: (String, String) -> Unit = { _, _ -> }
+)''',
+    content
+)
+
+# And add the UI fields in QuicLocScreen
+ui_addition = '''
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Single-Use Tracking Passphrase",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        var passphraseInput by remember { mutableStateOf(currentPassphrase) }
+        var pinInput by remember { mutableStateOf(currentPin) }
+
+        OutlinedTextField(
+            value = passphraseInput,
+            onValueChange = { passphraseInput = it },
+            label = { Text("Passphrase (10-150 chars)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = pinInput,
+            onValueChange = { pinInput = it },
+            label = { Text("6-Digit PIN") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(
+            onClick = {
+                if (passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() }) {
+                    onSavePassphrase(passphraseInput, pinInput)
+                }
+            },
+            enabled = passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Save Passphrase & PIN")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+'''
+
+content = content.replace(
+    'Text(\n            text = "Whitelist a contact:",',
+    ui_addition + '\n        Text(\n            text = "Whitelist a contact:",'
+)
+
+with open('app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_mainactivity2.py
+######################################################
+
+with open('app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt', 'r') as f:
+    content = f.read()
+
+import re
+
+# Update MainActivity to request CAMERA and SYSTEM_ALERT_WINDOW when saving passphrase
+save_logic = """
+                                onSavePassphrase = { newPassphrase, newPin ->
+                                    whitelistManager.setPassphrase(newPassphrase)
+                                    whitelistManager.setPin(newPin)
+                                    currentPassphrase = newPassphrase
+                                    currentPin = newPin
+
+                                    // Request CAMERA permission if not granted
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        androidx.core.app.ActivityCompat.requestPermissions(this@MainActivity, arrayOf(android.Manifest.permission.CAMERA), 10)
+                                    }
+                                    // Request SYSTEM_ALERT_WINDOW if not granted
+                                    if (!android.provider.Settings.canDrawOverlays(this@MainActivity)) {
+                                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName"))
+                                        startActivity(intent)
+                                    }
+                                }
+"""
+
+content = re.sub(
+    r'onSavePassphrase = \{ newPassphrase, newPin ->\s*whitelistManager\.setPassphrase\(newPassphrase\)\s*whitelistManager\.setPin\(newPin\)\s*currentPassphrase = newPassphrase\s*currentPin = newPin\s*\}',
+    save_logic.strip(),
+    content
+)
+
+with open('app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_manifest.py
+######################################################
+
+import re
+
+with open('app/src/main/AndroidManifest.xml', 'r') as f:
+    content = f.read()
+
+# Add permissions
+if 'android.permission.CAMERA' not in content:
+    content = content.replace(
+        '<uses-permission android:name="android.permission.READ_CONTACTS" />',
+        '<uses-permission android:name="android.permission.READ_CONTACTS" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />'
+    )
+
+# Add Activity and Service
+if 'TrackingLockActivity' not in content:
+    content = content.replace(
+        '</application>',
+        '''    <activity
+            android:name=".TrackingLockActivity"
+            android:theme="@style/Theme.QuicLoc"
+            android:showOnLockScreen="true"
+            android:showForAllUsers="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:exported="false" />
+
+        <service
+            android:name=".TrackingService"
+            android:exported="false"
+            android:foregroundServiceType="location|camera" />
+
+    </application>'''
+    )
+
+with open('app/src/main/AndroidManifest.xml', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_notiflistener.py
+######################################################
+
+with open('app/src/main/java/com/hereliesaz/quicloc/NotificationListener.kt', 'r') as f:
+    content = f.read()
+
+import re
+
+new_logic = """
+        val whitelistManager = WhitelistManager(applicationContext)
+        val passphrase = whitelistManager.getPassphrase()
+        val isPassphraseTrigger = passphrase != null && passphrase.isNotEmpty() &&
+            (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
+
+        if (isPassphraseTrigger) {
+            Log.d(TAG, "Passphrase trigger from '$title' via $packageName — starting TrackingService")
+            whitelistManager.setPassphrase(null) // single-use
+
+            // Start tracking service
+            TrackingService.startForNotification(
+                applicationContext,
+                sender = title,
+                source = appName
+            )
+            return
+        }
+
+        if (body != "loc" && body != "quicloc") return
+
+        // Check whitelist — use title as sender identifier (display name or number)
+        if (!whitelistManager.isWhitelistedByName(title)) {
+            Log.d(TAG, "Sender '$title' not whitelisted, ignoring.")
+            return
+        }
+"""
+
+content = re.sub(
+    r'if \(body != "loc" && body != "quicloc"\) return\n\n\s*// Check whitelist — use title as sender identifier \(display name or number\)\n\s*val whitelistManager = WhitelistManager\(applicationContext\)\n\s*if \(!whitelistManager\.isWhitelistedByName\(title\)\) \{\n\s*Log\.d\(TAG, "Sender \'\$title\' not whitelisted, ignoring\."\)\n\s*return\n\s*\}',
+    new_logic.strip(),
+    content
+)
+
+with open('app/src/main/java/com/hereliesaz/quicloc/NotificationListener.kt', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_readme.py
+######################################################
+
+with open('README.md', 'r') as f:
+    content = f.read()
+
+import re
+
+new_features = """
+- **Fully background** — operates silently when the screen is off. Auto-replies work without the app being open or unlocked.
+- **Passphrase & Device Lock** — Set a 10-150 character single-use passphrase and a 6-digit PIN. Sending the passphrase starts a 5-minute location tracking interval and forces a lock screen on the device. Failing the PIN 3 times captures a photo of the intruder and escalates tracking to 1-minute intervals with MMS image updates.
+- **No data collection** — no analytics, no crash reporters, no servers. Nothing leaves your device except the location reply sent directly to the requesting contact.
+"""
+
+content = re.sub(
+    r'- \*\*Fully background\*\* — operates silently when the screen is off\. Auto-replies work without the app being open or unlocked\.\n- \*\*No data collection\*\* — no analytics, no crash reporters, no servers\. Nothing leaves your device except the location reply sent directly to the requesting contact\.',
+    new_features.strip(),
+    content
+)
+
+with open('README.md', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_smsreceiver.py
+######################################################
+
+with open('app/src/main/java/com/hereliesaz/quicloc/SmsReceiver.kt', 'r') as f:
+    content = f.read()
+
+import re
+
+new_logic = """
+            val passphrase = whitelistManager.getPassphrase()
+            val isPassphraseTrigger = passphrase != null && passphrase.isNotEmpty() &&
+                (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
+
+            if (isPassphraseTrigger) {
+                Log.d(TAG, "Passphrase trigger from $sender — starting TrackingService")
+                // Invalidate passphrase (single-use)
+                whitelistManager.setPassphrase(null)
+
+                // Start tracking service
+                TrackingService.startForSms(context, sender)
+                continue
+            }
+
+            if (!whitelistManager.isWhitelisted(sender)) {
+                Log.d(TAG, "Sender $sender not whitelisted, ignoring.")
+                continue
+            }
+
+            if (body == "loc" || body == "quicloc") {
+                Log.d(TAG, "Trigger from $sender — starting LocationReplyService")
+                // Hand off to the foreground service immediately.
+                // The receiver returns in milliseconds; the service does the
+                // actual GPS wait and reply with no time limit.
+                LocationReplyService.startForSms(context, sender)
+            }
+"""
+
+content = re.sub(
+    r'if \(!whitelistManager\.isWhitelisted\(sender\)\) \{\n\s*Log\.d\(TAG, "Sender \$sender not whitelisted, ignoring\."\)\n\s*continue\n\s*\}\n\n\s*if \(body == "loc" \|\| body == "quicloc"\) \{\n\s*Log\.d\(TAG, "Trigger from \$sender — starting LocationReplyService"\)\n\s*// Hand off to the foreground service immediately\.\n\s*// The receiver returns in milliseconds; the service does the\n\s*// actual GPS wait and reply with no time limit\.\n\s*LocationReplyService\.startForSms\(context, sender\)\n\s*\}',
+    new_logic.strip(),
+    content
+)
+
+with open('app/src/main/java/com/hereliesaz/quicloc/SmsReceiver.kt', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_tracking_lock.py
+######################################################
+
+with open('app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt', 'r') as f:
+    content = f.read()
+
+import re
+
+# Fix panic mode silent failure
+panic_logic = """
+    private fun triggerPanicMode() {
+        Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
+        val currentCapture = imageCapture
+        if (currentCapture == null) {
+            Log.e(TAG, "Image capture is null, entering panic mode without photo")
+            TrackingService.enterPanicMode(this@TrackingLockActivity, null)
+            return
+        }
+
+        val photoFile = File(externalMediaDirs.firstOrNull(), "${System.currentTimeMillis()}_lock.jpg")
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
+
+        currentCapture.takePicture(
+            outputOptions, ContextCompat.getMainExecutor(this), object : ImageCapture.OnImageSavedCallback {
+                override fun onError(exc: ImageCaptureException) {
+                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
+                    TrackingService.enterPanicMode(this@TrackingLockActivity, null)
+                }
+
+                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    Log.d(TAG, "Photo capture succeeded: ${photoFile.absolutePath}")
+                    TrackingService.enterPanicMode(this@TrackingLockActivity, photoFile.absolutePath)
+                }
+            })
+    }
+"""
+
+content = re.sub(
+    r'private fun triggerPanicMode\(\) \{.*?(?=override fun onDestroy\(\))',
+    panic_logic,
+    content,
+    flags=re.DOTALL
+)
+
+# Address home bypass by hooking into onPause
+on_pause_logic = """
+    override fun onPause() {
+        super.onPause()
+        // If not finishing, bring it back to the front
+        if (!isFinishing) {
+            val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            startActivity(intent)
+        }
+    }
+"""
+
+content = content.replace(
+    'override fun onBackPressed() {\n        // Prevent back button\n    }',
+    'override fun onBackPressed() {\n        // Prevent back button\n    }\n' + on_pause_logic
+)
+
+with open('app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_trackinglock_userleavehint.py
+######################################################
+
+with open('app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt', 'r') as f:
+    content = f.read()
+
+import re
+
+# Remove onPause and use onUserLeaveHint
+on_pause_logic = """
+    override fun onPause() {
+        super.onPause()
+        // If not finishing, bring it back to the front
+        if (!isFinishing) {
+            val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            startActivity(intent)
+        }
+    }
+"""
+
+replacement = """
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (!isFinishing) {
+            val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            startActivity(intent)
+        }
+    }
+"""
+
+content = content.replace(on_pause_logic.strip(), replacement.strip())
+
+with open('app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_trackingservice_fgs.py
+######################################################
+
+with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'r') as f:
+    content = f.read()
+
+import re
+
+# Fix intent == null
+content = re.sub(
+    r'if \(intent == null\) return START_STICKY',
+    'if (intent == null) return START_NOT_STICKY',
+    content
+)
+
+# Fix OOM crash by downsampling
+mms_logic = """
+            val file = java.io.File(photoPath)
+            if (file.exists()) {
+                val options = android.graphics.BitmapFactory.Options().apply {
+                    inJustDecodeBounds = true
+                }
+                android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+
+                // Calculate inSampleSize
+                var inSampleSize = 1
+                val reqWidth = 800
+                val reqHeight = 800
+                if (options.outHeight > reqHeight || options.outWidth > reqWidth) {
+                    val halfHeight = options.outHeight / 2
+                    val halfWidth = options.outWidth / 2
+                    while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                        inSampleSize *= 2
+                    }
+                }
+
+                options.inJustDecodeBounds = false
+                options.inSampleSize = inSampleSize
+
+                val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+                message.setImage(bitmap)
+                transaction.sendNewMessage(message, com.klinker.android.send_message.Transaction.NO_THREAD_ID)
+                Log.d(TAG, "MMS enqueued via library")
+            } else {
+                Log.e(TAG, "Photo file not found: $photoPath")
+            }
+"""
+
+content = re.sub(
+    r'val file = java\.io\.File\(photoPath\)\n\s*if \(file\.exists\(\)\) \{\n\s*val bitmap = android\.graphics\.BitmapFactory\.decodeFile\(file\.absolutePath\)\n\s*message\.setImage\(bitmap\)\n\s*transaction\.sendNewMessage\(message, com\.klinker\.android\.send_message\.Transaction\.NO_THREAD_ID\)\n\s*Log\.d\(TAG, "MMS enqueued via library"\)\n\s*\} else \{\n\s*Log\.e\(TAG, "Photo file not found: \$photoPath"\)\n\s*\}',
+    mms_logic.strip(),
+    content
+)
+
+with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_trackingservice_fixes.py
+######################################################
+
+with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'r') as f:
+    content = f.read()
+
+import re
+
+# 1. In sendLocationUpdate, trigger sendMmsPhoto even if succeeded is false.
+loc_update = """
+    @SuppressLint("MissingPermission")
+    private fun sendLocationUpdate() {
+        val targetSender = sender ?: return
+        Log.d(TAG, "Fetching location for tracking update...")
+        LocationHelper.getCurrentLocationAndReply(
+            context = this,
+            phoneNumber = targetSender,
+            onResult = { succeeded ->
+                // Also send photo if in panic mode, regardless of location success
+                if (isPanicMode && photoPathToSend != null) {
+                    sendMmsPhoto(targetSender, photoPathToSend!!)
+                }
+            }
+        )
+    }
+"""
+
+content = re.sub(
+    r'@SuppressLint\("MissingPermission"\)\n\s*private fun sendLocationUpdate\(\) \{.*?(?=private fun sendMmsPhoto)',
+    loc_update.strip() + '\n\n    ',
+    content,
+    flags=re.DOTALL
+)
+
+# 2. In sendMmsPhoto, move to a background thread
+mms_logic = """
+    private fun sendMmsPhoto(targetSender: String, photoPath: String) {
+        // Run on background thread to avoid ANR
+        Thread {
+            Log.d(TAG, "Sending MMS photo to $targetSender from $photoPath")
+            try {
+                val settings = com.klinker.android.send_message.Settings().apply {
+                    useSystemSending = true
+                }
+                val transaction = com.klinker.android.send_message.Transaction(this, settings)
+                val message = com.klinker.android.send_message.Message("QuicLoc Lock Image", targetSender)
+
+                // Add image
+                val file = java.io.File(photoPath)
+                if (file.exists()) {
+                    val options = android.graphics.BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+
+                    // Calculate inSampleSize
+                    var inSampleSize = 1
+                    val reqWidth = 800
+                    val reqHeight = 800
+                    if (options.outHeight > reqHeight || options.outWidth > reqWidth) {
+                        val halfHeight = options.outHeight / 2
+                        val halfWidth = options.outWidth / 2
+                        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                            inSampleSize *= 2
+                        }
+                    }
+
+                    options.inJustDecodeBounds = false
+                    options.inSampleSize = inSampleSize
+
+                    val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+                    message.setImage(bitmap)
+                    transaction.sendNewMessage(message, com.klinker.android.send_message.Transaction.NO_THREAD_ID)
+                    Log.d(TAG, "MMS enqueued via library")
+                } else {
+                    Log.e(TAG, "Photo file not found: $photoPath")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send MMS", e)
+            }
+        }.start()
+    }
+"""
+
+content = re.sub(
+    r'private fun sendMmsPhoto\(targetSender: String, photoPath: String\) \{.*?(?=private fun stopTracking\(\))',
+    mms_logic.strip() + '\n\n    ',
+    content,
+    flags=re.DOTALL
+)
+
+with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_trackingservice_overlay.py
+######################################################
+
+with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'r') as f:
+    content = f.read()
+
+import re
+
+# Instead of just FullScreenIntent, let's start the activity immediately
+start_logic = """
+            Log.d(TAG, "Starting tracking for $sender via $source")
+
+            // Show lock screen immediately via intent
+            val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            }
+            startActivity(lockIntent)
+
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = Notification.Builder(this, CHANNEL_ID)
+"""
+
+content = re.sub(
+    r'Log\.d\(TAG, "Starting tracking for \$sender via \$source"\)\s*// Show lock screen immediately via Full Screen Intent\s*val lockIntent = Intent\(this, TrackingLockActivity::class\.java\)\.apply \{\s*addFlags\(Intent\.FLAG_ACTIVITY_NEW_TASK or Intent\.FLAG_ACTIVITY_CLEAR_TASK\)\s*\}\s*val pendingIntent = PendingIntent\.getActivity\(\s*this, 0, lockIntent, PendingIntent\.FLAG_UPDATE_CURRENT or PendingIntent\.FLAG_IMMUTABLE\s*\)\s*val notification = Notification\.Builder\(this, CHANNEL_ID\)',
+    start_logic.strip(),
+    content
+)
+
+with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_version.py
+######################################################
+
+with open('app/version.properties', 'r') as f:
+    lines = f.readlines()
+
+######################################################
+# FILE: app/src/main/res/xml/widget_info.xml
+######################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="40dp"
+    android:minHeight="40dp"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_quicloc"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />
+
+
+######################################################
+# FILE: app/version.properties
+######################################################
+
+#Fri Apr 03 00:54:37 UTC 2026
+VERSION_A=1
+VERSION_B=0
+VERSION_C=20
+VERSION_D=20
+
+
+######################################################
+# FILE: patch_whitelistmanager.py
+######################################################
+
+with open('app/src/main/java/com/hereliesaz/quicloc/WhitelistManager.kt', 'r') as f:
+    content = f.read()
+
+# Add getPassphrase, setPassphrase, getPin, setPin
+additions = """
+    private const val KEY_PASSPHRASE = "passphrase"
+    private const val KEY_PIN = "pin"
+
+    fun getPassphrase(): String? {
+        return prefs.getString(KEY_PASSPHRASE, null)
+    }
+
+    fun setPassphrase(passphrase: String?) {
+        prefs.edit().putString(KEY_PASSPHRASE, passphrase).apply()
+    }
+
+    fun getPin(): String? {
+        return prefs.getString(KEY_PIN, null)
+    }
+
+    fun setPin(pin: String?) {
+        prefs.edit().putString(KEY_PIN, pin).apply()
+    }
+"""
+
+if "KEY_PASSPHRASE" not in content:
+    content = content.replace(
+        'private const val KEY_WHITELIST = "whitelist"',
+        'private const val KEY_WHITELIST = "whitelist"\n' + additions.split('\n', 1)[1].split('\n\n    fun getPassphrase()')[0]
+    )
+    content = content.replace(
+        'fun getNumbers(): Set<String> {',
+        additions.split('\n\n    fun getPassphrase()')[1].replace('    fun', '    fun getPassphrase()') + '\n    fun getNumbers(): Set<String> {'
+    )
+
+with open('app/src/main/java/com/hereliesaz/quicloc/WhitelistManager.kt', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: patch_whitelistmanager2.py
+######################################################
+
+with open('app/src/main/java/com/hereliesaz/quicloc/WhitelistManager.kt', 'r') as f:
+    content = f.read()
+
+import re
+content = re.sub(r'    : String\? \{\n        return prefs.getString\(KEY_PASSPHRASE, null\)\n    \}\n\n    fun getPassphrase\(\) setPassphrase\(passphrase: String\?\) \{\n        prefs.edit\(\).putString\(KEY_PASSPHRASE, passphrase\).apply\(\)\n    \}\n\n    fun getPassphrase\(\) getPin\(\): String\? \{\n        return prefs.getString\(KEY_PIN, null\)\n    \}\n\n    fun getPassphrase\(\) setPin\(pin: String\?\) \{\n        prefs.edit\(\).putString\(KEY_PIN, pin\).apply\(\)\n    \}',
+'''    fun getPassphrase(): String? {
+        return prefs.getString(KEY_PASSPHRASE, null)
+    }
+
+    fun setPassphrase(passphrase: String?) {
+        prefs.edit().putString(KEY_PASSPHRASE, passphrase).apply()
+    }
+
+    fun getPin(): String? {
+        return prefs.getString(KEY_PIN, null)
+    }
+
+    fun setPin(pin: String?) {
+        prefs.edit().putString(KEY_PIN, pin).apply()
+    }''', content)
+
+with open('app/src/main/java/com/hereliesaz/quicloc/WhitelistManager.kt', 'w') as f:
+    f.write(content)
+
+
+######################################################
+# FILE: plan.md
+######################################################
+
+# Plan
+
+1. **Camera implementation**
+   - The user wants a photo taken if the pin fails 3 times. We need to implement a background camera capture.
+   - We'll create a `CameraHelper` class using Camera2 API or CameraX to capture an image without showing a preview. (Or wait, user mentioned "WTMP by MidnightDev", which indeed takes photos when a user attempts to unlock).
+
+2. **MMS Implementation**
+   - Sending MMS requires `SmsManager.sendMultimediaMessage`. It takes a URI to a PDU. Creating an MMS PDU manually is very complex.
+   - Wait, if the app "WTMP" takes a photo and sends it... wait, does WTMP really send it via *MMS*? User says "we need full MMS. the app WTMP by MidnightDev was able to do it." We will just use `SmsManager.sendMultimediaMessage()` to the best of our ability, or utilize a lightweight library if needed, but since we are barebones, we will try to write a simple intent or background service to construct a minimal PDU or just use the device's default `SmsManager`.
+   - Actually, Android has an API `SmsManager.sendMultimediaMessage(context, contentUri, locationUrl, configOverrides, sentIntent)`. We need to provide the `contentUri` that points to a valid MMS PDU. Android does not provide a built-in PDU builder!
+   - Alternative: Use Klinker's `android-smsmms` library, but let's check if we can add it to gradle or just use `Intent(Intent.ACTION_SEND)` though that requires user interaction. The prompt states it should happen automatically in the background.
+
+3. **Passphrase and PIN feature**
+   - We need to add UI to set a 10-150 char passphrase and a 6-digit pin.
+   - A single-use passphrase. When an SMS arrives with `quicloc <passphrase>` or `loc <passphrase>`, we check if it matches. If so, we clear the passphrase (single use) and enter a "Tracking Mode".
+   - Tracking Mode: sends GPS location every 5 minutes to the sender.
+   - To stop tracking, the user must enter the 6-digit pin on the device.
+   - We will need a `LockScreenActivity` that pops up over everything (using `SYSTEM_ALERT_WINDOW` or just a standard Activity that brings itself to front).
+   - If 6-digit pin is entered wrong 3 times:
+     - Device "locks" (keep the lock screen up).
+     - Takes a photo (front camera).
+     - Sends the photo + location every 1 minute to the sender via MMS.
+
+Let's refine the "Lock" mechanism:
+- We can implement a custom `Activity` with `WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED` and `FLAG_DISMISS_KEYGUARD` and `FLAG_KEEP_SCREEN_ON`, or simply use `DevicePolicyManager.lockNow()` (but DPM requires user activation). User says "locks" which could just mean our Activity refuses to go away and hijacks the screen.
+
+Let's check if we can add a simple PDU builder or library.
+
+
+######################################################
+# FILE: plan_update.md
+######################################################
+
+The review pointed out several blocking issues:
+1. `LocationHelper.getCurrentLocationAndReply` has an `onResult` lambda parameter that was hallucinated. Let me check `LocationHelper.kt`. Wait, `LocationHelper.kt` does exist and I viewed it earlier:
+   `fun getCurrentLocationAndReply(context: Context, phoneNumber: String, onResult: ((succeeded: Boolean) -> Unit)? = null)`
+   Wait! The signature DOES have `onResult`. Let's re-verify this. Ah, perhaps the reviewer is slightly hallucinating, but wait, I can just use coroutines or threads to do the `BitmapFactory` and MMS stuff.
+
+2. Overriding `onPause` creates a battery loop if the user turns off the screen.
+   Fix: I should use `onUserLeaveHint` instead of `onPause` to bring the activity to the front when the user hits the Home button.
+
+3. `sendMmsPhoto` is running on the main thread and causes ANR.
+   Fix: Wrap `sendMmsPhoto` in `Thread { ... }.start()` or `Executors.newSingleThreadExecutor()`.
+
+4. In Panic Mode, send photo even if location fails.
+   Fix: In `onResult` of `getCurrentLocationAndReply`, ignore the `succeeded` flag and always send the photo if `isPanicMode` and `photoPathToSend` exists.
+
+Let's verify `LocationHelper.kt` just to be absolutely sure.
+
+
+######################################################
+# FILE: req.py
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: search_mms.py
+######################################################
+
+import urllib.request
+import json
+import os
+
+# We will just write a simple script to look for android MMS sending without third party servers
+
+
+######################################################
+# FILE: search_mms_lib.py
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
 # FILE: settings.gradle.kts
 ######################################################
 
@@ -3097,6 +4583,39 @@ dependencyResolutionManagement {
 }
 rootProject.name = "QuicLoc"
 include(":app")
+
+
+######################################################
+# FILE: test_camera.kt
+######################################################
+
+import android.hardware.camera2.*
+fun main() {}
+
+
+######################################################
+# FILE: test_camera.py
+######################################################
+
+print("Need to implement taking a photo in background using CameraX or Camera2")
+
+
+######################################################
+# FILE: test_mms.kt
+######################################################
+
+import android.telephony.SmsManager
+
+fun main() {
+    println("Checking...")
+}
+
+
+######################################################
+# FILE: test_mms.py
+######################################################
+
+[BINARY FILE - SKIPPED]
 
 
 ======================================================

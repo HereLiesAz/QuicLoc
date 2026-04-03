@@ -118,6 +118,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                         onRetry = { promptBiometric() }
                     )
                 } else {
+
                     val numbersList by numbersState
                     val starredSet by starredState
                     val myNumber by myNumberState
@@ -458,6 +459,48 @@ fun QuicLocScreen(
                 )
             }
         }
+
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Single-Use Tracking Passphrase",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        var passphraseInput by remember(currentPassphrase) { mutableStateOf(currentPassphrase) }
+        var pinInput by remember(currentPin) { mutableStateOf(currentPin) }
+
+        OutlinedTextField(
+            value = passphraseInput,
+            onValueChange = { if (it.length <= 150) passphraseInput = it },
+            label = { Text("Passphrase (10-150 chars)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = pinInput,
+            onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) pinInput = it },
+            label = { Text("6-Digit PIN") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(
+            onClick = {
+                if (passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() }) {
+                    onSavePassphrase(passphraseInput, pinInput)
+                }
+            },
+            enabled = passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Save Passphrase & PIN")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Text(
             text = "Whitelist a contact:",

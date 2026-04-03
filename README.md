@@ -22,6 +22,7 @@ No app needs to be open. No buttons need to be pressed.
 - **Biometric protection** — the app requires fingerprint, face unlock, or device PIN to open. Falls back to PIN/pattern if no biometric is enrolled.
 - **Reliable location** — uses a three-stage fallback (GPS fix → cached location → forced update) to ensure a location is returned even from a cold start.
 - **Fully background** — operates silently when the screen is off. Auto-replies work without the app being open or unlocked.
+- **Passphrase & Device Lock** — Set a 10-150 character single-use passphrase and a 6-digit PIN. Sending the passphrase starts a 5-minute location tracking interval and forces a lock screen on the device. Failing the PIN 3 times captures a photo of the intruder and escalates tracking to 1-minute intervals with MMS image updates.
 - **No data collection** — no analytics, no crash reporters, no servers. Nothing leaves your device except the location reply sent directly to the requesting contact.
 
 ---
