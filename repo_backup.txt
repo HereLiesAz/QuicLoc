@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    228507144a6c46384838d33afd1a9eff08bd5e11
-  Timestamp: 2026-04-03 08:59:54 UTC
+  Branch:    feature/passphrase-tracking-11988746183152168490
+  Commit:    049b1c70a46bcb2b6612854235ff902c0f3306bb
+  Timestamp: 2026-04-03 09:26:42 UTC
 ======================================================
 
 
@@ -181,12 +181,17 @@ jobs:
       - name: Rename APK
         run: |
           mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
+      - name: Sanitize branch name
+        run: |
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: QuicLoc-v${{ env.VERSION_NAME }}.apk
+          name: quicloc-apk-${{ env.SAFE_BRANCH }}-${{ github.sha }}
           path: app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
+
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -3434,6 +3439,65 @@ plugins {
     id("org.jetbrains.kotlin.android") version "2.2.10" apply false
     id("org.jetbrains.kotlin.plugin.compose") version "2.2.10" apply false
 }
+
+
+######################################################
+# FILE: fix_ci.py
+######################################################
+
+with open('.github/workflows/backup-repo.yml', 'r') as f:
+    content = f.read()
+
+import re
+
+# We need to sanitize artifact name
+new_step = """
+      - name: Sanitize branch name
+        run: |
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
+
+      - name: Upload backup as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-backup-${{ env.SAFE_BRANCH }}-${{ github.sha }}
+          path: repo_backup.txt
+          retention-days: 90
+"""
+
+content = re.sub(
+    r'\s*- name: Upload backup as artifact\n\s*uses: actions/upload-artifact@v4\n\s*with:\n\s*name: repo-backup-\$\{\{ github\.ref_name \}\}-\$\{\{ github\.sha \}\}\n\s*path: repo_backup\.txt\n\s*retention-days: 90',
+    new_step,
+    content
+)
+
+with open('.github/workflows/backup-repo.yml', 'w') as f:
+    f.write(content)
+
+with open('.github/workflows/build-apk.yml', 'r') as f:
+    content_apk = f.read()
+
+new_step_apk = """
+      - name: Sanitize branch name
+        run: |
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quicloc-apk-${{ env.SAFE_BRANCH }}-${{ github.sha }}
+          path: app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
+"""
+
+content_apk = re.sub(
+    r'\s*- name: Upload APK Artifact\n\s*uses: actions/upload-artifact@v4\n\s*with:\n\s*name: QuicLoc-v\$\{\{ env\.VERSION_NAME \}\}\.apk\n\s*path: app/build/outputs/apk/debug/QuicLoc-v\$\{\{ env\.VERSION_NAME \}\}\.apk',
+    new_step_apk,
+    content_apk
+)
+
+with open('.github/workflows/build-apk.yml', 'w') as f:
+    f.write(content_apk)
 
 
 ######################################################
