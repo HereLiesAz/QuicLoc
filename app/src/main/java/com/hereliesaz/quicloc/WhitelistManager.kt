@@ -14,6 +14,8 @@ class WhitelistManager(context: Context) {
         private const val ENCRYPTED_PREFS_FILE = "quicloc_secure_prefs"
         private const val LEGACY_PREFS_FILE = "quicloc_prefs"
         private const val KEY_WHITELIST = "whitelist"
+    private const val KEY_PASSPHRASE = "passphrase"
+    private const val KEY_PIN = "pin"
     }
 
     private val prefs: SharedPreferences = createEncryptedPrefs(context).also {
@@ -23,6 +25,33 @@ class WhitelistManager(context: Context) {
     // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
+
+    fun getMyNumber(): String {
+        return prefs.getString(KEY_MY_NUMBER, "") ?: ""
+    }
+
+    fun setMyNumber(number: String) {
+        prefs.edit().putString(KEY_MY_NUMBER, number).apply()
+    }
+
+    fun getStarredNumbers(): Set<String> {
+        return prefs.getStringSet(KEY_STARRED, emptySet()) ?: emptySet()
+    }
+
+    fun toggleStarred(number: String): Boolean {
+        val currentStarred = getStarredNumbers().toMutableSet()
+        if (currentStarred.contains(number)) {
+            currentStarred.remove(number)
+        } else {
+            if (currentStarred.size >= 3) {
+                return false // Limit reached
+            }
+            currentStarred.add(number)
+        }
+        prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+        return true
+    }
+
 
     fun addNumber(number: String) {
         val clean = cleanPhoneNumber(number)
@@ -37,6 +66,29 @@ class WhitelistManager(context: Context) {
         val numbers = getNumbers().toMutableSet()
         numbers.remove(number)
         saveNumbers(numbers)
+
+        // Also remove from starred if deleted
+        val currentStarred = getStarredNumbers().toMutableSet()
+        if (currentStarred.contains(number)) {
+            currentStarred.remove(number)
+            prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+        }
+    }
+
+    fun getPassphrase(): String? {
+        return prefs.getString(KEY_PASSPHRASE, null)
+    }
+
+    fun setPassphrase(passphrase: String?) {
+        prefs.edit().putString(KEY_PASSPHRASE, passphrase).apply()
+    }
+
+    fun getPin(): String? {
+        return prefs.getString(KEY_PIN, null)
+    }
+
+    fun setPin(pin: String?) {
+        prefs.edit().putString(KEY_PIN, pin).apply()
     }
 
     fun getNumbers(): Set<String> {
