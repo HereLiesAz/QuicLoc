@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    feature/passphrase-tracking-11988746183152168490
-  Commit:    e45cfc62b06c9de249586af1f520995f3c476087
-  Timestamp: 2026-04-03 10:22:09 UTC
+  Commit:    817ba494b6a5f12984dadd21f07286a0471c2481
+  Timestamp: 2026-04-03 12:35:09 UTC
 ======================================================
 
 
@@ -2846,191 +2846,58 @@ class TrackingService : Service() {
 
 package com.hereliesaz.quicloc
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Bundle
-import android.util.Log
-import android.widget.Toast
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import java.io.File
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageButton
+import android.widget.TextView
+import androidx.recyclerview.widget.RecyclerView
 
-class TrackingLockActivity : ComponentActivity() {
+class WhitelistAdapter(
+    private var numbers: List<String>,
+    private val onDeleteClick: (String) -> Unit
+) : RecyclerView.Adapter<WhitelistAdapter.ViewHolder>() {
 
-    companion object {
-        private const val TAG = "QuicLoc.TrackingLockActivity"
+    class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val phoneText: TextView = view.findViewById(R.id.phoneNumberText)
+        val deleteBtn: ImageButton = view.findViewById(R.id.deleteButton)
     }
 
-    private var failCount = 0
-    private var imageCapture: ImageCapture? = null
-    private lateinit var cameraExecutor: ExecutorService
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        // Window flags for lock screen behavior
-        window.addFlags(
-            android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-            android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-            android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-            android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-        )
-
-        cameraExecutor = Executors.newSingleThreadExecutor()
-
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            startCamera()
-        } else {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
-        }
-
-        setContent {
-            MaterialTheme {
-                LockScreenUI(
-                    onPinEntered = { pin ->
-                        val expectedPin = WhitelistManager(this).getPin()
-                        if (pin == expectedPin) {
-                            TrackingService.stopTracking(this)
-                            finishAndRemoveTask()
-                        } else {
-                            failCount++
-                            if (failCount >= 3) {
-                                triggerPanicMode()
-                            } else {
-                                Toast.makeText(this, "Incorrect PIN", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                )
-            }
-        }
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+        val view = LayoutInflater.from(parent.context)
+            .inflate(R.layout.whitelist_item, parent, false)
+        return ViewHolder(view)
     }
 
-    override fun onBackPressed() {
-        // Prevent back button
+    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+        val number = numbers[position]
+        holder.phoneText.text = number
+        holder.deleteBtn.setOnClickListener { onDeleteClick(number) }
     }
 
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        if (!isFinishing) {
-            val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {
-                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-            startActivity(intent)
-        }
-    }
+    override fun getItemCount() = numbers.size
 
-
-    private fun startCamera() {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-        cameraProviderFuture.addListener({
-            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
-            imageCapture = ImageCapture.Builder().build()
-            val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
-            try {
-                cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(this, cameraSelector, imageCapture)
-            } catch(exc: Exception) {
-                Log.e(TAG, "Use case binding failed", exc)
-            }
-        }, ContextCompat.getMainExecutor(this))
-    }
-
-
-    private fun triggerPanicMode() {
-        Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
-        val currentCapture = imageCapture
-        if (currentCapture == null) {
-            Log.e(TAG, "Image capture is null, entering panic mode without photo")
-            TrackingService.enterPanicMode(this@TrackingLockActivity, null)
-            return
-        }
-
-        val photoFile = File(externalMediaDirs.firstOrNull(), "${System.currentTimeMillis()}_lock.jpg")
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-
-        currentCapture.takePicture(
-            outputOptions, ContextCompat.getMainExecutor(this), object : ImageCapture.OnImageSavedCallback {
-                override fun onError(exc: ImageCaptureException) {
-                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
-                    TrackingService.enterPanicMode(this@TrackingLockActivity, null)
-                }
-
-                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    Log.d(TAG, "Photo capture succeeded: ${photoFile.absolutePath}")
-                    TrackingService.enterPanicMode(this@TrackingLockActivity, photoFile.absolutePath)
-                }
-            })
-    }
-override fun onDestroy() {
-        super.onDestroy()
-        cameraExecutor.shutdown()
-    }
-}
-
-@Composable
-fun LockScreenUI(onPinEntered: (String) -> Unit) {
-    var pin by remember { mutableStateOf("") }
-
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = "Device Tracking Active",
-                style = MaterialTheme.typography.headlineMedium
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            OutlinedTextField(
-                value = pin,
-                onValueChange = { pin = it },
-                label = { Text("Enter 6-digit PIN to unlock") },
-                singleLine = true
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = { onPinEntered(pin) }) {
-                Text("Unlock")
-            }
-        }
+    fun updateNumbers(newNumbers: List<String>) {
+        numbers = newNumbers
+        notifyDataSetChanged()
     }
 }
 
 
 ######################################################
-# FILE: app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt
+# FILE: app/src/main/java/com/hereliesaz/quicloc/WhitelistManager.kt
 ######################################################
 
 package com.hereliesaz.quicloc
 
-import android.annotation.SuppressLint
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
 import android.content.Context
-import android.content.Intent
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
+import android.content.SharedPreferences
+import android.telephony.PhoneNumberUtils
 import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 
-class TrackingService : Service() {
+class WhitelistManager(context: Context) {
 
     companion object {
         private const val TAG = "QuicLoc.Whitelist"
@@ -3043,19 +2910,13 @@ class TrackingService : Service() {
     private const val KEY_PIN = "pin"
     }
 
-        const val EXTRA_SENDER = "sender"
-        const val EXTRA_SOURCE = "source"
-        const val ACTION_STOP = "com.hereliesaz.quicloc.STOP_TRACKING"
-        const val ACTION_PANIC_MODE = "com.hereliesaz.quicloc.PANIC_MODE"
-        const val EXTRA_PHOTO_PATH = "photo_path"
+    private val prefs: SharedPreferences = createEncryptedPrefs(context).also {
+        migrateLegacyPrefs(context, it)
+    }
 
-        fun startForSms(context: Context, sender: String) {
-            val intent = Intent(context, TrackingService::class.java).apply {
-                putExtra(EXTRA_SENDER, sender)
-                putExtra(EXTRA_SOURCE, "SMS")
-            }
-            context.startForegroundService(intent)
-        }
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
 
     fun getMyNumber(): String {
         return prefs.getString(KEY_MY_NUMBER, "") ?: ""
@@ -3091,6 +2952,7 @@ class TrackingService : Service() {
             numbers.add(clean)
             saveNumbers(numbers)
         }
+    }
 
     fun removeNumber(number: String) {
         val numbers = getNumbers().toMutableSet()
