@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    feature/passphrase-tracking-11988746183152168490
-  Commit:    cafc40da82314ec00b0f7420c16730a2d2fc06b7
-  Timestamp: 2026-04-03 01:26:18 UTC
+  Commit:    c300f643f4f93a64e44936a28d6f244d7a0f5ca2
+  Timestamp: 2026-04-03 08:55:02 UTC
 ======================================================
 
 
@@ -1748,7 +1748,7 @@ fun QuicLocScreen(
 
         OutlinedTextField(
             value = passphraseInput,
-            onValueChange = { passphraseInput = it },
+            onValueChange = { if (it.length <= 150) passphraseInput = it },
             label = { Text("Passphrase (10-150 chars)") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
