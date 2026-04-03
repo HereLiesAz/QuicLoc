@@ -48,7 +48,7 @@ No app needs to be open. No buttons need to be pressed.
 3. Grant all requested permissions. When prompted, also grant **Notification Access** in system settings — this enables responses in WhatsApp, Telegram, and other apps.
 4. Set "My Phone Number" to enable single-tap parking reminders.
 5. Add the phone numbers or contact names of people you want to allow to request your location. You can "star" up to 3 contacts for priority `#SafetyCheck` alerts.
-6. Done. QuicLoc runs silently in the background. You can also add the QuicLoc widget to your homescreen.
+6. Done. QuicLoc runs silently in the background. You can also add the QuicLoc widget to your home screen.
 
 ### First-time permission note
 
