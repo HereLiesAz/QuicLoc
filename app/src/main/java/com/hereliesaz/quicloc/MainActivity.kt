@@ -363,7 +363,10 @@ fun QuicLocScreen(
     onRequestNotificationAccess: () -> Unit,
     onAddNumber: (String) -> Unit,
     onRemoveNumber: (String) -> Unit,
-    onPickContact: () -> Unit
+    onPickContact: () -> Unit,
+    currentPassphrase: String = "",
+    currentPin: String = "",
+    onSavePassphrase: (String, String) -> Unit = { _, _ -> }
 ) {
     var phoneNumberInput by remember { mutableStateOf("") }
 
@@ -432,6 +435,48 @@ fun QuicLocScreen(
                 )
             }
         }
+
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Single-Use Tracking Passphrase",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        var passphraseInput by remember { mutableStateOf(currentPassphrase) }
+        var pinInput by remember { mutableStateOf(currentPin) }
+
+        OutlinedTextField(
+            value = passphraseInput,
+            onValueChange = { passphraseInput = it },
+            label = { Text("Passphrase (10-150 chars)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = pinInput,
+            onValueChange = { pinInput = it },
+            label = { Text("6-Digit PIN") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(
+            onClick = {
+                if (passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() }) {
+                    onSavePassphrase(passphraseInput, pinInput)
+                }
+            },
+            enabled = passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Save Passphrase & PIN")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Text(
             text = "Whitelist a contact:",
