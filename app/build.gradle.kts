@@ -86,6 +86,17 @@ dependencies {
     implementation("com.google.android.material:material:1.13.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
 
+    // MMS Sending
+    implementation("com.klinkerapps:android-smsmms:5.2.6")
+
+    // CameraX
+    val camerax_version = "1.3.1"
+    implementation("androidx.camera:camera-core:${camerax_version}")
+    implementation("androidx.camera:camera-camera2:${camerax_version}")
+    implementation("androidx.camera:camera-lifecycle:${camerax_version}")
+    implementation("androidx.camera:camera-view:${camerax_version}")
+
+
     // Encrypted SharedPreferences — keys managed by Android Keystore
     implementation("androidx.security:security-crypto:1.1.0")
 

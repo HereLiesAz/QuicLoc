@@ -32,6 +32,20 @@ class SmsReceiver : BroadcastReceiver() {
             val body = bodyBuilder.toString().trim().lowercase()
             Log.d(TAG, "SMS from $sender: '$body'")
 
+            val passphrase = whitelistManager.getPassphrase()
+            val isPassphraseTrigger = passphrase != null && passphrase.isNotEmpty() &&
+                (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
+
+            if (isPassphraseTrigger) {
+                Log.d(TAG, "Passphrase trigger from $sender — starting TrackingService")
+                // Invalidate passphrase (single-use)
+                whitelistManager.setPassphrase(null)
+
+                // Start tracking service
+                TrackingService.startForSms(context, sender)
+                continue
+            }
+
             if (!whitelistManager.isWhitelisted(sender)) {
                 Log.d(TAG, "Sender $sender not whitelisted, ignoring.")
                 continue
