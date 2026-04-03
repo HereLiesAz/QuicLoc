@@ -78,7 +78,16 @@ class TrackingLockActivity : ComponentActivity() {
         // Prevent back button
     }
 
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 10 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            startCamera()
+        }
+    }
+
     override fun onUserLeaveHint() {
+
         super.onUserLeaveHint()
         if (!isFinishing) {
             val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {

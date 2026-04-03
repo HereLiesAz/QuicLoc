@@ -14,6 +14,8 @@ class WhitelistManager(context: Context) {
         private const val ENCRYPTED_PREFS_FILE = "quicloc_secure_prefs"
         private const val LEGACY_PREFS_FILE = "quicloc_prefs"
         private const val KEY_WHITELIST = "whitelist"
+        private const val KEY_MY_NUMBER = "my_number"
+        private const val KEY_STARRED = "starred"
     private const val KEY_PASSPHRASE = "passphrase"
     private const val KEY_PIN = "pin"
     }
