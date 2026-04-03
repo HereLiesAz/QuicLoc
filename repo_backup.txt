@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    feature/widget-location-taps-3050633539009412006
-  Commit:    7b44f86781a5c89f049284db7eefb5e6a534799d
-  Timestamp: 2026-04-03 00:48:47 UTC
+  Branch:    main
+  Commit:    23e82b1a614d74fba6926ab989dfefbce1f01990
+  Timestamp: 2026-04-02 21:24:40 UTC
 ======================================================
 
 
@@ -101,16 +101,10 @@ jobs:
 
           echo "Backup complete. Size: $(wc -c < "$BACKUP_FILE") bytes"
 
-      - name: Sanitize branch name for artifact
-        id: sanitize
-        run: |
-          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
-          echo "safe_branch=$SAFE_BRANCH" >> "$GITHUB_OUTPUT"
-
       - name: Upload backup as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: repo-backup-${{ steps.sanitize.outputs.safe_branch }}-${{ github.sha }}
+          name: repo-backup-${{ github.ref_name }}-${{ github.sha }}
           path: repo_backup.txt
           retention-days: 90
 
@@ -785,17 +779,6 @@ dependencies {
             </intent-filter>
         </service>
 
-        <receiver
-            android:name=".QuicLocWidgetProvider"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_info" />
-        </receiver>
-
     </application>
 </manifest>
 
@@ -960,55 +943,6 @@ object LocationHelper {
             },
             onFailure = { msg ->
                 sendNotificationReply(context, replyAction, "QuicLoc Error: $msg")
-                onResult?.invoke(false)
-            }
-        )
-    }
-
-    // -------------------------------------------------------------------------
-    // Widget tap handling
-    // -------------------------------------------------------------------------
-
-    @SuppressLint("MissingPermission")
-    fun handleWidgetTaps(context: Context, tapCount: Int, onResult: ((succeeded: Boolean) -> Unit)? = null) {
-        val whitelistManager = WhitelistManager(context)
-        val destinations = mutableListOf<String>()
-        var suffix = ""
-
-        if (tapCount == 1) {
-            val myNumber = whitelistManager.getMyNumber()
-            if (myNumber.isNotBlank()) {
-                destinations.add(myNumber)
-            }
-            suffix = " #Parking"
-        } else if (tapCount == 2) {
-            destinations.addAll(whitelistManager.getStarredNumbers())
-            suffix = " #SafetyCheck"
-        } else if (tapCount >= 3) {
-            destinations.addAll(whitelistManager.getNumbers())
-            suffix = " #Emergency"
-        }
-
-        if (destinations.isEmpty()) {
-            Log.e(TAG, "No destinations configured for tap count $tapCount")
-            onResult?.invoke(false)
-            return
-        }
-
-        fetchLocation(context,
-            onSuccess = { location ->
-                val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
-                val message = "QuicLoc Location:\n$mapsLink$suffix"
-                for (dest in destinations) {
-                    sendSms(context, dest, message)
-                }
-                onResult?.invoke(true)
-            },
-            onFailure = { msg ->
-                val message = "QuicLoc Error: $msg$suffix"
-                for (dest in destinations) {
-                    sendSms(context, dest, message)
-                }
                 onResult?.invoke(false)
             }
         )
@@ -1207,7 +1141,6 @@ class LocationReplyService : Service() {
         private const val CHANNEL_ID = "quicloc_reply"
         private const val NOTIF_ID = 1001
 
-        const val ACTION_WIDGET_TAP = "com.hereliesaz.quicloc.ACTION_WIDGET_TAP"
         const val EXTRA_SENDER = "sender"
         const val EXTRA_SOURCE = "source"         // "SMS", "WhatsApp", etc.
         const val EXTRA_REPLY_MODE = "reply_mode" // "sms" or "notification"
@@ -1251,29 +1184,9 @@ class LocationReplyService : Service() {
         startForeground(NOTIF_ID, buildNotification("Fetching location…"))
     }
 
-    // For handling widget taps (delay to distinguish single/double/triple taps)
-    private var widgetTapCount = 0
-    private val widgetTapHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val widgetTapRunnable = Runnable {
-        val count = widgetTapCount
-        widgetTapCount = 0
-        Log.d(TAG, "Widget tap timer expired, tap count: $count")
-        LocationHelper.handleWidgetTaps(this, count) { succeeded ->
-            RequestHistoryManager(this).record("Widget ($count taps)", "Widget", succeeded)
-            stopSelf()
-        }
-    }
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) {
             stopSelf()
-            return START_NOT_STICKY
-        }
-
-        if (intent.action == ACTION_WIDGET_TAP) {
-            widgetTapCount++
-            widgetTapHandler.removeCallbacks(widgetTapRunnable)
-            widgetTapHandler.postDelayed(widgetTapRunnable, 750)
             return START_NOT_STICKY
         }
 
@@ -1375,8 +1288,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -1436,8 +1347,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     // Compose state — hoisted so biometric callback and launchers can update it
     private var authState = mutableStateOf(false)
     private var numbersState = mutableStateOf<List<String>>(emptyList())
-    private var starredState = mutableStateOf<Set<String>>(emptySet())
-    private var myNumberState = mutableStateOf("")
 
     private val readContactsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -1459,8 +1368,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         whitelistManager = WhitelistManager(this)
         numbersState.value = whitelistManager.getNumbers().toList()
-        starredState.value = whitelistManager.getStarredNumbers()
-        myNumberState.value = whitelistManager.getMyNumber()
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
@@ -1472,8 +1379,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                     )
                 } else {
                     val numbersList by numbersState
-                    val starredSet by starredState
-                    val myNumber by myNumberState
                     var notificationAccessGranted by remember {
                         mutableStateOf(isNotificationListenerEnabled())
                     }
@@ -1508,8 +1413,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             QuicLocScreen(
                                 modifier = Modifier.padding(innerPadding),
                                 numbersList = numbersList,
-                                starredSet = starredSet,
-                                myNumber = myNumber,
                                 notificationAccessGranted = notificationAccessGranted,
                                 noLockScreenWarning = !BiometricHelper.canAuthenticate(this@MainActivity),
                                 onRequestNotificationAccess = {
@@ -1525,20 +1428,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 onRemoveNumber = { number ->
                                     whitelistManager.removeNumber(number)
                                     numbersState.value = whitelistManager.getNumbers().toList()
-                                    starredState.value = whitelistManager.getStarredNumbers()
                                 },
-                                onPickContact = { launchContactPicker() },
-                                onToggleStar = { number ->
-                                    val success = whitelistManager.toggleStarred(number)
-                                    if (!success) {
-                                        Toast.makeText(this@MainActivity, "You can only star up to 3 contacts.", Toast.LENGTH_SHORT).show()
-                                    }
-                                    starredState.value = whitelistManager.getStarredNumbers()
-                                },
-                                onMyNumberChanged = { number ->
-                                    whitelistManager.setMyNumber(number)
-                                    myNumberState.value = whitelistManager.getMyNumber()
-                                }
+                                onPickContact = { launchContactPicker() }
                             )
                         }
                     }
@@ -1733,16 +1624,12 @@ fun BiometricGateScreen(onRetry: () -> Unit) {
 fun QuicLocScreen(
     modifier: Modifier = Modifier,
     numbersList: List<String>,
-    starredSet: Set<String>,
-    myNumber: String,
     notificationAccessGranted: Boolean,
     noLockScreenWarning: Boolean,
     onRequestNotificationAccess: () -> Unit,
     onAddNumber: (String) -> Unit,
     onRemoveNumber: (String) -> Unit,
-    onPickContact: () -> Unit,
-    onToggleStar: (String) -> Unit,
-    onMyNumberChanged: (String) -> Unit
+    onPickContact: () -> Unit
 ) {
     var phoneNumberInput by remember { mutableStateOf("") }
 
@@ -1818,15 +1705,6 @@ fun QuicLocScreen(
             modifier = Modifier.padding(bottom = 8.dp)
         )
 
-        OutlinedTextField(
-            value = myNumber,
-            onValueChange = { onMyNumberChanged(it) },
-            label = { Text("My Phone Number (For Parking Widget)") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-            singleLine = true
-        )
-
         Button(
             onClick = onPickContact,
             modifier = Modifier.fillMaxWidth()
@@ -1870,7 +1748,6 @@ fun QuicLocScreen(
 
         LazyColumn(modifier = Modifier.fillMaxWidth()) {
             items(numbersList) { number ->
-                val isStarred = starredSet.contains(number)
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -1880,13 +1757,6 @@ fun QuicLocScreen(
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(onClick = { onToggleStar(number) }) {
-                        Icon(
-                            imageVector = if (isStarred) Icons.Default.Star else Icons.Outlined.Star,
-                            contentDescription = if (isStarred) "Unstar" else "Star",
-                            tint = if (isStarred) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                     IconButton(onClick = { onRemoveNumber(number) }) {
                         Icon(
                             imageVector = Icons.Default.Delete,
@@ -2089,42 +1959,6 @@ class NotificationListener : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         // Not needed, but required to override
-    }
-}
-
-
-######################################################
-# FILE: app/src/main/java/com/hereliesaz/quicloc/QuicLocWidgetProvider.kt
-######################################################
-
-package com.hereliesaz.quicloc
-
-import android.app.PendingIntent
-import android.appwidget.AppWidgetManager
-import android.appwidget.AppWidgetProvider
-import android.content.Context
-import android.content.Intent
-import android.widget.RemoteViews
-
-class QuicLocWidgetProvider : AppWidgetProvider() {
-
-    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
-        for (appWidgetId in appWidgetIds) {
-            val intent = Intent(context, LocationReplyService::class.java).apply {
-                action = LocationReplyService.ACTION_WIDGET_TAP
-            }
-            val pendingIntent = PendingIntent.getForegroundService(
-                context,
-                0,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val views = RemoteViews(context.packageName, R.layout.widget_quicloc)
-            views.setOnClickPendingIntent(R.id.widget_container, pendingIntent)
-
-            appWidgetManager.updateAppWidget(appWidgetId, views)
-        }
     }
 }
 
@@ -2365,8 +2199,6 @@ class WhitelistManager(context: Context) {
         private const val ENCRYPTED_PREFS_FILE = "quicloc_secure_prefs"
         private const val LEGACY_PREFS_FILE = "quicloc_prefs"
         private const val KEY_WHITELIST = "whitelist"
-        private const val KEY_MY_NUMBER = "my_number"
-        private const val KEY_STARRED = "starred_numbers"
     }
 
     private val prefs: SharedPreferences = createEncryptedPrefs(context).also {
@@ -2376,33 +2208,6 @@ class WhitelistManager(context: Context) {
     // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
-
-    fun getMyNumber(): String {
-        return prefs.getString(KEY_MY_NUMBER, "") ?: ""
-    }
-
-    fun setMyNumber(number: String) {
-        prefs.edit().putString(KEY_MY_NUMBER, number).apply()
-    }
-
-    fun getStarredNumbers(): Set<String> {
-        return prefs.getStringSet(KEY_STARRED, emptySet()) ?: emptySet()
-    }
-
-    fun toggleStarred(number: String): Boolean {
-        val currentStarred = getStarredNumbers().toMutableSet()
-        if (currentStarred.contains(number)) {
-            currentStarred.remove(number)
-        } else {
-            if (currentStarred.size >= 3) {
-                return false // Limit reached
-            }
-            currentStarred.add(number)
-        }
-        prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
-        return true
-    }
-
 
     fun addNumber(number: String) {
         val clean = cleanPhoneNumber(number)
@@ -2417,13 +2222,6 @@ class WhitelistManager(context: Context) {
         val numbers = getNumbers().toMutableSet()
         numbers.remove(number)
         saveNumbers(numbers)
-
-        // Also remove from starred if deleted
-        val currentStarred = getStarredNumbers().toMutableSet()
-        if (currentStarred.contains(number)) {
-            currentStarred.remove(number)
-            prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
-        }
     }
 
     fun getNumbers(): Set<String> {
@@ -2614,22 +2412,6 @@ class WhitelistManager(context: Context) {
         android:src="@android:drawable/ic_menu_delete"
         android:background="?android:attr/selectableItemBackground"
         android:contentDescription="Remove" />
-</LinearLayout>
-
-
-######################################################
-# FILE: app/src/main/res/layout/widget_quicloc.xml
-######################################################
-
-<?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/widget_container"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:gravity="center"
-    android:background="@drawable/icon"
-    android:orientation="vertical">
-
 </LinearLayout>
 
 
@@ -2885,28 +2667,14 @@ class WhitelistManager(context: Context) {
 <properties />
 
 ######################################################
-# FILE: app/src/main/res/xml/widget_info.xml
-######################################################
-
-<?xml version="1.0" encoding="utf-8"?>
-<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:minWidth="40dp"
-    android:minHeight="40dp"
-    android:updatePeriodMillis="0"
-    android:initialLayout="@layout/widget_quicloc"
-    android:resizeMode="horizontal|vertical"
-    android:widgetCategory="home_screen" />
-
-
-######################################################
 # FILE: app/version.properties
 ######################################################
 
-#Fri Apr 03 00:38:20 UTC 2026
+#Thu Apr 02 20:39:38 UTC 2026
 VERSION_A=1
 VERSION_B=0
-VERSION_C=19
-VERSION_D=19
+VERSION_C=17
+VERSION_D=17
 
 
 ######################################################
