@@ -69,6 +69,55 @@ object LocationHelper {
     }
 
     // -------------------------------------------------------------------------
+    // Widget tap handling
+    // -------------------------------------------------------------------------
+
+    @SuppressLint("MissingPermission")
+    fun handleWidgetTaps(context: Context, tapCount: Int, onResult: ((succeeded: Boolean) -> Unit)? = null) {
+        val whitelistManager = WhitelistManager(context)
+        val destinations = mutableListOf<String>()
+        var suffix = ""
+
+        if (tapCount == 1) {
+            val myNumber = whitelistManager.getMyNumber()
+            if (myNumber.isNotBlank()) {
+                destinations.add(myNumber)
+            }
+            suffix = " #Parking"
+        } else if (tapCount == 2) {
+            destinations.addAll(whitelistManager.getStarredNumbers())
+            suffix = " #SafetyCheck"
+        } else if (tapCount >= 3) {
+            destinations.addAll(whitelistManager.getNumbers())
+            suffix = " #Emergency"
+        }
+
+        if (destinations.isEmpty()) {
+            Log.e(TAG, "No destinations configured for tap count $tapCount")
+            onResult?.invoke(false)
+            return
+        }
+
+        fetchLocation(context,
+            onSuccess = { location ->
+                val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
+                val message = "QuicLoc Location:\n$mapsLink$suffix"
+                for (dest in destinations) {
+                    sendSms(context, dest, message)
+                }
+                onResult?.invoke(true)
+            },
+            onFailure = { msg ->
+                val message = "QuicLoc Error: $msg$suffix"
+                for (dest in destinations) {
+                    sendSms(context, dest, message)
+                }
+                onResult?.invoke(false)
+            }
+        )
+    }
+
+    // -------------------------------------------------------------------------
     // Core location fetch — three-stage fallback with a single 30s deadline:
     //
     //   Stage 1: getCurrentLocation() HIGH_ACCURACY
