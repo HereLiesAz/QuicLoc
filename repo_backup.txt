@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    feature/passphrase-tracking-11988746183152168490
-  Commit:    c300f643f4f93a64e44936a28d6f244d7a0f5ca2
-  Timestamp: 2026-04-03 08:55:02 UTC
+  Commit:    fcd2e1e0d30689d829b5335437d05740b91f9143
+  Timestamp: 2026-04-03 08:57:29 UTC
 ======================================================
 
 
@@ -1756,7 +1756,7 @@ fun QuicLocScreen(
         Spacer(modifier = Modifier.height(8.dp))
         OutlinedTextField(
             value = pinInput,
-            onValueChange = { pinInput = it },
+            onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) pinInput = it },
             label = { Text("6-Digit PIN") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
