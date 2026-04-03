@@ -118,9 +118,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                         onRetry = { promptBiometric() }
                     )
                 } else {
+
                     val numbersList by numbersState
                     val starredSet by starredState
                     val myNumber by myNumberState
+                    var currentPassphrase by remember { mutableStateOf(whitelistManager.getPassphrase() ?: "") }
+                    var currentPin by remember { mutableStateOf(whitelistManager.getPin() ?: "") }
+
                     var notificationAccessGranted by remember {
                         mutableStateOf(isNotificationListenerEnabled())
                     }
@@ -182,9 +186,27 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     }
                                     starredState.value = whitelistManager.getStarredNumbers()
                                 },
-                                onMyNumberChanged = { number ->
+                                                                onMyNumberChanged = { number ->
                                     whitelistManager.setMyNumber(number)
                                     myNumberState.value = whitelistManager.getMyNumber()
+                                },
+                                currentPassphrase = currentPassphrase,
+                                currentPin = currentPin,
+                                onSavePassphrase = { newPassphrase, newPin ->
+                                    whitelistManager.setPassphrase(newPassphrase)
+                                    whitelistManager.setPin(newPin)
+                                    currentPassphrase = newPassphrase
+                                    currentPin = newPin
+
+                                    // Request CAMERA permission if not granted
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        androidx.core.app.ActivityCompat.requestPermissions(this@MainActivity, arrayOf(android.Manifest.permission.CAMERA), 10)
+                                    }
+                                    // Request SYSTEM_ALERT_WINDOW if not granted
+                                    if (!android.provider.Settings.canDrawOverlays(this@MainActivity)) {
+                                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName"))
+                                        startActivity(intent)
+                                    }
                                 }
                             )
                         }
@@ -390,7 +412,9 @@ fun QuicLocScreen(
     onPickContact: () -> Unit,
     currentPassphrase: String = "",
     currentPin: String = "",
-    onSavePassphrase: (String, String) -> Unit = { _, _ -> }
+    onSavePassphrase: (String, String) -> Unit = { _, _ -> },
+    onToggleStar: (String) -> Unit = {},
+    onMyNumberChanged: (String) -> Unit = {}
 ) {
     var phoneNumberInput by remember { mutableStateOf("") }
 
@@ -468,8 +492,8 @@ fun QuicLocScreen(
             modifier = Modifier.padding(bottom = 8.dp)
         )
 
-        var passphraseInput by remember { mutableStateOf(currentPassphrase) }
-        var pinInput by remember { mutableStateOf(currentPin) }
+        var passphraseInput by remember(currentPassphrase) { mutableStateOf(currentPassphrase) }
+        var pinInput by remember(currentPin) { mutableStateOf(currentPin) }
 
         OutlinedTextField(
             value = passphraseInput,
