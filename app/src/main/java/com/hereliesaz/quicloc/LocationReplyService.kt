@@ -28,6 +28,7 @@ class LocationReplyService : Service() {
         private const val CHANNEL_ID = "quicloc_reply"
         private const val NOTIF_ID = 1001
 
+        const val ACTION_WIDGET_TAP = "com.hereliesaz.quicloc.ACTION_WIDGET_TAP"
         const val EXTRA_SENDER = "sender"
         const val EXTRA_SOURCE = "source"         // "SMS", "WhatsApp", etc.
         const val EXTRA_REPLY_MODE = "reply_mode" // "sms" or "notification"
@@ -71,9 +72,29 @@ class LocationReplyService : Service() {
         startForeground(NOTIF_ID, buildNotification("Fetching location…"))
     }
 
+    // For handling widget taps (delay to distinguish single/double/triple taps)
+    private var widgetTapCount = 0
+    private val widgetTapHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val widgetTapRunnable = Runnable {
+        val count = widgetTapCount
+        widgetTapCount = 0
+        Log.d(TAG, "Widget tap timer expired, tap count: $count")
+        LocationHelper.handleWidgetTaps(this, count) { succeeded ->
+            RequestHistoryManager(this).record("Widget ($count taps)", "Widget", succeeded)
+            stopSelf()
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) {
             stopSelf()
+            return START_NOT_STICKY
+        }
+
+        if (intent.action == ACTION_WIDGET_TAP) {
+            widgetTapCount++
+            widgetTapHandler.removeCallbacks(widgetTapRunnable)
+            widgetTapHandler.postDelayed(widgetTapRunnable, 750)
             return START_NOT_STICKY
         }
 
