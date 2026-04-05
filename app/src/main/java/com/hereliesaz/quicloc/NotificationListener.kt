@@ -22,31 +22,14 @@ class NotificationListener : NotificationListenerService() {
     companion object {
         private const val TAG = "QuicLoc.NotifListener"
 
-        // Packages we care about — covers the major messaging apps.
-        // Empty set = listen to all apps (broader but noisier).
-        private val MESSAGING_PACKAGES = mapOf(
-            "com.whatsapp"                        to "WhatsApp",
-            "com.whatsapp.w4b"                    to "WhatsApp Business",
-            "org.telegram.messenger"              to "Telegram",
-            "org.thoughtcrime.securesms"          to "Signal",
-            "com.google.android.apps.messaging"   to "Google Messages",
-            "com.samsung.android.messaging"       to "Samsung Messages",
-            "com.facebook.orca"                   to "Messenger",
-            "com.facebook.mlite"                  to "Messenger Lite",
-            "com.viber.voip"                      to "Viber",
-            "com.skype.raider"                    to "Skype",
-            "com.discord"                         to "Discord",
-            "io.github.nickcox.slank"             to "Slack",
-            "com.Slack"                           to "Slack",
-            "com.microsoft.teams"                 to "Teams",
-            "com.snapchat.android"                to "Snapchat",
-            "com.google.android.apps.googlevoice" to "Google Voice",
-        )
+        // Any messaging app that provides a standard Android inline reply notification
+        // should work automatically. The title of the notification (the sender's name)
+        // is checked against the whitelist.
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val packageName = sbn.packageName
-        val appName = MESSAGING_PACKAGES[packageName] ?: packageName
+        val appName = packageName // Fallback to package name if we don't have a label
 
         val notification = sbn.notification ?: return
         val extras: Bundle = notification.extras ?: return
@@ -57,7 +40,7 @@ class NotificationListener : NotificationListenerService() {
             ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
             ?: ""
 
-        // Google Voice often formats EXTRA_TEXT as "Sender Name: Message text"
+        // ... keep the Google Voice special case ...
         if (packageName == "com.google.android.apps.googlevoice") {
             if (title.isNotEmpty() && text.startsWith("$title: ")) {
                 text = text.substringAfter("$title: ")

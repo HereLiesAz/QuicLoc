@@ -51,6 +51,14 @@ QuicLoc includes unit tests for core logic. You can run them locally using:
 ## CI/CD
 The project uses GitHub Actions for CI/CD. Builds and tests are automatically run on push to the `main` branch. Release APKs are automatically published to GitHub Releases when a version tag (e.g., `v1.0.0`) is pushed.
 
+### FAQ
+
+**Q: Which messaging apps are supported?**
+QuicLoc supports any messaging app that displays a standard Android inline "Reply" action in its notifications (e.g., WhatsApp, Telegram, Signal, Facebook Messenger, Instagram, Google Messages).
+
+**Q: My messages aren't getting a response.**
+Ensure you have granted "Notification Access" to QuicLoc in your Android system settings. Also, note that some apps (like standard email clients) do not expose an inline reply action to the system, so they may not be compatible.
+
 ---
 
 ## Setup
