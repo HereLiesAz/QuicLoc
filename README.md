@@ -41,6 +41,18 @@ No app needs to be open. No buttons need to be pressed.
 
 ---
 
+## Testing
+QuicLoc includes unit tests for core logic. You can run them locally using:
+
+```bash
+./gradlew testDebugUnitTest
+```
+
+## CI/CD
+The project uses GitHub Actions for CI/CD. Builds and tests are automatically run on push to the `main` branch. Release APKs are automatically published to GitHub Releases when a version tag (e.g., `v1.0.0`) is pushed.
+
+---
+
 ## Setup
 
 1. Install the APK (download from [Releases](../../releases)).
