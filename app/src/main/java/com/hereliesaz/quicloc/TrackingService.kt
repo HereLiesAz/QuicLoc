@@ -8,10 +8,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import androidx.core.app.ServiceCompat
 
 class TrackingService : Service() {
 
@@ -172,7 +174,14 @@ class TrackingService : Service() {
             .setOngoing(true)
             .build()
 
-        startForeground(NOTIF_ID, notification)
+        ServiceCompat.startForeground(
+            this,
+            NOTIF_ID,
+            notification,
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            } else 0
+        )
     }
 
     @SuppressLint("MissingPermission")

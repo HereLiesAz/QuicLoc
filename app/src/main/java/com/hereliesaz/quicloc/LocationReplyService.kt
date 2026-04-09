@@ -8,6 +8,7 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -15,6 +16,7 @@ import android.os.VibratorManager
 import android.util.Log
 import android.view.View
 import android.widget.RemoteViews
+import androidx.core.app.ServiceCompat
 
 /**
  * Foreground service that fetches the device's location and sends a reply.
@@ -76,7 +78,12 @@ class LocationReplyService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification("Fetching location…"))
+        ServiceCompat.startForeground(
+            this,
+            NOTIF_ID,
+            buildNotification("Fetching location…"),
+            if (android.os.Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+        )
     }
 
     // For handling widget taps (delay to distinguish single/double/triple taps)

@@ -46,8 +46,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         Manifest.permission.RECEIVE_SMS,
         Manifest.permission.SEND_SMS,
         Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION
-    )
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.CAMERA
+    ).let {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            it + "android.permission.POST_NOTIFICATIONS"
+        } else it
+    }
 
     private val backgroundLocationLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -345,8 +350,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
         val hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCamera = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        val hasNotif = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED
+        } else true
 
-        if (!hasSms || !hasLocation) {
+        if (!hasSms || !hasLocation || !hasCamera || !hasNotif) {
             multiplePermissionsLauncher.launch(REQUIRED_PERMISSIONS)
         } else {
             checkBackgroundLocationPermission()
