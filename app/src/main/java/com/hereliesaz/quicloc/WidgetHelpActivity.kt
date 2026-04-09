@@ -30,8 +30,8 @@ fun WidgetHelpUI(onFinished: () -> Unit) {
     var step by rememberSaveable { mutableIntStateOf(0) }
     val messages = listOf(
         "Tap the QuicLoc widget twice to mark your parking spot.",
-        "Tap twice to send a safety check to your starred whitelisters.",
-        "Tap it three times to send an emergency location to everyone on your whitelist."
+        "Tap the QuicLoc widget three times to send a safety check to your starred whitelisters.",
+        "Tap it four times to send an emergency location to everyone on your whitelist."
     )
 
     if (step < messages.size) {
