@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    7902d5d665ec39f6a5acbd31e6f2376ef79f1171
-  Timestamp: 2026-04-09 01:31:00 UTC
+  Commit:    28d33e2422b015ef5f6be25b7e77f01b6d4745f5
+  Timestamp: 2026-04-09 01:59:01 UTC
 ======================================================
 
 
@@ -805,11 +805,12 @@ dependencies {
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:allowBackup="true"
-        android:icon="@drawable/icon"
-        android:roundIcon="@drawable/icon"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.QuicLoc">
@@ -1272,10 +1273,17 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.IBinder
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
+import android.view.View
+import android.widget.RemoteViews
 
 /**
  * Foreground service that fetches the device's location and sends a reply.
@@ -1349,9 +1357,78 @@ class LocationReplyService : Service() {
         val startId = widgetStartId
         widgetTapCount = 0
         Log.d(TAG, "Widget tap timer expired, tap count: $count")
+
+        val statusText = when(count) {
+            1 -> "Parking"
+            2 -> "Safety Check"
+            3 -> "Emergency"
+            else -> null
+        }
+
+        if (statusText != null) {
+            performActionHapticFeedback()
+            updateWidgetStatus(this, statusText)
+            // Fade away after 3 seconds
+            widgetTapHandler.postDelayed({
+                updateWidgetStatus(this, null)
+                stopSelf(startId)
+            }, 3000)
+        }
+
         LocationHelper.handleWidgetTaps(this, count) { succeeded ->
             RequestHistoryManager(this).record("Widget ($count taps)", "Widget", succeeded)
-            stopSelf(startId)
+            // Only stopSelf if not waiting for fade away
+            if (statusText == null) stopSelf(startId)
+        }
+    }
+
+    private fun updateWidgetStatus(context: Context, statusText: String?) {
+        val appWidgetManager = AppWidgetManager.getInstance(context)
+        val componentName = ComponentName(context, QuicLocWidgetProvider::class.java)
+        val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
+        for (appWidgetId in appWidgetIds) {
+            val views = RemoteViews(context.packageName, R.layout.widget_quicloc)
+            if (statusText != null) {
+                views.setTextViewText(R.id.widget_status, statusText)
+                views.setViewVisibility(R.id.widget_status, View.VISIBLE)
+            } else {
+                views.setViewVisibility(R.id.widget_status, View.GONE)
+            }
+            appWidgetManager.partiallyUpdateAppWidget(appWidgetId, views)
+        }
+    }
+
+    private fun performHapticFeedback() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            val vibrator = vibratorManager.defaultVibrator
+            vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
+        } else {
+            @Suppress("DEPRECATION")
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(100)
+            }
+        }
+    }
+
+    private fun performActionHapticFeedback() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            val vibrator = vibratorManager.defaultVibrator
+            vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK))
+        } else {
+            @Suppress("DEPRECATION")
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(longArrayOf(0, 100, 50, 100), -1)
+            }
         }
     }
 
@@ -1368,6 +1445,7 @@ class LocationReplyService : Service() {
 
         if (intent.action == ACTION_WIDGET_TAP) {
             widgetTapCount++
+            performHapticFeedback()
             widgetStartId = startId
             widgetTapHandler.removeCallbacks(widgetTapRunnable)
             widgetTapHandler.postDelayed(widgetTapRunnable, 400)
@@ -1471,6 +1549,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
@@ -1579,6 +1658,14 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                         mutableStateOf(isNotificationListenerEnabled())
                     }
                     var showHistory by remember { mutableStateOf(false) }
+                    var showOnboarding by remember { mutableStateOf(!whitelistManager.isOnboardingCompleted()) }
+
+                    if (showOnboarding) {
+                        OnboardingDialog(onDismiss = {
+                            whitelistManager.setOnboardingCompleted(true)
+                            showOnboarding = false
+                        })
+                    }
 
                     Scaffold(
                         topBar = {
@@ -1589,6 +1676,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                                 ),
                                 actions = {
+                                    IconButton(onClick = { showOnboarding = true }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Info,
+                                            contentDescription = "Show help",
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
                                     IconButton(onClick = { showHistory = !showHistory }) {
                                         Icon(
                                             imageVector = Icons.Default.List,
@@ -1984,13 +2078,32 @@ fun QuicLocScreen(
             Text("Save Passphrase & PIN")
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
+        // Whitelist a contact section
         Text(
-            text = "Whitelist a contact:",
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(bottom = 8.dp)
+            text = "Contacts & Widget",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
         )
+
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Widget Tap Guide:",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Text(
+                    text = "• 1 Tap: Save Parking (Sends to your number)\n" +
+                           "• 2 Taps: Safety Check (Sends to starred contacts)\n" +
+                           "• 3 Taps: Emergency (Sends to all whitelisted)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
 
         OutlinedTextField(
             value = myNumber,
@@ -2071,6 +2184,39 @@ fun QuicLocScreen(
             }
         }
     }
+}
+
+// -------------------------------------------------------------------------
+// Onboarding
+// -------------------------------------------------------------------------
+
+@Composable
+fun OnboardingDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Welcome to QuicLoc") },
+        text = {
+            Column {
+                Text("QuicLoc lets you securely share your location with trusted contacts.\n")
+                Text("Ways to share:", style = MaterialTheme.typography.titleSmall)
+                Text("1. SMS / Message: Reply 'loc' from a whitelisted contact.")
+                Text("2. Remote Lock: Text your secret passphrase to lock your phone and start tracking.")
+                Text("3. Widget: Tap the home screen widget:")
+                Text("   • 1 Tap: Save Parking")
+                Text("   • 2 Taps: Safety Check")
+                Text("   • 3 Taps: Emergency\n")
+                Text("Getting Started:", style = MaterialTheme.typography.titleSmall)
+                Text("• Set a 10+ character passphrase and a 6-digit PIN.")
+                Text("• Whitelist contacts you trust.")
+                Text("• Star up to 3 'Emergency' contacts.")
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Got it!")
+            }
+        }
+    )
 }
 
 // -------------------------------------------------------------------------
@@ -2501,6 +2647,7 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
@@ -2548,6 +2695,11 @@ class TrackingLockActivity : ComponentActivity() {
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
+        // Handle back button to prevent exiting the lock screen
+        onBackPressedDispatcher.addCallback(this) {
+            // Do nothing to prevent back button
+        }
+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera()
         } else {
@@ -2576,9 +2728,7 @@ class TrackingLockActivity : ComponentActivity() {
         }
     }
 
-    override fun super.onBackPressed() {
-        // Prevent back button
-    }
+    // Removed the invalid override fun super.onBackPressed()
 
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
@@ -3015,6 +3165,7 @@ class WhitelistManager(context: Context) {
         private const val KEY_STARRED = "starred"
     private const val KEY_PASSPHRASE = "passphrase"
     private const val KEY_PIN = "pin"
+    private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
     }
 
     private val prefs: SharedPreferences = createEncryptedPrefs(context).also {
@@ -3088,6 +3239,14 @@ class WhitelistManager(context: Context) {
 
     fun setPin(pin: String?) {
         prefs.edit().putString(KEY_PIN, pin).apply()
+    }
+
+    fun isOnboardingCompleted(): Boolean {
+        return prefs.getBoolean(KEY_ONBOARDING_COMPLETED, false)
+    }
+
+    fun setOnboardingCompleted(completed: Boolean) {
+        prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, completed).apply()
     }
 
     fun getNumbers(): Set<String> {
@@ -3307,15 +3466,25 @@ class WhitelistManager(context: Context) {
 ######################################################
 
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_container"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:gravity="center"
-    android:background="@drawable/icon"
-    android:orientation="vertical">
+    android:background="@mipmap/ic_launcher">
 
-</LinearLayout>
+    <TextView
+        android:id="@+id/widget_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="#80000000"
+        android:padding="4dp"
+        android:textColor="#FFFFFF"
+        android:textSize="12sp"
+        android:visibility="gone"
+        android:textStyle="bold" />
+
+</FrameLayout>
 
 
 ######################################################
