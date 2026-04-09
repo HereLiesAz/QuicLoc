@@ -81,7 +81,7 @@ class TrackingLockActivity : ComponentActivity() {
         }
     }
 
-    override fun onBackPressed() {
+    override fun super.onBackPressed() {
         // Prevent back button
     }
 
