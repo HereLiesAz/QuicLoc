@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    23094e41007cf68ac4946d1e1318eddfddffdb71
-  Timestamp: 2026-04-09 10:09:04 UTC
+  Commit:    43c5096f83590f8a7b113da379deb7d685398fc5
+  Timestamp: 2026-04-09 15:32:29 UTC
 ======================================================
 
 
@@ -805,6 +805,11 @@ dependencies {
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="true"
@@ -863,7 +868,8 @@ dependencies {
         <activity
             android:name=".TrackingLockActivity"
             android:theme="@style/Theme.QuicLoc"
-            android:showOnLockScreen="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
             android:showForAllUsers="true"
             android:excludeFromRecents="true"
             android:launchMode="singleInstance"
@@ -1281,6 +1287,7 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -1288,6 +1295,7 @@ import android.os.VibratorManager
 import android.util.Log
 import android.view.View
 import android.widget.RemoteViews
+import androidx.core.app.ServiceCompat
 
 /**
  * Foreground service that fetches the device's location and sends a reply.
@@ -1349,7 +1357,12 @@ class LocationReplyService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification("Fetching location…"))
+        ServiceCompat.startForeground(
+            this,
+            NOTIF_ID,
+            buildNotification("Fetching location…"),
+            if (android.os.Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+        )
     }
 
     // For handling widget taps (delay to distinguish single/double/triple taps)
@@ -1588,8 +1601,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         Manifest.permission.RECEIVE_SMS,
         Manifest.permission.SEND_SMS,
         Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION
-    )
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.CAMERA
+    ).let {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            it + "android.permission.POST_NOTIFICATIONS"
+        } else it
+    }
 
     private val backgroundLocationLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -1887,8 +1905,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
         val hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCamera = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        val hasNotif = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED
+        } else true
 
-        if (!hasSms || !hasLocation) {
+        if (!hasSms || !hasLocation || !hasCamera || !hasNotif) {
             multiplePermissionsLauncher.launch(REQUIRED_PERMISSIONS)
         } else {
             checkBackgroundLocationPermission()
@@ -2879,10 +2901,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import androidx.core.app.ServiceCompat
 
 class TrackingService : Service() {
 
@@ -3043,7 +3067,14 @@ class TrackingService : Service() {
             .setOngoing(true)
             .build()
 
-        startForeground(NOTIF_ID, notification)
+        ServiceCompat.startForeground(
+            this,
+            NOTIF_ID,
+            notification,
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            } else 0
+        )
     }
 
     @SuppressLint("MissingPermission")
@@ -4031,11 +4062,11 @@ class WidgetManifestTest {
 # FILE: app/version.properties
 ######################################################
 
-#Thu Apr 09 08:20:20 UTC 2026
+#Thu Apr 09 08:12:00 CDT 2026
 VERSION_A=1
 VERSION_B=1
-VERSION_C=22
-VERSION_D=40
+VERSION_C=23
+VERSION_D=41
 
 
 ######################################################
