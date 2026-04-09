@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    ee79aa56e2e53b0e6d1dc3bdee0623ea307e1a14
-  Timestamp: 2026-04-09 02:34:29 UTC
+  Commit:    0a85a9c0894278b0693d7265b3b73d305ef67a29
+  Timestamp: 2026-04-09 02:37:00 UTC
 ======================================================
 
 
@@ -3489,7 +3489,15 @@ class WhitelistManager(context: Context) {
     android:id="@+id/widget_container"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@mipmap/ic_launcher">
+    android:background="@android:color/transparent">
+
+    <ImageView
+        android:id="@+id/widget_icon"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:src="@mipmap/ic_launcher"
+        android:scaleType="fitCenter"
+        android:contentDescription="@string/app_name" />
 
     <TextView
         android:id="@+id/widget_status"
@@ -3923,11 +3931,11 @@ class WidgetManifestTest {
 # FILE: app/version.properties
 ######################################################
 
-#Wed Apr 08 21:02:54 CDT 2026
+#Wed Apr 08 21:34:23 CDT 2026
 VERSION_A=1
 VERSION_B=1
-VERSION_C=16
-VERSION_D=34
+VERSION_C=17
+VERSION_D=35
 
 
 ######################################################
