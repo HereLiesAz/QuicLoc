@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
@@ -129,6 +130,14 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                         mutableStateOf(isNotificationListenerEnabled())
                     }
                     var showHistory by remember { mutableStateOf(false) }
+                    var showOnboarding by remember { mutableStateOf(!whitelistManager.isOnboardingCompleted()) }
+
+                    if (showOnboarding) {
+                        OnboardingDialog(onDismiss = {
+                            whitelistManager.setOnboardingCompleted(true)
+                            showOnboarding = false
+                        })
+                    }
 
                     Scaffold(
                         topBar = {
@@ -139,6 +148,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                                 ),
                                 actions = {
+                                    IconButton(onClick = { showOnboarding = true }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Info,
+                                            contentDescription = "Show help",
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
                                     IconButton(onClick = { showHistory = !showHistory }) {
                                         Icon(
                                             imageVector = Icons.Default.List,
@@ -534,13 +550,32 @@ fun QuicLocScreen(
             Text("Save Passphrase & PIN")
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
+        // Whitelist a contact section
         Text(
-            text = "Whitelist a contact:",
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(bottom = 8.dp)
+            text = "Contacts & Widget",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
         )
+
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Widget Tap Guide:",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Text(
+                    text = "• 1 Tap: Save Parking (Sends to your number)\n" +
+                           "• 2 Taps: Safety Check (Sends to starred contacts)\n" +
+                           "• 3 Taps: Emergency (Sends to all whitelisted)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
 
         OutlinedTextField(
             value = myNumber,
@@ -621,6 +656,39 @@ fun QuicLocScreen(
             }
         }
     }
+}
+
+// -------------------------------------------------------------------------
+// Onboarding
+// -------------------------------------------------------------------------
+
+@Composable
+fun OnboardingDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Welcome to QuicLoc") },
+        text = {
+            Column {
+                Text("QuicLoc lets you securely share your location with trusted contacts.\n")
+                Text("Ways to share:", style = MaterialTheme.typography.titleSmall)
+                Text("1. SMS / Message: Reply 'loc' from a whitelisted contact.")
+                Text("2. Remote Lock: Text your secret passphrase to lock your phone and start tracking.")
+                Text("3. Widget: Tap the home screen widget:")
+                Text("   • 1 Tap: Save Parking")
+                Text("   • 2 Taps: Safety Check")
+                Text("   • 3 Taps: Emergency\n")
+                Text("Getting Started:", style = MaterialTheme.typography.titleSmall)
+                Text("• Set a 10+ character passphrase and a 6-digit PIN.")
+                Text("• Whitelist contacts you trust.")
+                Text("• Star up to 3 'Emergency' contacts.")
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Got it!")
+            }
+        }
+    )
 }
 
 // -------------------------------------------------------------------------
