@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    bf63f6206d10926156369a7dfaa707a214de33ba
-  Timestamp: 2026-04-09 00:41:32 UTC
+  Commit:    9762f53137b8dd6bd4b18f8ce8e8571354a16001
+  Timestamp: 2026-04-09 00:43:14 UTC
 ======================================================
 
 
@@ -3783,7 +3783,7 @@ playServicesLocation = "21.3.0"
 robolectric = "4.16.1"
 security-crypto = "1.1.0"
 concurrent-futures = "1.3.0"
-guava-listenablefuture = "9999.0-empty-to-avoid-conflict-with-guava"
+guava-listenablefuture = "1.0"
 
 [libraries]
 android-smsmms = { group = "com.klinkerapps", name = "android-smsmms", version.ref = "androidSmsmms" }
