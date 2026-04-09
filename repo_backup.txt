@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    28d33e2422b015ef5f6be25b7e77f01b6d4745f5
-  Timestamp: 2026-04-09 01:59:01 UTC
+  Commit:    ee93a738e63eaaa87913210fa03684f07d6715b0
+  Timestamp: 2026-04-09 02:03:01 UTC
 ======================================================
 
 
@@ -1065,16 +1065,16 @@ object LocationHelper {
         val destinations = mutableListOf<String>()
         var suffix = ""
 
-        if (tapCount == 1) {
+        if (tapCount == 2) {
             val myNumber = whitelistManager.getMyNumber()
             if (myNumber.isNotBlank()) {
                 destinations.add(myNumber)
             }
             suffix = " #Parking"
-        } else if (tapCount == 2) {
+        } else if (tapCount == 3) {
             destinations.addAll(whitelistManager.getStarredNumbers())
             suffix = " #SafetyCheck"
-        } else if (tapCount >= 3) {
+        } else if (tapCount >= 4) {
             destinations.addAll(whitelistManager.getNumbers())
             suffix = " #Emergency"
         }
@@ -1359,9 +1359,9 @@ class LocationReplyService : Service() {
         Log.d(TAG, "Widget tap timer expired, tap count: $count")
 
         val statusText = when(count) {
-            1 -> "Parking"
-            2 -> "Safety Check"
-            3 -> "Emergency"
+            2 -> "Parking"
+            3 -> "Safety Check"
+            4 -> "Emergency"
             else -> null
         }
 
@@ -2096,9 +2096,9 @@ fun QuicLocScreen(
                     color = MaterialTheme.colorScheme.onSecondaryContainer
                 )
                 Text(
-                    text = "• 1 Tap: Save Parking (Sends to your number)\n" +
-                           "• 2 Taps: Safety Check (Sends to starred contacts)\n" +
-                           "• 3 Taps: Emergency (Sends to all whitelisted)",
+                    text = "• 2 Taps: Save Parking (Sends to your number)\n" +
+                           "• 3 Taps: Safety Check (Sends to starred contacts)\n" +
+                           "• 4 Taps: Emergency (Sends to all whitelisted)",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer
                 )
@@ -2202,9 +2202,9 @@ fun OnboardingDialog(onDismiss: () -> Unit) {
                 Text("1. SMS / Message: Reply 'loc' from a whitelisted contact.")
                 Text("2. Remote Lock: Text your secret passphrase to lock your phone and start tracking.")
                 Text("3. Widget: Tap the home screen widget:")
-                Text("   • 1 Tap: Save Parking")
-                Text("   • 2 Taps: Safety Check")
-                Text("   • 3 Taps: Emergency\n")
+                Text("   • 2 Taps: Save Parking")
+                Text("   • 3 Taps: Safety Check")
+                Text("   • 4 Taps: Emergency\n")
                 Text("Getting Started:", style = MaterialTheme.typography.titleSmall)
                 Text("• Set a 10+ character passphrase and a 6-digit PIN.")
                 Text("• Whitelist contacts you trust.")
@@ -3904,11 +3904,11 @@ class WidgetManifestTest {
 # FILE: app/version.properties
 ######################################################
 
-#Wed Apr 08 20:28:22 CDT 2026
+#Wed Apr 08 20:59:12 CDT 2026
 VERSION_A=1
 VERSION_B=1
-VERSION_C=14
-VERSION_D=32
+VERSION_C=15
+VERSION_D=33
 
 
 ######################################################
