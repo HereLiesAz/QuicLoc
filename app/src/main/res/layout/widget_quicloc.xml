@@ -3,7 +3,15 @@
     android:id="@+id/widget_container"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@mipmap/ic_launcher">
+    android:background="@android:color/transparent">
+
+    <ImageView
+        android:id="@+id/widget_icon"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:src="@mipmap/ic_launcher"
+        android:scaleType="fitCenter"
+        android:contentDescription="@string/app_name" />
 
     <TextView
         android:id="@+id/widget_status"
