@@ -90,6 +90,7 @@ class LocationReplyService : Service() {
         Log.d(TAG, "Widget tap timer expired, tap count: $count")
 
         val statusText = when(count) {
+            1 -> "Help"
             2 -> "Parking"
             3 -> "Safety Check"
             4 -> "Emergency"
@@ -104,6 +105,15 @@ class LocationReplyService : Service() {
                 updateWidgetStatus(this, null)
                 stopSelf(startId)
             }, 3000)
+        }
+
+        if (count == 1) {
+            val intent = Intent(this, WidgetHelpActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            startActivity(intent)
+            // Will be stopped by the fade away runnable
+            return@Runnable
         }
 
         LocationHelper.handleWidgetTaps(this, count) { succeeded ->

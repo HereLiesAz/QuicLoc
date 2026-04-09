@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    0a85a9c0894278b0693d7265b3b73d305ef67a29
-  Timestamp: 2026-04-09 02:37:00 UTC
+  Branch:    feature/widget-help-popups-12513149903797451479
+  Commit:    4515f9ba69297dc9cbe6341e5c6ff1b57c5989ea
+  Timestamp: 2026-04-09 10:08:39 UTC
 ======================================================
 
 
@@ -731,8 +731,7 @@ android {
 
 tasks.register("printVersionName") {
     doLast {
-        val appExtension = extensions.getByType<com.android.build.api.dsl.ApplicationExtension>()
-        println(appExtension.defaultConfig.versionName)
+        println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.versionName)
     }
 }
 
@@ -868,6 +867,11 @@ dependencies {
             android:showForAllUsers="true"
             android:excludeFromRecents="true"
             android:launchMode="singleInstance"
+            android:exported="false" />
+
+        <activity
+            android:name=".WidgetHelpActivity"
+            android:theme="@style/Theme.QuicLoc.Transparent"
             android:exported="false" />
 
         <service
@@ -1359,6 +1363,7 @@ class LocationReplyService : Service() {
         Log.d(TAG, "Widget tap timer expired, tap count: $count")
 
         val statusText = when(count) {
+            1 -> "Help"
             2 -> "Parking"
             3 -> "Safety Check"
             4 -> "Emergency"
@@ -1373,6 +1378,15 @@ class LocationReplyService : Service() {
                 updateWidgetStatus(this, null)
                 stopSelf(startId)
             }, 3000)
+        }
+
+        if (count == 1) {
+            val intent = Intent(this, WidgetHelpActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            startActivity(intent)
+            // Will be stopped by the fade away runnable
+            return@Runnable
         }
 
         LocationHelper.handleWidgetTaps(this, count) { succeeded ->
@@ -3355,6 +3369,82 @@ class WhitelistManager(context: Context) {
 
 
 ######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/WidgetHelpActivity.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+
+class WidgetHelpActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            MaterialTheme {
+                WidgetHelpUI(onFinished = { finish() })
+            }
+        }
+    }
+}
+
+@Composable
+fun WidgetHelpUI(onFinished: () -> Unit) {
+    var step by rememberSaveable { mutableIntStateOf(0) }
+    val messages = listOf(
+        "Tap the QuicLoc widget twice to mark your parking spot.",
+        "Tap the QuicLoc widget three times to send a safety check to your starred whitelisters.",
+        "Tap it four times to send an emergency location to everyone on your whitelist."
+    )
+
+    if (step < messages.size) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    step++
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                modifier = Modifier
+                    .padding(32.dp)
+                    .fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium,
+                tonalElevation = 8.dp,
+                shadowElevation = 8.dp
+            ) {
+                Text(
+                    text = messages[step],
+                    modifier = Modifier.padding(24.dp),
+                    style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    } else {
+        LaunchedEffect(Unit) {
+            onFinished()
+        }
+    }
+}
+
+
+######################################################
 # FILE: app/src/main/res/drawable/icon.webp
 ######################################################
 
@@ -3784,6 +3874,16 @@ class WhitelistManager(context: Context) {
         <item name="colorAccent">@color/teal_200</item>
     </style>
 
+    <style name="Theme.QuicLoc.Transparent" parent="Theme.QuicLoc">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
 </resources>
 
 
@@ -3931,11 +4031,11 @@ class WidgetManifestTest {
 # FILE: app/version.properties
 ######################################################
 
-#Wed Apr 08 21:34:23 CDT 2026
+#Thu Apr 09 08:20:20 UTC 2026
 VERSION_A=1
 VERSION_B=1
-VERSION_C=17
-VERSION_D=35
+VERSION_C=22
+VERSION_D=40
 
 
 ######################################################

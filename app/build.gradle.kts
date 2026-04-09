@@ -83,8 +83,7 @@ android {
 
 tasks.register("printVersionName") {
     doLast {
-        val appExtension = extensions.getByType<com.android.build.api.dsl.ApplicationExtension>()
-        println(appExtension.defaultConfig.versionName)
+        println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.versionName)
     }
 }
 
