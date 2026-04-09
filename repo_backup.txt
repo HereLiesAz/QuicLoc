@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    feature/widget-help-popups-12513149903797451479
-  Commit:    2e5ebf9f68966039bce72c84e5764101ae97b672
-  Timestamp: 2026-04-09 08:29:31 UTC
+  Commit:    4515f9ba69297dc9cbe6341e5c6ff1b57c5989ea
+  Timestamp: 2026-04-09 10:08:39 UTC
 ======================================================
 
 
@@ -3404,8 +3404,8 @@ fun WidgetHelpUI(onFinished: () -> Unit) {
     var step by rememberSaveable { mutableIntStateOf(0) }
     val messages = listOf(
         "Tap the QuicLoc widget twice to mark your parking spot.",
-        "Tap twice to send a safety check to your starred whitelisters.",
-        "Tap it three times to send an emergency location to everyone on your whitelist."
+        "Tap the QuicLoc widget three times to send a safety check to your starred whitelisters.",
+        "Tap it four times to send an emergency location to everyone on your whitelist."
     )
 
     if (step < messages.size) {
