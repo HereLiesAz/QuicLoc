@@ -528,15 +528,16 @@ fun QuicLocScreen(
         OutlinedTextField(
             value = passphraseInput,
             onValueChange = { if (it.length <= 150) passphraseInput = it },
-            label = { Text("Passphrase (10-150 chars)") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
+            label = { Text("Text 'loc' + this from ANY number to activate find my phone.") },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
+            singleLine = false,
+            minLines = 3
         )
         Spacer(modifier = Modifier.height(8.dp))
         OutlinedTextField(
             value = pinInput,
             onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) pinInput = it },
-            label = { Text("6-Digit PIN") },
+            label = { Text("6-Digit PIN: Required to unlock your phone once find my phone is active.") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
@@ -580,7 +581,7 @@ fun QuicLocScreen(
         OutlinedTextField(
             value = myNumber,
             onValueChange = { onMyNumberChanged(it) },
-            label = { Text("My Phone Number (For Parking Widget)") },
+            label = { Text("Your Phone Number: Receives your location when the widget is tapped twice.") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             singleLine = true
@@ -607,7 +608,7 @@ fun QuicLocScreen(
             OutlinedTextField(
                 value = phoneNumberInput,
                 onValueChange = { phoneNumberInput = it },
-                label = { Text("Or type name / number manually") },
+                label = { Text("Type name / number: Must match your contact list for SMS/Messenger replies.") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                 modifier = Modifier.weight(1f),
                 singleLine = true
@@ -707,6 +708,24 @@ fun HistoryScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Request History Guide:",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Text(
+                    text = "This log shows all successful (✓) and failed (✗) location requests. You'll see who requested (Sender), which app was used (Source), and exactly when it happened.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
+
         if (history.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
