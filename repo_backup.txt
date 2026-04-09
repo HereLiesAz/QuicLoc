@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    44b41f9550b2c44c2b559224843ffc60a99d8404
-  Timestamp: 2026-04-09 00:51:26 UTC
+  Commit:    7902d5d665ec39f6a5acbd31e6f2376ef79f1171
+  Timestamp: 2026-04-09 01:31:00 UTC
 ======================================================
 
 
@@ -2576,7 +2576,7 @@ class TrackingLockActivity : ComponentActivity() {
         }
     }
 
-    override fun onBackPressed() {
+    override fun super.onBackPressed() {
         // Prevent back button
     }
 
@@ -3184,6 +3184,20 @@ class WhitelistManager(context: Context) {
 
 
 ######################################################
+# FILE: app/src/main/res/drawable/quicloc_banner.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/drawable/quicloc_banner2.jpg
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
 # FILE: app/src/main/res/drawable/quicloc_logo.webp
 ######################################################
 
@@ -3721,11 +3735,11 @@ class WidgetManifestTest {
 # FILE: app/version.properties
 ######################################################
 
-#Wed Apr 08 19:38:23 CDT 2026
+#Wed Apr 08 20:28:22 CDT 2026
 VERSION_A=1
 VERSION_B=1
-VERSION_C=12
-VERSION_D=30
+VERSION_C=14
+VERSION_D=32
 
 
 ######################################################
