@@ -78,11 +78,6 @@
             android:launchMode="singleInstance"
             android:exported="false" />
 
-        <activity
-            android:name=".WidgetHelpActivity"
-            android:theme="@style/Theme.QuicLoc.Transparent"
-            android:exported="false" />
-
         <service
             android:name=".TrackingService"
             android:exported="false"
