@@ -568,9 +568,9 @@ fun QuicLocScreen(
                     color = MaterialTheme.colorScheme.onSecondaryContainer
                 )
                 Text(
-                    text = "• 1 Tap: Save Parking (Sends to your number)\n" +
-                           "• 2 Taps: Safety Check (Sends to starred contacts)\n" +
-                           "• 3 Taps: Emergency (Sends to all whitelisted)",
+                    text = "• 2 Taps: Save Parking (Sends to your number)\n" +
+                           "• 3 Taps: Safety Check (Sends to starred contacts)\n" +
+                           "• 4 Taps: Emergency (Sends to all whitelisted)",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer
                 )
@@ -674,9 +674,9 @@ fun OnboardingDialog(onDismiss: () -> Unit) {
                 Text("1. SMS / Message: Reply 'loc' from a whitelisted contact.")
                 Text("2. Remote Lock: Text your secret passphrase to lock your phone and start tracking.")
                 Text("3. Widget: Tap the home screen widget:")
-                Text("   • 1 Tap: Save Parking")
-                Text("   • 2 Taps: Safety Check")
-                Text("   • 3 Taps: Emergency\n")
+                Text("   • 2 Taps: Save Parking")
+                Text("   • 3 Taps: Safety Check")
+                Text("   • 4 Taps: Emergency\n")
                 Text("Getting Started:", style = MaterialTheme.typography.titleSmall)
                 Text("• Set a 10+ character passphrase and a 6-digit PIN.")
                 Text("• Whitelist contacts you trust.")

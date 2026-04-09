@@ -90,9 +90,9 @@ class LocationReplyService : Service() {
         Log.d(TAG, "Widget tap timer expired, tap count: $count")
 
         val statusText = when(count) {
-            1 -> "Parking"
-            2 -> "Safety Check"
-            3 -> "Emergency"
+            2 -> "Parking"
+            3 -> "Safety Check"
+            4 -> "Emergency"
             else -> null
         }
 

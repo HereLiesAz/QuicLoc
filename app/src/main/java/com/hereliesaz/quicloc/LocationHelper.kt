@@ -78,16 +78,16 @@ object LocationHelper {
         val destinations = mutableListOf<String>()
         var suffix = ""
 
-        if (tapCount == 1) {
+        if (tapCount == 2) {
             val myNumber = whitelistManager.getMyNumber()
             if (myNumber.isNotBlank()) {
                 destinations.add(myNumber)
             }
             suffix = " #Parking"
-        } else if (tapCount == 2) {
+        } else if (tapCount == 3) {
             destinations.addAll(whitelistManager.getStarredNumbers())
             suffix = " #SafetyCheck"
-        } else if (tapCount >= 3) {
+        } else if (tapCount >= 4) {
             destinations.addAll(whitelistManager.getNumbers())
             suffix = " #Emergency"
         }
