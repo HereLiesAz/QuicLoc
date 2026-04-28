@@ -35,3 +35,4 @@ google-services.json
 /app/release/baselineProfiles/0/app-release.dm
 /app/release/baselineProfiles/1/app-release.dm
 /gradle/gradle-daemon-jvm.properties
+/.kotlin/sessions/kotlin-compiler-*.salive

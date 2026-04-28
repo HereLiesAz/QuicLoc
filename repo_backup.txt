@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    3f820dc80601cba58cd1153e42458aacb4ce69d2
-  Timestamp: 2026-04-05 07:26:06 UTC
+  Commit:    43c5096f83590f8a7b113da379deb7d685398fc5
+  Timestamp: 2026-04-09 15:32:29 UTC
 ======================================================
 
 
@@ -309,6 +309,7 @@ google-services.json
 /app/release/baselineProfiles/0/app-release.dm
 /app/release/baselineProfiles/1/app-release.dm
 /gradle/gradle-daemon-jvm.properties
+/.kotlin/sessions/kotlin-compiler-*.salive
 
 
 ######################################################
@@ -645,15 +646,17 @@ This is free and unencumbered software released into the public domain. See [LIC
 # FILE: app/build.gradle.kts
 ######################################################
 
+import java.util.Properties
+import java.io.FileInputStream
+import java.io.FileOutputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-import java.util.Properties
-import java.io.FileInputStream
-import java.io.FileOutputStream
+
 
 android {
     namespace = "com.hereliesaz.quicloc"
@@ -713,60 +716,72 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
     }
     buildFeatures {
         compose = true
+    }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
 tasks.register("printVersionName") {
     doLast {
-        println(android.defaultConfig.versionName)
+        println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.versionName)
     }
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.17.0")
-    implementation("androidx.appcompat:appcompat:1.7.1")
-    implementation("com.google.android.material:material:1.13.0")
-    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.material)
+    implementation(libs.play.services.location)
 
     // MMS Sending
-    implementation("com.klinkerapps:android-smsmms:5.2.6")
+    implementation(libs.android.smsmms)
 
     // CameraX
-    val camerax_version = "1.3.1"
-    implementation("androidx.camera:camera-core:${camerax_version}")
-    implementation("androidx.camera:camera-camera2:${camerax_version}")
-    implementation("androidx.camera:camera-lifecycle:${camerax_version}")
-    implementation("androidx.camera:camera-view:${camerax_version}")
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
 
+    // Guava ListenableFuture needed for CameraX
+    implementation(libs.androidx.concurrent.futures)
+    implementation(libs.androidx.concurrent.futures.ktx)
+    implementation(libs.guava.listenablefuture)
+
+    // Material Icons
+    implementation(libs.androidx.compose.material.icons.core)
+    implementation(libs.androidx.compose.material.icons.extended)
 
     // Encrypted SharedPreferences — keys managed by Android Keystore
-    implementation("androidx.security:security-crypto:1.1.0")
+    implementation(libs.androidx.security.crypto)
 
     // Biometric authentication
-    implementation("androidx.biometric:biometric:1.2.0-alpha05")
+    implementation(libs.androidx.biometric)
 
     val composeBom = platform("androidx.compose:compose-bom:2025.01.00")
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    debugImplementation("androidx.compose.ui:ui-tooling")
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    debugImplementation(libs.androidx.compose.ui.tooling)
 
-    implementation("androidx.activity:activity-compose:1.12.4")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
 
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("androidx.test:core-ktx:1.6.1")
-    testImplementation("org.robolectric:robolectric:4.14.1")
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    testImplementation(libs.junit)
+    testImplementation(libs.core.ktx)
+    testImplementation(libs.robolectric)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
 }
 
 
@@ -789,11 +804,17 @@ dependencies {
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="true"
-        android:icon="@drawable/icon"
-        android:roundIcon="@drawable/icon"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.QuicLoc">
@@ -847,16 +868,33 @@ dependencies {
         <activity
             android:name=".TrackingLockActivity"
             android:theme="@style/Theme.QuicLoc"
-            android:showOnLockScreen="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
             android:showForAllUsers="true"
             android:excludeFromRecents="true"
             android:launchMode="singleInstance"
+            android:exported="false" />
+
+        <activity
+            android:name=".WidgetHelpActivity"
+            android:theme="@style/Theme.QuicLoc.Transparent"
             android:exported="false" />
 
         <service
             android:name=".TrackingService"
             android:exported="false"
             android:foregroundServiceType="location|camera" />
+
+        <receiver
+            android:name=".QuicLocWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info" />
+        </receiver>
 
     </application>
 </manifest>
@@ -1037,16 +1075,16 @@ object LocationHelper {
         val destinations = mutableListOf<String>()
         var suffix = ""
 
-        if (tapCount == 1) {
+        if (tapCount == 2) {
             val myNumber = whitelistManager.getMyNumber()
             if (myNumber.isNotBlank()) {
                 destinations.add(myNumber)
             }
             suffix = " #Parking"
-        } else if (tapCount == 2) {
+        } else if (tapCount == 3) {
             destinations.addAll(whitelistManager.getStarredNumbers())
             suffix = " #SafetyCheck"
-        } else if (tapCount >= 3) {
+        } else if (tapCount >= 4) {
             destinations.addAll(whitelistManager.getNumbers())
             suffix = " #Emergency"
         }
@@ -1245,10 +1283,19 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
+import android.view.View
+import android.widget.RemoteViews
+import androidx.core.app.ServiceCompat
 
 /**
  * Foreground service that fetches the device's location and sends a reply.
@@ -1310,7 +1357,12 @@ class LocationReplyService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification("Fetching location…"))
+        ServiceCompat.startForeground(
+            this,
+            NOTIF_ID,
+            buildNotification("Fetching location…"),
+            if (android.os.Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+        )
     }
 
     // For handling widget taps (delay to distinguish single/double/triple taps)
@@ -1322,9 +1374,88 @@ class LocationReplyService : Service() {
         val startId = widgetStartId
         widgetTapCount = 0
         Log.d(TAG, "Widget tap timer expired, tap count: $count")
+
+        val statusText = when(count) {
+            1 -> "Help"
+            2 -> "Parking"
+            3 -> "Safety Check"
+            4 -> "Emergency"
+            else -> null
+        }
+
+        if (statusText != null) {
+            performActionHapticFeedback()
+            updateWidgetStatus(this, statusText)
+            // Fade away after 3 seconds
+            widgetTapHandler.postDelayed({
+                updateWidgetStatus(this, null)
+                stopSelf(startId)
+            }, 3000)
+        }
+
+        if (count == 1) {
+            val intent = Intent(this, WidgetHelpActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            startActivity(intent)
+            // Will be stopped by the fade away runnable
+            return@Runnable
+        }
+
         LocationHelper.handleWidgetTaps(this, count) { succeeded ->
             RequestHistoryManager(this).record("Widget ($count taps)", "Widget", succeeded)
-            stopSelf(startId)
+            // Only stopSelf if not waiting for fade away
+            if (statusText == null) stopSelf(startId)
+        }
+    }
+
+    private fun updateWidgetStatus(context: Context, statusText: String?) {
+        val appWidgetManager = AppWidgetManager.getInstance(context)
+        val componentName = ComponentName(context, QuicLocWidgetProvider::class.java)
+        val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
+        for (appWidgetId in appWidgetIds) {
+            val views = RemoteViews(context.packageName, R.layout.widget_quicloc)
+            if (statusText != null) {
+                views.setTextViewText(R.id.widget_status, statusText)
+                views.setViewVisibility(R.id.widget_status, View.VISIBLE)
+            } else {
+                views.setViewVisibility(R.id.widget_status, View.GONE)
+            }
+            appWidgetManager.partiallyUpdateAppWidget(appWidgetId, views)
+        }
+    }
+
+    private fun performHapticFeedback() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            val vibrator = vibratorManager.defaultVibrator
+            vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
+        } else {
+            @Suppress("DEPRECATION")
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(100)
+            }
+        }
+    }
+
+    private fun performActionHapticFeedback() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            val vibrator = vibratorManager.defaultVibrator
+            vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK))
+        } else {
+            @Suppress("DEPRECATION")
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(longArrayOf(0, 100, 50, 100), -1)
+            }
         }
     }
 
@@ -1341,6 +1472,7 @@ class LocationReplyService : Service() {
 
         if (intent.action == ACTION_WIDGET_TAP) {
             widgetTapCount++
+            performHapticFeedback()
             widgetStartId = startId
             widgetTapHandler.removeCallbacks(widgetTapRunnable)
             widgetTapHandler.postDelayed(widgetTapRunnable, 400)
@@ -1444,6 +1576,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
@@ -1468,8 +1601,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         Manifest.permission.RECEIVE_SMS,
         Manifest.permission.SEND_SMS,
         Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION
-    )
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.CAMERA
+    ).let {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            it + "android.permission.POST_NOTIFICATIONS"
+        } else it
+    }
 
     private val backgroundLocationLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -1552,6 +1690,14 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                         mutableStateOf(isNotificationListenerEnabled())
                     }
                     var showHistory by remember { mutableStateOf(false) }
+                    var showOnboarding by remember { mutableStateOf(!whitelistManager.isOnboardingCompleted()) }
+
+                    if (showOnboarding) {
+                        OnboardingDialog(onDismiss = {
+                            whitelistManager.setOnboardingCompleted(true)
+                            showOnboarding = false
+                        })
+                    }
 
                     Scaffold(
                         topBar = {
@@ -1562,6 +1708,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                                 ),
                                 actions = {
+                                    IconButton(onClick = { showOnboarding = true }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Info,
+                                            contentDescription = "Show help",
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
                                     IconButton(onClick = { showHistory = !showHistory }) {
                                         Icon(
                                             imageVector = Icons.Default.List,
@@ -1752,8 +1905,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
         val hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCamera = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        val hasNotif = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED
+        } else true
 
-        if (!hasSms || !hasLocation) {
+        if (!hasSms || !hasLocation || !hasCamera || !hasNotif) {
             multiplePermissionsLauncher.launch(REQUIRED_PERMISSIONS)
         } else {
             checkBackgroundLocationPermission()
@@ -1935,15 +2092,16 @@ fun QuicLocScreen(
         OutlinedTextField(
             value = passphraseInput,
             onValueChange = { if (it.length <= 150) passphraseInput = it },
-            label = { Text("Passphrase (10-150 chars)") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
+            label = { Text("Text 'loc' + this from ANY number to activate find my phone.") },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
+            singleLine = false,
+            minLines = 3
         )
         Spacer(modifier = Modifier.height(8.dp))
         OutlinedTextField(
             value = pinInput,
             onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) pinInput = it },
-            label = { Text("6-Digit PIN") },
+            label = { Text("6-Digit PIN: Required to unlock your phone once find my phone is active.") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
@@ -1957,18 +2115,37 @@ fun QuicLocScreen(
             Text("Save Passphrase & PIN")
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
+        // Whitelist a contact section
         Text(
-            text = "Whitelist a contact:",
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(bottom = 8.dp)
+            text = "Contacts & Widget",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
         )
+
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Widget Tap Guide:",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Text(
+                    text = "• 2 Taps: Save Parking (Sends to your number)\n" +
+                           "• 3 Taps: Safety Check (Sends to starred contacts)\n" +
+                           "• 4 Taps: Emergency (Sends to all whitelisted)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
 
         OutlinedTextField(
             value = myNumber,
             onValueChange = { onMyNumberChanged(it) },
-            label = { Text("My Phone Number (For Parking Widget)") },
+            label = { Text("Your Phone Number: Receives your location when the widget is tapped twice.") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             singleLine = true
@@ -1995,7 +2172,7 @@ fun QuicLocScreen(
             OutlinedTextField(
                 value = phoneNumberInput,
                 onValueChange = { phoneNumberInput = it },
-                label = { Text("Or type name / number manually") },
+                label = { Text("Type name / number: Must match your contact list for SMS/Messenger replies.") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                 modifier = Modifier.weight(1f),
                 singleLine = true
@@ -2047,6 +2224,39 @@ fun QuicLocScreen(
 }
 
 // -------------------------------------------------------------------------
+// Onboarding
+// -------------------------------------------------------------------------
+
+@Composable
+fun OnboardingDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Welcome to QuicLoc") },
+        text = {
+            Column {
+                Text("QuicLoc lets you securely share your location with trusted contacts.\n")
+                Text("Ways to share:", style = MaterialTheme.typography.titleSmall)
+                Text("1. SMS / Message: Reply 'loc' from a whitelisted contact.")
+                Text("2. Remote Lock: Text your secret passphrase to lock your phone and start tracking.")
+                Text("3. Widget: Tap the home screen widget:")
+                Text("   • 2 Taps: Save Parking")
+                Text("   • 3 Taps: Safety Check")
+                Text("   • 4 Taps: Emergency\n")
+                Text("Getting Started:", style = MaterialTheme.typography.titleSmall)
+                Text("• Set a 10+ character passphrase and a 6-digit PIN.")
+                Text("• Whitelist contacts you trust.")
+                Text("• Star up to 3 'Emergency' contacts.")
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Got it!")
+            }
+        }
+    )
+}
+
+// -------------------------------------------------------------------------
 // History screen
 // -------------------------------------------------------------------------
 
@@ -2062,6 +2272,24 @@ fun HistoryScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Request History Guide:",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Text(
+                    text = "This log shows all successful (✓) and failed (✗) location requests. You'll see who requested (Sender), which app was used (Source), and exactly when it happened.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
+
         if (history.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
@@ -2474,6 +2702,7 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
@@ -2521,6 +2750,11 @@ class TrackingLockActivity : ComponentActivity() {
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
+        // Handle back button to prevent exiting the lock screen
+        onBackPressedDispatcher.addCallback(this) {
+            // Do nothing to prevent back button
+        }
+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera()
         } else {
@@ -2549,9 +2783,7 @@ class TrackingLockActivity : ComponentActivity() {
         }
     }
 
-    override fun onBackPressed() {
-        // Prevent back button
-    }
+    // Removed the invalid override fun super.onBackPressed()
 
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
@@ -2669,10 +2901,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import androidx.core.app.ServiceCompat
 
 class TrackingService : Service() {
 
@@ -2833,7 +3067,14 @@ class TrackingService : Service() {
             .setOngoing(true)
             .build()
 
-        startForeground(NOTIF_ID, notification)
+        ServiceCompat.startForeground(
+            this,
+            NOTIF_ID,
+            notification,
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            } else 0
+        )
     }
 
     @SuppressLint("MissingPermission")
@@ -2988,6 +3229,7 @@ class WhitelistManager(context: Context) {
         private const val KEY_STARRED = "starred"
     private const val KEY_PASSPHRASE = "passphrase"
     private const val KEY_PIN = "pin"
+    private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
     }
 
     private val prefs: SharedPreferences = createEncryptedPrefs(context).also {
@@ -3061,6 +3303,14 @@ class WhitelistManager(context: Context) {
 
     fun setPin(pin: String?) {
         prefs.edit().putString(KEY_PIN, pin).apply()
+    }
+
+    fun isOnboardingCompleted(): Boolean {
+        return prefs.getBoolean(KEY_ONBOARDING_COMPLETED, false)
+    }
+
+    fun setOnboardingCompleted(completed: Boolean) {
+        prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, completed).apply()
     }
 
     fun getNumbers(): Set<String> {
@@ -3150,7 +3400,104 @@ class WhitelistManager(context: Context) {
 
 
 ######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/WidgetHelpActivity.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+
+class WidgetHelpActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            MaterialTheme {
+                WidgetHelpUI(onFinished = { finish() })
+            }
+        }
+    }
+}
+
+@Composable
+fun WidgetHelpUI(onFinished: () -> Unit) {
+    var step by rememberSaveable { mutableIntStateOf(0) }
+    val messages = listOf(
+        "Tap the QuicLoc widget twice to mark your parking spot.",
+        "Tap the QuicLoc widget three times to send a safety check to your starred whitelisters.",
+        "Tap it four times to send an emergency location to everyone on your whitelist."
+    )
+
+    if (step < messages.size) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    step++
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                modifier = Modifier
+                    .padding(32.dp)
+                    .fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium,
+                tonalElevation = 8.dp,
+                shadowElevation = 8.dp
+            ) {
+                Text(
+                    text = messages[step],
+                    modifier = Modifier.padding(24.dp),
+                    style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    } else {
+        LaunchedEffect(Unit) {
+            onFinished()
+        }
+    }
+}
+
+
+######################################################
 # FILE: app/src/main/res/drawable/icon.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/drawable/quicloc_banner.webp
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/drawable/quicloc_banner2.jpg
+######################################################
+
+[BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: app/src/main/res/drawable/quicloc_logo.webp
 ######################################################
 
 [BINARY FILE - SKIPPED]
@@ -3259,15 +3606,33 @@ class WhitelistManager(context: Context) {
 ######################################################
 
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_container"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:gravity="center"
-    android:background="@drawable/icon"
-    android:orientation="vertical">
+    android:background="@android:color/transparent">
 
-</LinearLayout>
+    <ImageView
+        android:id="@+id/widget_icon"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:src="@mipmap/ic_launcher"
+        android:scaleType="fitCenter"
+        android:contentDescription="@string/app_name" />
+
+    <TextView
+        android:id="@+id/widget_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="#80000000"
+        android:padding="4dp"
+        android:textColor="#FFFFFF"
+        android:textSize="12sp"
+        android:visibility="gone"
+        android:textStyle="bold" />
+
+</FrameLayout>
 
 
 ######################################################
@@ -3275,6 +3640,21 @@ class WhitelistManager(context: Context) {
 ######################################################
 
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Copyright (C) 2026 The Android Open Source Project
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~      http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@mipmap/ic_launcher_background"/>
     <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
@@ -3286,6 +3666,21 @@ class WhitelistManager(context: Context) {
 ######################################################
 
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Copyright (C) 2026 The Android Open Source Project
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~      http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@mipmap/ic_launcher_background"/>
     <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
@@ -3510,6 +3905,16 @@ class WhitelistManager(context: Context) {
         <item name="colorAccent">@color/teal_200</item>
     </style>
 
+    <style name="Theme.QuicLoc.Transparent" parent="Theme.QuicLoc">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
 </resources>
 
 
@@ -3548,8 +3953,10 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class WhitelistManagerTest {
 
     private lateinit var context: Context
@@ -3601,14 +4008,65 @@ class WhitelistManagerTest {
 
 
 ######################################################
+# FILE: app/src/test/java/com/hereliesaz/quicloc/WidgetManifestTest.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34]) // Explicitly set SDK for Robolectric consistency
+class WidgetManifestTest {
+
+    private lateinit var context: Context
+
+    @Before
+    fun setup() {
+        context = ApplicationProvider.getApplicationContext()
+    }
+
+    @Test
+    fun testWidgetProviderIsRegistered() {
+        val packageManager = context.packageManager
+        val componentName = ComponentName(context, QuicLocWidgetProvider::class.java)
+        
+        try {
+            val receiverInfo = packageManager.getReceiverInfo(componentName, PackageManager.GET_META_DATA)
+            assertNotNull("QuicLocWidgetProvider should be registered in AndroidManifest.xml", receiverInfo)
+            assertTrue("QuicLocWidgetProvider should be exported", receiverInfo.exported)
+            // Note: Robolectric might not always load meta-data perfectly from the merged manifest in unit tests
+            // but the existence of the receiver is the main thing we're testing.
+        } catch (e: PackageManager.NameNotFoundException) {
+            val receivers = packageManager.queryBroadcastReceivers(Intent(AppWidgetManager.ACTION_APPWIDGET_UPDATE), 0)
+            val receiverNames = receivers.map { it.activityInfo.name }.joinToString(", ")
+            throw AssertionError("QuicLocWidgetProvider not found in manifest. Registered receivers: $receiverNames", e)
+        }
+    }
+}
+
+
+######################################################
 # FILE: app/version.properties
 ######################################################
 
-#Sat Apr 04 18:19:53 CDT 2026
+#Thu Apr 09 08:12:00 CDT 2026
 VERSION_A=1
 VERSION_B=1
-VERSION_C=4
-VERSION_D=22
+VERSION_C=23
+VERSION_D=41
 
 
 ######################################################
@@ -3617,8 +4075,8 @@ VERSION_D=22
 
 plugins {
     id("com.android.application") version "9.1.0" apply false
-    id("org.jetbrains.kotlin.android") version "2.2.10" apply false
-    id("org.jetbrains.kotlin.plugin.compose") version "2.2.10" apply false
+    id("org.jetbrains.kotlin.android") version "2.3.20" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.3.20" apply false
 }
 
 
@@ -3642,6 +4100,65 @@ android.newDsl=false
 
 
 ######################################################
+# FILE: gradle/libs.versions.toml
+######################################################
+
+[versions]
+activity-compose = "1.10.0"
+androidSmsmms = "5.2.6"
+androidx-compose-ui = "1.7.7"
+androidx-compose-ui-tooling = "1.7.7"
+androidx-compose-ui-tooling-preview = "1.7.7"
+appcompat = "1.7.0"
+biometric = "1.1.0"
+camera = "1.4.1"
+compose-material3 = "1.3.1"
+core-ktx = "1.6.1"
+core-ktx-version = "1.15.0"
+espresso-core = "3.6.1"
+junit = "4.13.2"
+junitVersion = "1.2.1"
+lifecycle-viewmodel-compose = "2.8.7"
+material = "1.12.0"
+playServicesLocation = "21.3.0"
+robolectric = "4.14.1"
+security-crypto = "1.1.0-alpha06"
+concurrent-futures = "1.2.0"
+guava-listenablefuture = "1.0"
+
+[libraries]
+android-smsmms = { group = "com.klinkerapps", name = "android-smsmms", version.ref = "androidSmsmms" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activity-compose" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
+androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camera" }
+androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camera" }
+androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camera" }
+androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camera" }
+androidx-compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
+androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "compose-material3" }
+androidx-compose-ui = { group = "androidx.compose.ui", name = "ui", version.ref = "androidx-compose-ui" }
+androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling", version.ref = "androidx-compose-ui-tooling" }
+androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview", version.ref = "androidx-compose-ui-tooling-preview" }
+androidx-concurrent-futures = { group = "androidx.concurrent", name = "concurrent-futures", version.ref = "concurrent-futures" }
+androidx-concurrent-futures-ktx = { group = "androidx.concurrent", name = "concurrent-futures-ktx", version.ref = "concurrent-futures" }
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx-version" }
+androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso-core" }
+androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle-viewmodel-compose" }
+androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "security-crypto" }
+core-ktx = { group = "androidx.test", name = "core-ktx", version.ref = "core-ktx" }
+guava-listenablefuture = { group = "com.google.guava", name = "listenablefuture", version.ref = "guava-listenablefuture" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+
+[plugins]
+
+
+######################################################
 # FILE: gradle/wrapper/gradle-wrapper.jar
 ######################################################
 
@@ -3654,7 +4171,7 @@ android.newDsl=false
 
 distributionBase=GRADLE_USER_HOME
 distributionPath=wrapper/dists
-distributionUrl=https\://services.gradle.org/distributions/gradle-9.4.0-rc-1-bin.zip
+distributionUrl=https\://services.gradle.org/distributions/gradle-9.4.1-bin.zip
 networkTimeout=10000
 validateDistributionUrl=true
 zipStoreBase=GRADLE_USER_HOME

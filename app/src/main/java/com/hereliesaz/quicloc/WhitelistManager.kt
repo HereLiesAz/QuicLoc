@@ -18,6 +18,7 @@ class WhitelistManager(context: Context) {
         private const val KEY_STARRED = "starred"
     private const val KEY_PASSPHRASE = "passphrase"
     private const val KEY_PIN = "pin"
+    private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
     }
 
     private val prefs: SharedPreferences = createEncryptedPrefs(context).also {
@@ -91,6 +92,14 @@ class WhitelistManager(context: Context) {
 
     fun setPin(pin: String?) {
         prefs.edit().putString(KEY_PIN, pin).apply()
+    }
+
+    fun isOnboardingCompleted(): Boolean {
+        return prefs.getBoolean(KEY_ONBOARDING_COMPLETED, false)
+    }
+
+    fun setOnboardingCompleted(completed: Boolean) {
+        prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, completed).apply()
     }
 
     fun getNumbers(): Set<String> {

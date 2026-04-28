@@ -4,10 +4,19 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
+import android.view.View
+import android.widget.RemoteViews
+import androidx.core.app.ServiceCompat
 
 /**
  * Foreground service that fetches the device's location and sends a reply.
@@ -69,7 +78,12 @@ class LocationReplyService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification("Fetching location…"))
+        ServiceCompat.startForeground(
+            this,
+            NOTIF_ID,
+            buildNotification("Fetching location…"),
+            if (android.os.Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+        )
     }
 
     // For handling widget taps (delay to distinguish single/double/triple taps)
@@ -81,9 +95,88 @@ class LocationReplyService : Service() {
         val startId = widgetStartId
         widgetTapCount = 0
         Log.d(TAG, "Widget tap timer expired, tap count: $count")
+
+        val statusText = when(count) {
+            1 -> "Help"
+            2 -> "Parking"
+            3 -> "Safety Check"
+            4 -> "Emergency"
+            else -> null
+        }
+
+        if (statusText != null) {
+            performActionHapticFeedback()
+            updateWidgetStatus(this, statusText)
+            // Fade away after 3 seconds
+            widgetTapHandler.postDelayed({
+                updateWidgetStatus(this, null)
+                stopSelf(startId)
+            }, 3000)
+        }
+
+        if (count == 1) {
+            val intent = Intent(this, WidgetHelpActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            startActivity(intent)
+            // Will be stopped by the fade away runnable
+            return@Runnable
+        }
+
         LocationHelper.handleWidgetTaps(this, count) { succeeded ->
             RequestHistoryManager(this).record("Widget ($count taps)", "Widget", succeeded)
-            stopSelf(startId)
+            // Only stopSelf if not waiting for fade away
+            if (statusText == null) stopSelf(startId)
+        }
+    }
+
+    private fun updateWidgetStatus(context: Context, statusText: String?) {
+        val appWidgetManager = AppWidgetManager.getInstance(context)
+        val componentName = ComponentName(context, QuicLocWidgetProvider::class.java)
+        val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
+        for (appWidgetId in appWidgetIds) {
+            val views = RemoteViews(context.packageName, R.layout.widget_quicloc)
+            if (statusText != null) {
+                views.setTextViewText(R.id.widget_status, statusText)
+                views.setViewVisibility(R.id.widget_status, View.VISIBLE)
+            } else {
+                views.setViewVisibility(R.id.widget_status, View.GONE)
+            }
+            appWidgetManager.partiallyUpdateAppWidget(appWidgetId, views)
+        }
+    }
+
+    private fun performHapticFeedback() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            val vibrator = vibratorManager.defaultVibrator
+            vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
+        } else {
+            @Suppress("DEPRECATION")
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(100)
+            }
+        }
+    }
+
+    private fun performActionHapticFeedback() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            val vibrator = vibratorManager.defaultVibrator
+            vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK))
+        } else {
+            @Suppress("DEPRECATION")
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(longArrayOf(0, 100, 50, 100), -1)
+            }
         }
     }
 
@@ -100,6 +193,7 @@ class LocationReplyService : Service() {
 
         if (intent.action == ACTION_WIDGET_TAP) {
             widgetTapCount++
+            performHapticFeedback()
             widgetStartId = startId
             widgetTapHandler.removeCallbacks(widgetTapRunnable)
             widgetTapHandler.postDelayed(widgetTapRunnable, 400)

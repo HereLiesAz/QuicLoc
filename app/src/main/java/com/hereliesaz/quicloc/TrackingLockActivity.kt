@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
@@ -53,6 +54,11 @@ class TrackingLockActivity : ComponentActivity() {
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
+        // Handle back button to prevent exiting the lock screen
+        onBackPressedDispatcher.addCallback(this) {
+            // Do nothing to prevent back button
+        }
+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera()
         } else {
@@ -81,9 +87,7 @@ class TrackingLockActivity : ComponentActivity() {
         }
     }
 
-    override fun onBackPressed() {
-        // Prevent back button
-    }
+    // Removed the invalid override fun super.onBackPressed()
 
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {

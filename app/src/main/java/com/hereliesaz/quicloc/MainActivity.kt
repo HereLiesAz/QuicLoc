@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
@@ -45,8 +46,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         Manifest.permission.RECEIVE_SMS,
         Manifest.permission.SEND_SMS,
         Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION
-    )
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.CAMERA
+    ).let {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            it + "android.permission.POST_NOTIFICATIONS"
+        } else it
+    }
 
     private val backgroundLocationLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -129,6 +135,14 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                         mutableStateOf(isNotificationListenerEnabled())
                     }
                     var showHistory by remember { mutableStateOf(false) }
+                    var showOnboarding by remember { mutableStateOf(!whitelistManager.isOnboardingCompleted()) }
+
+                    if (showOnboarding) {
+                        OnboardingDialog(onDismiss = {
+                            whitelistManager.setOnboardingCompleted(true)
+                            showOnboarding = false
+                        })
+                    }
 
                     Scaffold(
                         topBar = {
@@ -139,6 +153,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                                 ),
                                 actions = {
+                                    IconButton(onClick = { showOnboarding = true }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Info,
+                                            contentDescription = "Show help",
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
                                     IconButton(onClick = { showHistory = !showHistory }) {
                                         Icon(
                                             imageVector = Icons.Default.List,
@@ -329,8 +350,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
         val hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCamera = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        val hasNotif = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED
+        } else true
 
-        if (!hasSms || !hasLocation) {
+        if (!hasSms || !hasLocation || !hasCamera || !hasNotif) {
             multiplePermissionsLauncher.launch(REQUIRED_PERMISSIONS)
         } else {
             checkBackgroundLocationPermission()
@@ -512,15 +537,16 @@ fun QuicLocScreen(
         OutlinedTextField(
             value = passphraseInput,
             onValueChange = { if (it.length <= 150) passphraseInput = it },
-            label = { Text("Passphrase (10-150 chars)") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
+            label = { Text("Text 'loc' + this from ANY number to activate find my phone.") },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
+            singleLine = false,
+            minLines = 3
         )
         Spacer(modifier = Modifier.height(8.dp))
         OutlinedTextField(
             value = pinInput,
             onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) pinInput = it },
-            label = { Text("6-Digit PIN") },
+            label = { Text("6-Digit PIN: Required to unlock your phone once find my phone is active.") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
@@ -534,18 +560,37 @@ fun QuicLocScreen(
             Text("Save Passphrase & PIN")
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
+        // Whitelist a contact section
         Text(
-            text = "Whitelist a contact:",
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(bottom = 8.dp)
+            text = "Contacts & Widget",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
         )
+
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Widget Tap Guide:",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Text(
+                    text = "• 2 Taps: Save Parking (Sends to your number)\n" +
+                           "• 3 Taps: Safety Check (Sends to starred contacts)\n" +
+                           "• 4 Taps: Emergency (Sends to all whitelisted)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
 
         OutlinedTextField(
             value = myNumber,
             onValueChange = { onMyNumberChanged(it) },
-            label = { Text("My Phone Number (For Parking Widget)") },
+            label = { Text("Your Phone Number: Receives your location when the widget is tapped twice.") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             singleLine = true
@@ -572,7 +617,7 @@ fun QuicLocScreen(
             OutlinedTextField(
                 value = phoneNumberInput,
                 onValueChange = { phoneNumberInput = it },
-                label = { Text("Or type name / number manually") },
+                label = { Text("Type name / number: Must match your contact list for SMS/Messenger replies.") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                 modifier = Modifier.weight(1f),
                 singleLine = true
@@ -624,6 +669,39 @@ fun QuicLocScreen(
 }
 
 // -------------------------------------------------------------------------
+// Onboarding
+// -------------------------------------------------------------------------
+
+@Composable
+fun OnboardingDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Welcome to QuicLoc") },
+        text = {
+            Column {
+                Text("QuicLoc lets you securely share your location with trusted contacts.\n")
+                Text("Ways to share:", style = MaterialTheme.typography.titleSmall)
+                Text("1. SMS / Message: Reply 'loc' from a whitelisted contact.")
+                Text("2. Remote Lock: Text your secret passphrase to lock your phone and start tracking.")
+                Text("3. Widget: Tap the home screen widget:")
+                Text("   • 2 Taps: Save Parking")
+                Text("   • 3 Taps: Safety Check")
+                Text("   • 4 Taps: Emergency\n")
+                Text("Getting Started:", style = MaterialTheme.typography.titleSmall)
+                Text("• Set a 10+ character passphrase and a 6-digit PIN.")
+                Text("• Whitelist contacts you trust.")
+                Text("• Star up to 3 'Emergency' contacts.")
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Got it!")
+            }
+        }
+    )
+}
+
+// -------------------------------------------------------------------------
 // History screen
 // -------------------------------------------------------------------------
 
@@ -639,6 +717,24 @@ fun HistoryScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Request History Guide:",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Text(
+                    text = "This log shows all successful (✓) and failed (✗) location requests. You'll see who requested (Sender), which app was used (Source), and exactly when it happened.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
+
         if (history.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
