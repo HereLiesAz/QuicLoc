@@ -98,7 +98,23 @@ Select: **Yes**
 
 ---
 
-## 7. Data Safety Section
+## 7. Battery Optimization Exemption Declaration
+
+**Location in Play Console:**
+> App content → Restricted permissions → All files access / High-power features
+>
+> (Submitted under "Foreground services" / "Background work" prominent disclosure if Play surfaces a form for `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.)
+
+**Does your app request the user to disable battery optimizations?**
+Select: **Yes**
+
+**Describe why your app needs the exemption:**
+
+> QuicLoc is a personal safety utility whose entire function is to respond to incoming "loc" requests from pre-approved contacts when the device is idle. Android's adaptive battery / Doze can suspend the SmsReceiver and NotificationListenerService, causing the trigger to be missed and the location reply to never send. The exemption ensures the trigger path remains reachable, which is core to the safety use case. QuicLoc performs no proactive background work — it only does anything when a whitelisted contact actually sends the trigger word, so the battery cost of the exemption is negligible in practice. The exemption is requested only with explicit user consent through an in-app rationale dialog that explains exactly what it does and why; the user can deny or revoke at any time in system Settings.
+
+---
+
+## 8. Data Safety Section
 
 **Location in Play Console:**
 > App content → Data safety
@@ -132,7 +148,7 @@ Fill in the Data safety form as follows:
 
 ---
 
-## 8. App Category and Content Rating
+## 9. App Category and Content Rating
 
 **Category:** Tools / Utilities
 

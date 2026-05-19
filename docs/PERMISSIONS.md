@@ -72,7 +72,27 @@ Optional — without it, the find-my-phone path falls back to `TrackingLockActiv
 
 ### USE_FULL_SCREEN_INTENT (Android 14+ runtime grant)
 
-Manifest declaration alone is insufficient on API 34+. Grant is via Settings → Apps → QuicLoc → Notifications → "Full screen notifications". We declare it but currently don't prompt the user to enable it. `AppSettings.wasFullScreenIntentPrompted` exists as a placeholder for this flow but isn't wired up.
+Manifest declaration alone is insufficient on API 34+. Grant is via Settings → Apps → QuicLoc → Notifications → "Full screen notifications".
+
+Detection: `NotificationManager.canUseFullScreenIntent()` (API 34+; older Android auto-grants and the check returns true).
+
+Request path: `MainActivity.checkFullScreenIntentPermission()` runs at the end of the first-launch permission chain (after notification listener). It shows a rationale `AlertDialog`, then on Continue hands off to system Settings via `Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT` with a `package:` URI. `AppSettings.wasFullScreenIntentPrompted` flags the auto-prompt as done so subsequent launches don't re-nag.
+
+Re-entry: a `⚠ Full Screen Notifications not enabled` Card is shown in [QuicLocScreen] (only on API 34+ when the runtime grant is missing) with its own pre-prompt `AlertDialog` and a "Grant Full Screen Notifications" button that calls `openFullScreenIntentSettings()`.
+
+Without this grant, the find-my-phone cover-screen fallback (`TrackingLockActivity`) cannot come over the lock screen on Android 14+. Device Admin is the preferred path and renders this optional.
+
+## Protected (background reliability)
+
+These aren't manifest `<uses-permission>` entries but are surfaced as a "Protected" category in [QuicLocScreen]'s All Permissions panel so the user can grant them in one place.
+
+| Setting | Detection | Request path |
+|---|---|---|
+| Battery Optimization Exemption | `PowerManager.isIgnoringBatteryOptimizations(packageName)` | Rationale dialog → `Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` (requires `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` in manifest; fallback to `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS` list if direct grant intent throws). |
+| OEM Autostart | No public API — surfaced as `UNKNOWN` | Best-effort probe of vendor security-app components (Xiaomi, Huawei, Oppo, Vivo, Samsung, Asus, etc.) in `OEM_AUTOSTART_INTENTS`. First resolvable component is launched; otherwise app info as fallback. |
+| Notification Channels | No single-bool API (multiple channels) — surfaced as `UNKNOWN` | `Settings.ACTION_APP_NOTIFICATION_SETTINGS` with `EXTRA_APP_PACKAGE` (API 26+); fallback to app details settings. |
+
+The battery optimization exemption requires a Play Console disclosure — see [DECLARATIONS.md §7](../DECLARATIONS.md).
 
 ## What each path requires to actually work
 

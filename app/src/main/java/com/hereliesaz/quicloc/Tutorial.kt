@@ -272,6 +272,26 @@ Device Admin (optional, special access)
 
 • Bind Device Admin: only consumed by lockNow() so the find-my-phone passphrase can actually lock the screen instead of just covering it. Cannot wipe data, change your PIN, or block uninstall. Revocable any time in Settings → Security → Device admin apps.
 
+Protected (background reliability)
+
+These keep QuicLoc reachable when the device is idle. Granting them is the difference between "QuicLoc answers a request at 3am while your phone is in your bag" and "QuicLoc answers if you happen to have the app open."
+
+• Battery Optimization Exemption: Android puts apps to sleep to save battery. While QuicLoc is asleep, incoming triggers can be missed and the reply may not finish sending. Granting the exemption keeps QuicLoc reachable. QuicLoc does no proactive background work — battery cost is near zero.
+• OEM Autostart: some manufacturers (Xiaomi, Huawei, Oppo, Vivo, etc.) ship a "Protected apps" or "Autostart" list that overrides Android's defaults. If QuicLoc isn't on it, the SmsReceiver stops firing after a reboot or when the device idles. The "Open" button tries to take you directly to the relevant screen; if it can't find one, it opens app info and you can navigate from there.
+• Notification Channels: a per-channel "show notifications" toggle controlled by you. If the foreground-service channel is disabled, Android may kill the reply mid-fetch. The "Open" button takes you straight to QuicLoc's notification settings so you can verify every channel is on.
+
+If a toggle in system Settings is greyed out
+
+On Android 13 and newer, sideloaded apps (anything not installed via the Play Store) have certain "restricted" permissions — Notification Access, Device Admin, Full Screen Notifications, and some others — blocked until you explicitly unlock them. The system permission toggle will look greyed-out or just refuse to flip.
+
+To unlock them:
+
+• When QuicLoc opens its page in system Settings (whichever Grant or Manage button took you there), tap the ⋮ menu in the top-right corner.
+• Choose "Allow restricted settings" — on some OEM builds this reads "Allow protected settings".
+• Return to the toggle. It will now work.
+
+You only need to do this once. After that all restricted toggles for QuicLoc behave normally.
+
 Nothing in this list is sent to any server. No analytics, no crash reporters, no QuicLoc backend. Every permission corresponds to a feature you can see and revoke.
 """.trim(),
     )

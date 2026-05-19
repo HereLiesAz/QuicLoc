@@ -249,6 +249,315 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     private var enabledState = mutableStateOf(true)
     private var reminderNotifState = mutableStateOf(false)
     private var deviceAdminState = mutableStateOf(false)
+    private var fullScreenIntentState = mutableStateOf(true)
+    private var permissionStatusesState = mutableStateOf<List<PermissionStatus>>(emptyList())
+
+    /**
+     * Four-state grant status for one permission row in [QuicLocScreen]'s
+     * All Permissions panel.
+     *
+     *   - GRANTED — runtime/special perm user has explicitly granted; tap "Manage" to revoke.
+     *   - AUTO_GRANTED — install-time, always-on; no button shown.
+     *   - NOT_GRANTED — user can tap "Grant" to start the rationale → request flow.
+     *   - UNKNOWN — we have no API to query the state (e.g. OEM autostart); tap "Open" opens the relevant settings page.
+     */
+    enum class PermStatus { GRANTED, AUTO_GRANTED, NOT_GRANTED, UNKNOWN }
+
+    /**
+     * One row in the All Permissions panel. [key] is the dispatch token
+     * consumed by [dispatchPermissionAction] — either a Manifest permission
+     * constant or one of the sentinel strings below.
+     */
+    data class PermissionStatus(
+        val key: String,
+        val label: String,
+        val category: String,
+        val state: PermStatus,
+    )
+
+    // Sentinel keys for entries that don't map to a single manifest permission.
+    companion object {
+        const val KEY_NOTIF_LISTENER = "special.notif_listener"
+        const val KEY_DEVICE_ADMIN = "special.device_admin"
+        const val KEY_FSI = "special.full_screen_intent"
+        const val KEY_BATTERY = "protected.battery"
+        const val KEY_AUTOSTART = "protected.autostart"
+        const val KEY_NOTIF_CHANNELS = "protected.notif_channels"
+    }
+
+    /**
+     * Snapshot of every permission QuicLoc declares, plus the three
+     * "protected" background-reliability toggles. Refreshed in onCreate /
+     * onResume so the user sees live status.
+     */
+    private fun buildPermissionStatuses(): List<PermissionStatus> {
+        fun runtime(perm: String, label: String): PermissionStatus {
+            val granted = ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED
+            return PermissionStatus(
+                key = perm,
+                label = label,
+                category = "Runtime",
+                state = if (granted) PermStatus.GRANTED else PermStatus.NOT_GRANTED,
+            )
+        }
+        fun special(key: String, label: String, granted: Boolean) = PermissionStatus(
+            key = key,
+            label = label,
+            category = "Special access",
+            state = if (granted) PermStatus.GRANTED else PermStatus.NOT_GRANTED,
+        )
+        fun installTime(label: String) = PermissionStatus(
+            key = "install.$label",
+            label = label,
+            category = "Install-time",
+            state = PermStatus.AUTO_GRANTED,
+        )
+
+        val list = mutableListOf<PermissionStatus>()
+
+        // Runtime — user-prompted on first use
+        list += runtime(Manifest.permission.RECEIVE_SMS, "Receive SMS")
+        list += runtime(Manifest.permission.SEND_SMS, "Send SMS")
+        list += runtime(Manifest.permission.ACCESS_FINE_LOCATION, "Precise Location")
+        list += runtime(Manifest.permission.ACCESS_COARSE_LOCATION, "Approximate Location")
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            list += runtime(Manifest.permission.ACCESS_BACKGROUND_LOCATION, "Background Location")
+        }
+        list += runtime(Manifest.permission.CAMERA, "Camera")
+        list += runtime(Manifest.permission.READ_CONTACTS, "Read Contacts")
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            list += runtime("android.permission.POST_NOTIFICATIONS", "Show Notifications")
+        }
+
+        // Special access — granted via system Settings
+        list += special(KEY_NOTIF_LISTENER, "Notification Access", isNotificationListenerEnabled())
+        list += special(KEY_DEVICE_ADMIN, "Device Admin", QuicLocDeviceAdmin.isAdminActive(this))
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            list += special(KEY_FSI, "Full Screen Notifications", canUseFullScreenIntent())
+        }
+
+        // Protected — keep the app alive in the background
+        list += PermissionStatus(
+            key = KEY_BATTERY,
+            label = "Battery Optimization Exemption",
+            category = "Protected",
+            state = if (isIgnoringBatteryOptimizations()) PermStatus.GRANTED else PermStatus.NOT_GRANTED,
+        )
+        list += PermissionStatus(
+            key = KEY_AUTOSTART,
+            label = "OEM Autostart",
+            category = "Protected",
+            // No public API to check — defer to the user to verify in OEM settings.
+            state = PermStatus.UNKNOWN,
+        )
+        list += PermissionStatus(
+            key = KEY_NOTIF_CHANNELS,
+            label = "Notification Channels",
+            category = "Protected",
+            // We can't easily report a single bool here (multiple channels);
+            // surface the row so the user can verify per-channel in Settings.
+            state = PermStatus.UNKNOWN,
+        )
+
+        // Install-time — auto-granted by declaring in the manifest
+        list += installTime("Foreground Service")
+        list += installTime("Foreground Service – Location")
+        list += installTime("Foreground Service – Camera")
+        list += installTime("Biometric")
+        list += installTime("Fingerprint (legacy)")
+        list += installTime("Internet (Play Services)")
+        list += installTime("Network State (Play Services)")
+        list += installTime("Vibrate")
+        list += installTime("Boot Completed")
+
+        return list
+    }
+
+    private fun refreshPermissionStatuses() {
+        permissionStatusesState.value = buildPermissionStatuses()
+    }
+
+    // -------------------------------------------------------------------------
+    // Per-row action dispatcher — wired to each row's Grant / Manage / Open
+    // button in the All Permissions panel.
+    // -------------------------------------------------------------------------
+
+    private fun dispatchPermissionAction(key: String) {
+        when (key) {
+            Manifest.permission.ACCESS_BACKGROUND_LOCATION -> {
+                if (ContextCompat.checkSelfPermission(this, key) == PackageManager.PERMISSION_GRANTED) {
+                    openAppDetailsSettings()
+                } else {
+                    checkBackgroundLocationPermission()
+                }
+            }
+            in RATIONALES.keys -> {
+                if (ContextCompat.checkSelfPermission(this, key) == PackageManager.PERMISSION_GRANTED) {
+                    openAppDetailsSettings()
+                } else {
+                    promptRuntimePermission(key) { refreshPermissionStatuses() }
+                }
+            }
+            KEY_NOTIF_LISTENER -> {
+                if (isNotificationListenerEnabled()) {
+                    openAppDetailsSettings()
+                } else {
+                    checkNotificationListenerPermission()
+                }
+            }
+            KEY_DEVICE_ADMIN -> {
+                if (QuicLocDeviceAdmin.isAdminActive(this)) {
+                    openAppDetailsSettings()
+                } else {
+                    showDeviceAdminRationale()
+                }
+            }
+            KEY_FSI -> {
+                if (canUseFullScreenIntent()) {
+                    openAppNotificationSettings()
+                } else {
+                    checkFullScreenIntentPermission(forceShow = true)
+                }
+            }
+            KEY_BATTERY -> {
+                if (isIgnoringBatteryOptimizations()) {
+                    openBatteryOptimizationList()
+                } else {
+                    requestBatteryOptimizationExemption()
+                }
+            }
+            KEY_AUTOSTART -> openOemAutostartSettings()
+            KEY_NOTIF_CHANNELS -> openAppNotificationSettings()
+            else -> openAppDetailsSettings()
+        }
+    }
+
+    private fun showDeviceAdminRationale() {
+        pendingRationaleState.value = RationaleDialogState(
+            title = getString(R.string.device_admin_explanation_title),
+            body = getString(R.string.device_admin_explanation_body),
+            confirmLabel = "Continue",
+            onContinue = {
+                pendingRationaleState.value = null
+                requestDeviceAdmin()
+            },
+            onSkip = { pendingRationaleState.value = null }
+        )
+    }
+
+    private fun openAppDetailsSettings() {
+        beginSystemFlow()
+        try {
+            startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:$packageName")
+                )
+            )
+        } catch (e: Exception) {
+            Toast.makeText(this, "Could not open app settings on this device.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun openAppNotificationSettings() {
+        beginSystemFlow()
+        val intent = if (android.os.Build.VERSION.SDK_INT >= 26) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            }
+        } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+        }
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            openAppDetailsSettings()
+        }
+    }
+
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        val pm = getSystemService(android.os.PowerManager::class.java) ?: return false
+        return pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun requestBatteryOptimizationExemption() {
+        pendingRationaleState.value = RationaleDialogState(
+            title = "Battery Optimization Exemption",
+            body = "Android's battery saver can suspend QuicLoc when the device is idle. When it " +
+                "does, incoming \"loc\" triggers may be missed and the location reply may not " +
+                "finish sending. This exemption keeps QuicLoc reachable in the background — " +
+                "QuicLoc only does work when a whitelisted contact actually asks for your location, " +
+                "so the battery cost is near zero. The next screen is the system grant dialog.",
+            confirmLabel = "Continue",
+            onContinue = {
+                pendingRationaleState.value = null
+                beginSystemFlow()
+                try {
+                    startActivity(
+                        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                            data = Uri.parse("package:$packageName")
+                        }
+                    )
+                } catch (e: Exception) {
+                    openBatteryOptimizationList()
+                }
+            },
+            onSkip = { pendingRationaleState.value = null }
+        )
+    }
+
+    private fun openBatteryOptimizationList() {
+        beginSystemFlow()
+        try {
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        } catch (e: Exception) {
+            openAppDetailsSettings()
+        }
+    }
+
+    /**
+     * Best-effort: each major Chinese OEM hides background autostart behind
+     * an unrelated Activity in their pre-installed security app. We probe
+     * the known component names in order and launch the first one the
+     * PackageManager can resolve; fall back to app info if none match.
+     */
+    private val OEM_AUTOSTART_INTENTS: List<Pair<String, String>> = listOf(
+        "com.miui.securitycenter" to "com.miui.permcenter.autostart.AutoStartManagementActivity",
+        "com.letv.android.letvsafe" to "com.letv.android.letvsafe.AutobootManageActivity",
+        "com.huawei.systemmanager" to "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+        "com.huawei.systemmanager" to "com.huawei.systemmanager.optimize.process.ProtectActivity",
+        "com.coloros.safecenter" to "com.coloros.safecenter.permission.startup.StartupAppListActivity",
+        "com.coloros.safecenter" to "com.coloros.safecenter.startupapp.StartupAppListActivity",
+        "com.oppo.safe" to "com.oppo.safe.permission.startup.StartupAppListActivity",
+        "com.iqoo.secure" to "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity",
+        "com.iqoo.secure" to "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager",
+        "com.vivo.permissionmanager" to "com.vivo.permissionmanager.activity.BgStartUpManagerActivity",
+        "com.samsung.android.lool" to "com.samsung.android.sm.ui.battery.BatteryActivity",
+        "com.asus.mobilemanager" to "com.asus.mobilemanager.entry.FunctionActivity",
+    )
+
+    private fun openOemAutostartSettings() {
+        for ((pkg, cls) in OEM_AUTOSTART_INTENTS) {
+            val intent = Intent().apply { component = ComponentName(pkg, cls) }
+            if (packageManager.resolveActivity(intent, 0) != null) {
+                beginSystemFlow()
+                try {
+                    startActivity(intent)
+                    return
+                } catch (e: Exception) {
+                    // Try the next candidate.
+                }
+            }
+        }
+        Toast.makeText(
+            this,
+            "No autostart settings detected for this device — opening app info instead.",
+            Toast.LENGTH_LONG
+        ).show()
+        openAppDetailsSettings()
+    }
     private var showLaunchRestoreState = mutableStateOf(false)
     private var pendingImportUriState = mutableStateOf<Uri?>(null)
 
@@ -360,6 +669,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         enabledState.value = AppSettings.isEnabled(this)
         reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
         deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
+        fullScreenIntentState.value = canUseFullScreenIntent()
+        refreshPermissionStatuses()
 
         // Show the launch-time restore prompt if the encrypted prefs are
         // empty (fresh install) but a PIN-encrypted backup blob is present
@@ -389,6 +700,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                     val enabled by enabledState
                     val reminderEnabled by reminderNotifState
                     val deviceAdminGranted by deviceAdminState
+                    val fullScreenIntentGranted by fullScreenIntentState
+                    val permissionStatuses by permissionStatusesState
                     var currentPassphrase by remember { mutableStateOf(whitelistManager.getPassphrase() ?: "") }
                     var currentPin by remember { mutableStateOf(whitelistManager.getPin() ?: "") }
 
@@ -587,6 +900,10 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 enabled = enabled,
                                 reminderNotificationEnabled = reminderEnabled,
                                 deviceAdminGranted = deviceAdminGranted,
+                                fullScreenIntentGranted = fullScreenIntentGranted,
+                                onRequestFullScreenIntent = { openFullScreenIntentSettings() },
+                                permissionStatuses = permissionStatuses,
+                                onPermissionAction = { key -> dispatchPermissionAction(key) },
                                 onToggleEnabled = { newState ->
                                     AppSettings.setEnabled(this@MainActivity, newState)
                                     enabledState.value = newState
@@ -692,6 +1009,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         enabledState.value = AppSettings.isEnabled(this)
         reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
         deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
+        fullScreenIntentState.value = canUseFullScreenIntent()
+        refreshPermissionStatuses()
     }
 
     override fun onPause() {
@@ -863,10 +1182,14 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
      * Notification Access is special-access (no runtime API), so the
      * rationale dialog hands the user off to system Settings via
      * ACTION_NOTIFICATION_LISTENER_SETTINGS. The result isn't observable
-     * directly — we re-check in onResume.
+     * directly — we re-check in onResume. Chains to the Full-Screen Intent
+     * check after either branch.
      */
     private fun checkNotificationListenerPermission() {
-        if (isNotificationListenerEnabled()) return
+        if (isNotificationListenerEnabled()) {
+            checkFullScreenIntentPermission()
+            return
+        }
         pendingRationaleState.value = RationaleDialogState(
             title = "Notification Access",
             body = "Extends the trigger to WhatsApp, Telegram, Signal, and other messaging apps. " +
@@ -878,9 +1201,77 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 pendingRationaleState.value = null
                 beginSystemFlow()
                 startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                // Queue the next dialog so it surfaces on return from Settings.
+                checkFullScreenIntentPermission()
             },
-            onSkip = { pendingRationaleState.value = null }
+            onSkip = {
+                pendingRationaleState.value = null
+                checkFullScreenIntentPermission()
+            }
         )
+    }
+
+    /**
+     * On Android 14+ apps must obtain runtime grant for USE_FULL_SCREEN_INTENT
+     * via Settings → Apps → QuicLoc → Notifications → "Full screen notifications".
+     * QuicLoc needs this so the find-my-phone cover-screen fallback can come
+     * over the lock screen when Device Admin isn't granted. On older Android,
+     * the manifest declaration is sufficient and this check no-ops.
+     *
+     * `wasFullScreenIntentPrompted` ensures we don't auto-nag every launch —
+     * the in-UI card stays available for the user to come back to.
+     */
+    private fun checkFullScreenIntentPermission(forceShow: Boolean = false) {
+        if (canUseFullScreenIntent()) return
+        if (!forceShow && AppSettings.wasFullScreenIntentPrompted(this)) return
+        pendingRationaleState.value = RationaleDialogState(
+            title = "Full Screen Notifications",
+            body = "Required only for the find-my-phone fallback. If a trigger fires while " +
+                "Device Admin isn't granted, QuicLoc covers the screen with a lock activity " +
+                "instead — but Android 14+ won't let that activity come over the lock screen " +
+                "without this permission. The next page is the system Settings screen for " +
+                "QuicLoc's notifications — toggle \"Allow full screen notifications\" on. " +
+                "Skip if Device Admin is granted; you won't need the fallback.",
+            confirmLabel = "Open Settings",
+            onContinue = {
+                pendingRationaleState.value = null
+                AppSettings.markFullScreenIntentPrompted(this)
+                openFullScreenIntentSettings()
+            },
+            onSkip = {
+                pendingRationaleState.value = null
+                AppSettings.markFullScreenIntentPrompted(this)
+            }
+        )
+    }
+
+    /** True if the device doesn't need the runtime grant, or it's already granted. */
+    private fun canUseFullScreenIntent(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < 34) return true
+        val nm = getSystemService(android.app.NotificationManager::class.java)
+        return nm?.canUseFullScreenIntent() ?: true
+    }
+
+    private fun openFullScreenIntentSettings() {
+        beginSystemFlow()
+        val intent = if (android.os.Build.VERSION.SDK_INT >= 34) {
+            Intent(
+                Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                Uri.parse("package:$packageName")
+            )
+        } else {
+            // Fallback — shouldn't be reachable since the card is hidden pre-34.
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+        }
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "Could not open Full Screen Notifications settings on this device.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     private fun requestDeviceAdmin() {
@@ -995,6 +1386,10 @@ fun QuicLocScreen(
     enabled: Boolean,
     reminderNotificationEnabled: Boolean,
     deviceAdminGranted: Boolean,
+    fullScreenIntentGranted: Boolean,
+    onRequestFullScreenIntent: () -> Unit,
+    permissionStatuses: List<MainActivity.PermissionStatus>,
+    onPermissionAction: (key: String) -> Unit,
     autoDetectMyNumberOnFirstShow: Boolean,
     backupAvailable: Boolean,
     onToggleEnabled: (Boolean) -> Unit,
@@ -1315,6 +1710,207 @@ fun QuicLocScreen(
                         }
                     }
                 )
+            }
+        }
+
+        // Full-Screen Intent (Android 14+). Only relevant when the device
+        // is on API 34+ AND the runtime grant is missing. The cover-screen
+        // fallback (TrackingLockActivity) needs this to come over the lock
+        // screen when Device Admin isn't granted; otherwise it's optional.
+        if (android.os.Build.VERSION.SDK_INT >= 34 && !fullScreenIntentGranted) {
+            var showFsiExplanation by remember { mutableStateOf(false) }
+            Spacer(modifier = Modifier.height(12.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = "⚠ Full Screen Notifications not enabled",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Text(
+                        text = "Without this, the find-my-phone cover-screen fallback can't come over the lock screen on Android 14+. Only matters when Device Admin is not granted.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                    )
+                    Button(
+                        onClick = { showFsiExplanation = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Grant Full Screen Notifications")
+                    }
+                }
+            }
+            if (showFsiExplanation) {
+                AlertDialog(
+                    onDismissRequest = { showFsiExplanation = false },
+                    title = { Text("Grant Full Screen Notifications?") },
+                    text = {
+                        Text(
+                            text = "Required only for the find-my-phone fallback. If a trigger " +
+                                "fires while Device Admin isn't granted, QuicLoc covers the screen " +
+                                "with a lock activity instead — but Android 14+ won't let that " +
+                                "activity come over the lock screen without this permission.\n\n" +
+                                "The next page is the system Settings screen for QuicLoc's " +
+                                "notifications — toggle \"Allow full screen notifications\" on. " +
+                                "Skip if Device Admin is granted; you won't need the fallback.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    confirmButton = {
+                        Button(onClick = {
+                            showFsiExplanation = false
+                            onRequestFullScreenIntent()
+                        }) {
+                            Text("Continue")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showFsiExplanation = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
+        }
+
+        // All-permissions overview. Lists every <uses-permission> in the
+        // manifest plus the "Protected" background-reliability toggles,
+        // grouped by category with live grant status. Each row has its own
+        // Grant / Manage / Open button.
+        Spacer(modifier = Modifier.height(12.dp))
+        var permissionsExpanded by remember { mutableStateOf(false) }
+        val grantableCount = permissionStatuses.count { it.state != MainActivity.PermStatus.AUTO_GRANTED }
+        val grantedCount = permissionStatuses.count {
+            it.state == MainActivity.PermStatus.GRANTED || it.state == MainActivity.PermStatus.AUTO_GRANTED
+        }
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { permissionsExpanded = !permissionsExpanded },
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "All Permissions",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "$grantedCount of ${permissionStatuses.size} granted — tap to ${if (permissionsExpanded) "collapse" else "expand"}.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+                if (permissionsExpanded) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    // Android 13+ blocks special-access permissions for
+                    // sideloaded apps until the user explicitly unlocks them
+                    // from the app's system settings page. This note appears
+                    // for everyone — Play Store installs can ignore it.
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(
+                                text = "Toggle greyed out in system Settings?",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                text = "On Android 13+, sideloaded apps need you to unlock " +
+                                    "restricted permissions before the toggles work. In QuicLoc's " +
+                                    "system Settings page (the one a Grant or Manage button opens), " +
+                                    "tap the ⋮ menu in the top-right corner and choose \"Allow " +
+                                    "restricted settings\" (called \"Allow protected settings\" on " +
+                                    "some devices). Then come back and try Grant again.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                    }
+                    val grouped = permissionStatuses.groupBy { it.category }
+                    listOf("Runtime", "Special access", "Protected", "Install-time").forEach { cat ->
+                        val rows = grouped[cat] ?: return@forEach
+                        Text(
+                            text = cat,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                        )
+                        rows.forEach { status ->
+                            val iconText: String
+                            val iconColor: androidx.compose.ui.graphics.Color
+                            val buttonLabel: String?
+                            when (status.state) {
+                                MainActivity.PermStatus.GRANTED -> {
+                                    iconText = "✓"
+                                    iconColor = MaterialTheme.colorScheme.primary
+                                    buttonLabel = "Manage"
+                                }
+                                MainActivity.PermStatus.AUTO_GRANTED -> {
+                                    iconText = "✓"
+                                    iconColor = MaterialTheme.colorScheme.primary
+                                    buttonLabel = null
+                                }
+                                MainActivity.PermStatus.NOT_GRANTED -> {
+                                    iconText = "✗"
+                                    iconColor = MaterialTheme.colorScheme.error
+                                    buttonLabel = "Grant"
+                                }
+                                MainActivity.PermStatus.UNKNOWN -> {
+                                    iconText = "?"
+                                    iconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    buttonLabel = "Open"
+                                }
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = iconText,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = iconColor
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = status.label,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (buttonLabel != null) {
+                                    TextButton(onClick = { onPermissionAction(status.key) }) {
+                                        Text(buttonLabel)
+                                    }
+                                } else {
+                                    Text(
+                                        text = "Auto-granted",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "$grantableCount permissions need your action ($grantedCount currently granted, including install-time).",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
             }
         }
 
