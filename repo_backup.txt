@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    claude/tender-fermi-a9854b
-  Commit:    b845191174146c3b52a22d9876afd31ac3342a7f
-  Timestamp: 2026-05-19 14:21:49 UTC
+  Branch:    main
+  Commit:    eb46cb753cf8c6fe38904527778f14f5c3cf6c06
+  Timestamp: 2026-05-19 13:59:49 UTC
 ======================================================
 
 
@@ -316,134 +316,6 @@ google-services.json
 
 
 ######################################################
-# FILE: DECLARATIONS.md
-######################################################
-
-# Google Play Declarations for QuicLoc
-
-This document contains the text to submit for each sensitive permission declaration
-required by Google Play. Navigate to **Play Console → App content** and complete
-each section below.
-
----
-
-## 1. SMS or Call Log Permissions Declaration
-
-**Location in Play Console:**
-> App content → Sensitive app permissions → SMS or Call Log
-
-**Is your app's core functionality an SMS/MMS app, or does it require SMS access for a reason not available through the SMS Intent API?**
-Select: **No — SMS access is needed but it is not a messaging app**
-
-**Describe why your app needs SMS permissions:**
-
-> QuicLoc is a personal safety utility. It monitors incoming SMS messages solely to detect a user-defined trigger word ("loc" or "quicloc") sent by phone numbers the user has explicitly pre-approved in a private, encrypted whitelist. When the trigger word is detected from an approved number, the app automatically replies with the device's current GPS location as a Google Maps link. No SMS content is stored, logged, uploaded, or shared. The app never reads, modifies, or transmits any SMS message content other than detecting the trigger word and sending a single automated reply. SMS intent APIs cannot be used because the app must function passively in the background while the device is idle.
-
----
-
-## 2. Notification Listener Permission Declaration
-
-**Location in Play Console:**
-> App content → Sensitive app permissions → Notification access
-
-**Does your app use NotificationListenerService?**
-Select: **Yes**
-
-**Describe what your app does with notification access and why it is necessary:**
-
-> QuicLoc uses NotificationListenerService to extend its location-sharing trigger detection to messaging apps beyond SMS (such as WhatsApp, Telegram, and Signal). The service reads only the notification title and body text to check whether they contain the trigger word "loc" or "quicloc" from a pre-approved contact. If the trigger is detected from an approved contact, the app replies via the notification's built-in inline reply action with the device's GPS location as a Google Maps link. No notification content is stored, logged, uploaded, or transmitted anywhere. The service does not read, record, or process notification content from any app or contact not on the user's encrypted whitelist.
-
----
-
-## 3. Background Location Declaration
-
-**Location in Play Console:**
-> App content → Sensitive app permissions → Background location
-
-**Does your app access location in the background?**
-Select: **Yes**
-
-**Describe why your app needs background location access:**
-
-> QuicLoc's core function is to respond to incoming location requests automatically, including when the device screen is off and the app is not in the foreground. When a trigger message is received from a whitelisted contact, the app must obtain the device's current GPS coordinates to send a location reply. This is the sole purpose of background location access. The location is used only to generate a Google Maps link sent to the requesting contact. Location is never obtained proactively, stored, logged, or transmitted to any server or third party.
-
-**Provide a video demonstrating the background location use:**
-> Record a short screen recording showing:
-> 1. Opening QuicLoc and adding a phone number to the whitelist
-> 2. Locking the device / closing the app
-> 3. Sending "loc" from another device to trigger a response
-> 4. The automatic GPS reply arriving on the sending device
->
-> Upload this to YouTube (unlisted) and paste the link in the Play Console form.
-
----
-
----
-
-## 4. Camera Permission Declaration
-
-**Location in Play Console:**
-> App content → App access
-
-**Describe why your app needs camera access:**
-
-> QuicLoc uses the device's front-facing camera solely for its Panic Mode security feature. If an unauthorized user attempts to bypass the device lock screen by entering an incorrect PIN 3 times, QuicLoc silently captures a photo of the intruder and sends it to the trusted contact who initiated the location request via MMS. The photo is captured locally, transmitted directly to the trusted contact's phone number, and is never uploaded, stored on external servers, or shared with the developer or third parties.
-
----
-
-## 5. Data Safety Section
-
-**Location in Play Console:**
-> App content → Data safety
-
-Fill in the Data safety form as follows:
-
-### Does your app collect or share any of the required user data types?
-**No** — QuicLoc does not collect any data. It does not transmit any user data to the developer or any third party. The only outbound data is the location reply sent directly from the device to the requesting contact via SMS or notification reply, which is the explicit intended function of the app.
-
-### Data types to declare as NOT collected:
-- Location — not collected (obtained on demand, used in-memory, discarded)
-- Personal info — not collected
-- Financial info — not collected
-- Health and fitness — not collected
-- Messages — not collected
-- Photos and videos — not collected
-- Audio files — not collected
-- Files and docs — not collected
-- Calendar — not collected
-- Contacts — not collected
-- App activity — not collected
-- Web browsing — not collected
-- App info and performance — not collected
-- Device or other IDs — not collected
-
-### Is all data encrypted in transit?
-**N/A** — No data is transmitted to any server. The only transmission is the SMS/notification reply sent directly to the requesting contact through standard Android system APIs.
-
-### Can users request data deletion?
-**Yes** — All user data (the whitelist) is stored locally on-device and can be deleted at any time by removing entries in the app or uninstalling the app entirely.
-
----
-
-## 6. App Category and Content Rating
-
-**Category:** Tools / Utilities
-
-**Content Rating Questionnaire:**
-Answer **No** to all questions about violence, sexual content, and controlled substances.
-
-The app will receive a rating of **Everyone**.
-
----
-
-## Notes for Review
-
-If Google Play reviewers contact you for additional clarification, use this response template:
-
-> QuicLoc is a single-purpose personal safety tool. Its only function is to allow a user's pre-approved trusted contacts to request the user's location by sending a keyword. The app responds automatically with a Google Maps link. All sensitive permissions (SMS, notification access, background location) are used exclusively for this single function. No data is collected, stored server-side, or shared with any third party including the developer. The whitelist of approved contacts is encrypted on-device using Android Keystore-backed AES-256 encryption and is protected by biometric authentication. The app has no network connectivity of its own — it uses only Android system APIs and Google Play Services for GPS.
-
-
-######################################################
 # FILE: LICENSE
 ######################################################
 
@@ -471,42 +343,6 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 
 For more information, please refer to <https://unlicense.org>
-
-
-######################################################
-# FILE: PRIVACY_POLICY.md
-######################################################
-
-# Privacy Policy
-
-**Effective Date:** April 4, 2026
-
-QuicLoc ("we," "our," or "us") operates the QuicLoc Android application. We are committed to protecting your privacy and ensuring your personal information remains secure.
-
-### Data Collection and Use
-
-**QuicLoc does not collect, store, transmit, or share any personal user data with the developer or any third party.**
-
-*   **No Analytics:** We do not use any third-party analytics or crash reporting services.
-*   **No Servers:** QuicLoc operates entirely on your local device. We do not have any servers that receive, process, or store your location or contact information.
-*   **Local Processing:** All sensitive data, including your whitelist of trusted contacts and location information, is managed exclusively on your device. Contact data is stored using AES-256-GCM encryption backed by the Android Keystore.
-*   **Permissions:** QuicLoc requires certain permissions to function (e.g., SMS, Location, Notification Access). These are used strictly to provide the app's core functionality, such as responding to location requests from trusted contacts. This information is never transmitted to us or any third party.
-
-### Third-Party Services
-
-QuicLoc does not use any third-party services or SDKs that collect data on your behalf.
-
-### Your Choices
-
-Since QuicLoc does not collect any data, there is no user data for you to manage, delete, or request from us. You have full control over the application's data and functionality through the app settings and standard Android permission controls.
-
-### Contact Us
-
-If you have any questions or concerns about this privacy policy, please reach out via the contact information provided on the [QuicLoc GitHub repository](https://github.com/your-username/quicloc).
-
-### Changes to This Privacy Policy
-
-We may update this Privacy Policy from time to time. We will notify you of any changes by updating the "Effective Date" at the top of this policy.
 
 
 ######################################################
@@ -595,7 +431,7 @@ Android requires **Background Location** to be granted separately after foregrou
 
 ## Privacy
 
-QuicLoc does not collect, store, transmit, or share any user data with the developer or any third party. See [PRIVACY_POLICY.md](./PRIVACY_POLICY.md) for the full policy.
+QuicLoc does not collect, store, transmit, or share any user data with the developer or any third party. See [PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md) for the full policy.
 
 ---
 
@@ -638,7 +474,7 @@ Version state is tracked in `app/version.properties`.
 
 ## Google Play
 
-This app uses sensitive permissions (`NotificationListenerService`, background location, SMS) that require manual review by Google Play. See [DECLARATIONS.md](./DECLARATIONS.md) for the full Play Console declaration text and Data Safety form guidance.
+This app uses sensitive permissions (`NotificationListenerService`, background location, SMS) that require manual review by Google Play. See [DECLARATIONS.md](docs/DECLARATIONS.md) for the full Play Console declaration text and Data Safety form guidance.
 
 ---
 
@@ -6408,6 +6244,11 @@ class BackupVaultTest {
         BackupVault.flush(context)
         assertFalse(BackupVault.isAvailable(context))
     }
+#Tue May 19 08:44:58 CDT 2026
+VERSION_A=1
+VERSION_B=2
+VERSION_C=0
+VERSION_D=24
 
     @Test
     fun `changing the PIN regenerates the blob with new salt and IV`() {
@@ -8337,26 +8178,22 @@ If all stages fail, we send an error SMS/reply back to the requester *("QuicLoc 
 
 ######################################################
 # FILE: gradle.properties
-######################################################
-
-org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
-android.useAndroidX=true
-kotlin.code.style=official
-android.defaults.buildfeatures.resvalues=true
-android.sdk.defaultTargetSdkToCompileSdkIfUnset=false
-android.enableAppCompileTimeRClass=false
-android.usesSdkInManifest.disallowed=false
-android.uniquePackageNames=false
-android.dependency.useConstraints=true
-android.r8.strictFullModeForKeepRules=false
-android.r8.optimizedResourceShrinking=false
-android.builtInKotlin=false
-android.newDsl=false
+plugins {
+    id("com.android.application") version "9.2.1" apply false
+    id("org.jetbrains.kotlin.android") version "2.3.20" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.3.20" apply false
+}
 
 
 ######################################################
-# FILE: gradle/libs.versions.toml
+# FILE: docs/DECLARATIONS.md
 ######################################################
+
+# Google Play Declarations for QuicLoc
+
+This document contains the text to submit for each sensitive permission declaration
+required by Google Play. Navigate to **Play Console → App content** and complete
+each section below.
 
 [versions]
 activity-compose = "1.10.0"
@@ -8411,218 +8248,59 @@ material = { group = "com.google.android.material", name = "material", version.r
 play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+---
 
-[plugins]
+## 1. SMS or Call Log Permissions Declaration
 
+**Location in Play Console:**
+> App content → Sensitive app permissions → SMS or Call Log
 
-######################################################
-# FILE: gradle/wrapper/gradle-wrapper.jar
-######################################################
+**Is your app's core functionality an SMS/MMS app, or does it require SMS access for a reason not available through the SMS Intent API?**
+Select: **No — SMS access is needed but it is not a messaging app**
 
-[BINARY FILE - SKIPPED]
+**Describe why your app needs SMS permissions:**
 
+> QuicLoc is a personal safety utility. It monitors incoming SMS messages solely to detect a user-defined trigger word ("loc" or "quicloc") sent by phone numbers the user has explicitly pre-approved in a private, encrypted whitelist. When the trigger word is detected from an approved number, the app automatically replies with the device's current GPS location as a Google Maps link. No SMS content is stored, logged, uploaded, or shared. The app never reads, modifies, or transmits any SMS message content other than detecting the trigger word and sending a single automated reply. SMS intent APIs cannot be used because the app must function passively in the background while the device is idle.
 
-######################################################
-# FILE: gradle/wrapper/gradle-wrapper.properties
-######################################################
+---
 
-distributionBase=GRADLE_USER_HOME
-distributionPath=wrapper/dists
-distributionUrl=https\://services.gradle.org/distributions/gradle-9.4.1-bin.zip
-networkTimeout=10000
-validateDistributionUrl=true
-zipStoreBase=GRADLE_USER_HOME
-zipStorePath=wrapper/dists
+## 2. Notification Listener Permission Declaration
 
+**Location in Play Console:**
+> App content → Sensitive app permissions → Notification access
 
-######################################################
-# FILE: gradlew
-######################################################
+**Does your app use NotificationListenerService?**
+Select: **Yes**
 
-[BINARY FILE - SKIPPED]
+**Describe what your app does with notification access and why it is necessary:**
 
+> QuicLoc uses NotificationListenerService to extend its location-sharing trigger detection to messaging apps beyond SMS (such as WhatsApp, Telegram, and Signal). The service reads only the notification title and body text to check whether they contain the trigger word "loc" or "quicloc" from a pre-approved contact. If the trigger is detected from an approved contact, the app replies via the notification's built-in inline reply action with the device's GPS location as a Google Maps link. No notification content is stored, logged, uploaded, or transmitted anywhere. The service does not read, record, or process notification content from any app or contact not on the user's encrypted whitelist.
 
-######################################################
-# FILE: gradlew.bat
-######################################################
+---
 
-@rem
-@rem Copyright 2015 the original author or authors.
-@rem
-@rem Licensed under the Apache License, Version 2.0 (the "License");
-@rem you may not use this file except in compliance with the License.
-@rem You may obtain a copy of the License at
-@rem
-@rem      https://www.apache.org/licenses/LICENSE-2.0
-@rem
-@rem Unless required by applicable law or agreed to in writing, software
-@rem distributed under the License is distributed on an "AS IS" BASIS,
-@rem WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-@rem See the License for the specific language governing permissions and
-@rem limitations under the License.
-@rem
+## 3. Background Location Declaration
 
-@if "%DEBUG%"=="" @echo off
-@rem ##########################################################################
-@rem
-@rem  Gradle startup script for Windows
-@rem
-@rem ##########################################################################
+**Location in Play Console:**
+> App content → Sensitive app permissions → Background location
 
-@rem Set local scope for the variables with windows NT shell
-if "%OS%"=="Windows_NT" setlocal
+**Does your app access location in the background?**
+Select: **Yes**
 
-set DIRNAME=%~dp0
-if "%DIRNAME%"=="" set DIRNAME=.
-@rem This is normally unused
-set APP_BASE_NAME=%~n0
-set APP_HOME=%DIRNAME%
+**Describe why your app needs background location access:**
 
-@rem Resolve any "." and ".." in APP_HOME to make it shorter.
-for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
+> QuicLoc's core function is to respond to incoming location requests automatically, including when the device screen is off and the app is not in the foreground. When a trigger message is received from a whitelisted contact, the app must obtain the device's current GPS coordinates to send a location reply. This is the sole purpose of background location access. The location is used only to generate a Google Maps link sent to the requesting contact. Location is never obtained proactively, stored, logged, or transmitted to any server or third party.
 
-@rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
-set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
+**Provide a video demonstrating the background location use:**
+> Record a short screen recording showing:
+> 1. Opening QuicLoc and adding a phone number to the whitelist
+> 2. Locking the device / closing the app
+> 3. Sending "loc" from another device to trigger a response
+> 4. The automatic GPS reply arriving on the sending device
+>
+> Upload this to YouTube (unlisted) and paste the link in the Play Console form.
 
-@rem Find java.exe
-if defined JAVA_HOME goto findJavaFromJavaHome
+---
 
-set JAVA_EXE=java.exe
-%JAVA_EXE% -version >NUL 2>&1
-if %ERRORLEVEL% equ 0 goto execute
-
-echo. 1>&2
-echo ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH. 1>&2
-echo. 1>&2
-echo Please set the JAVA_HOME variable in your environment to match the 1>&2
-echo location of your Java installation. 1>&2
-
-goto fail
-
-:findJavaFromJavaHome
-set JAVA_HOME=%JAVA_HOME:"=%
-set JAVA_EXE=%JAVA_HOME%/bin/java.exe
-
-if exist "%JAVA_EXE%" goto execute
-
-echo. 1>&2
-echo ERROR: JAVA_HOME is set to an invalid directory: %JAVA_HOME% 1>&2
-echo. 1>&2
-echo Please set the JAVA_HOME variable in your environment to match the 1>&2
-echo location of your Java installation. 1>&2
-
-goto fail
-
-:execute
-@rem Setup the command line
-
-set CLASSPATH=%APP_HOME%\gradle\wrapper\gradle-wrapper.jar
-
-
-@rem Execute Gradle
-"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %GRADLE_OPTS% "-Dorg.gradle.appname=%APP_BASE_NAME%" -classpath "%CLASSPATH%" org.gradle.wrapper.GradleWrapperMain %*
-
-:end
-@rem End local scope for the variables with windows NT shell
-if %ERRORLEVEL% equ 0 goto mainEnd
-
-:fail
-rem Set variable GRADLE_EXIT_CONSOLE if you need the _script_ return code instead of
-rem the _cmd.exe /c_ return code!
-set EXIT_CODE=%ERRORLEVEL%
-if %EXIT_CODE% equ 0 set EXIT_CODE=1
-if not ""=="%GRADLE_EXIT_CONSOLE%" exit %EXIT_CODE%
-exit /b %EXIT_CODE%
-
-:mainEnd
-if "%OS%"=="Windows_NT" endlocal
-
-:omega
-
-
-######################################################
-# FILE: mms_research.py
-######################################################
-
-[BINARY FILE - SKIPPED]
-
-
-######################################################
-# FILE: patch_backup_repo.py
-######################################################
-
-with open('.github/workflows/backup-repo.yml', 'r') as f:
-    content = f.read()
-
-# Replace:
-# name: repo-backup-${{ github.ref_name }}-${{ github.sha }}
-# With:
-# name: repo-backup-${{ github.ref_name }}-${{ github.sha }} (But wait, the artifact name cannot contain forward slash!)
-# We need to sanitize the branch name. Or we can just use an environment variable.
-
-new_step = """
-      - name: Sanitize branch name
-        run: |
-          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
-          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
-
-      - name: Upload backup as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: repo-backup-${{ env.SAFE_BRANCH }}-${{ github.sha }}
-          path: repo_backup.txt
-          retention-days: 90
-"""
-
-import re
-content = re.sub(
-    r'\s*- name: Upload backup as artifact\n\s*uses: actions/upload-artifact@v4\n\s*with:\n\s*name: repo-backup-\$\{\{ github\.ref_name \}\}-\$\{\{ github\.sha \}\}\n\s*path: repo_backup\.txt\n\s*retention-days: 90',
-    new_step,
-    content
-)
-
-with open('.github/workflows/backup-repo.yml', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: patch_build_apk.py
-######################################################
-
-with open('.github/workflows/build-apk.yml', 'r') as f:
-    content = f.read()
-
-new_step = """
-      - name: Sanitize branch name
-        run: |
-          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
-          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
-
-      - name: Upload APK as Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: quicloc-apk-${{ env.SAFE_BRANCH }}-${{ github.sha }}
-"""
-
-import re
-content = re.sub(
-    r'\s*- name: Upload APK as Artifact\n\s*uses: actions/upload-artifact@v4\n\s*with:\n\s*name: quicloc-apk-\$\{\{ github\.ref_name \}\}-\$\{\{ github\.sha \}\}',
-    new_step,
-    content
-)
-
-with open('.github/workflows/build-apk.yml', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: patch_declarations.py
-######################################################
-
-with open('DECLARATIONS.md', 'r') as f:
-    content = f.read()
-
-new_section = """
 ---
 
 ## 4. Camera Permission Declaration
@@ -8633,814 +8311,99 @@ new_section = """
 **Describe why your app needs camera access:**
 
 > QuicLoc uses the device's front-facing camera solely for its Panic Mode security feature. If an unauthorized user attempts to bypass the device lock screen by entering an incorrect PIN 3 times, QuicLoc silently captures a photo of the intruder and sends it to the trusted contact who initiated the location request via MMS. The photo is captured locally, transmitted directly to the trusted contact's phone number, and is never uploaded, stored on external servers, or shared with the developer or third parties.
-"""
 
-# Insert before "4. Data Safety Section"
-content = content.replace('## 4. Data Safety Section', new_section.strip() + '\n\n---\n\n## 5. Data Safety Section')
-content = content.replace('## 5. App Category and Content Rating', '## 6. App Category and Content Rating')
+---
 
-with open('DECLARATIONS.md', 'w') as f:
-    f.write(content)
+## 5. Data Safety Section
 
+**Location in Play Console:**
+> App content → Data safety
 
-######################################################
-# FILE: patch_gradle.py
-######################################################
+Fill in the Data safety form as follows:
 
-with open('app/build.gradle.kts', 'r') as f:
-    content = f.read()
+### Does your app collect or share any of the required user data types?
+**No** — QuicLoc does not collect any data. It does not transmit any user data to the developer or any third party. The only outbound data is the location reply sent directly from the device to the requesting contact via SMS or notification reply, which is the explicit intended function of the app.
 
-deps_to_add = """
-    // MMS Sending
-    implementation("com.klinkerapps:android-smsmms:5.2.6")
+### Data types to declare as NOT collected:
+- Location — not collected (obtained on demand, used in-memory, discarded)
+- Personal info — not collected
+- Financial info — not collected
+- Health and fitness — not collected
+- Messages — not collected
+- Photos and videos — not collected
+- Audio files — not collected
+- Files and docs — not collected
+- Calendar — not collected
+- Contacts — not collected
+- App activity — not collected
+- Web browsing — not collected
+- App info and performance — not collected
+- Device or other IDs — not collected
 
-    // CameraX
-    val camerax_version = "1.3.1"
-    implementation("androidx.camera:camera-core:${camerax_version}")
-    implementation("androidx.camera:camera-camera2:${camerax_version}")
-    implementation("androidx.camera:camera-lifecycle:${camerax_version}")
-    implementation("androidx.camera:camera-view:${camerax_version}")
-"""
+### Is all data encrypted in transit?
+**N/A** — No data is transmitted to any server. The only transmission is the SMS/notification reply sent directly to the requesting contact through standard Android system APIs.
 
-if "com.klinkerapps:android-smsmms" not in content:
-    content = content.replace(
-        'implementation("com.google.android.gms:play-services-location:21.3.0")',
-        'implementation("com.google.android.gms:play-services-location:21.3.0")\n' + deps_to_add
-    )
+### Can users request data deletion?
+**Yes** — All user data (the whitelist) is stored locally on-device and can be deleted at any time by removing entries in the app or uninstalling the app entirely.
 
-with open('app/build.gradle.kts', 'w') as f:
-    f.write(content)
+---
 
+## 6. App Category and Content Rating
 
-######################################################
-# FILE: patch_mainactivity.py
-######################################################
+**Category:** Tools / Utilities
 
-with open('app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt', 'r') as f:
-    content = f.read()
+**Content Rating Questionnaire:**
+Answer **No** to all questions about violence, sexual content, and controlled substances.
 
-import re
+The app will receive a rating of **Everyone**.
 
-# We need to pass passphrase and pin from MainActivity to QuicLocScreen, and handle their saving
-# Find where QuicLocScreen is called:
-# `QuicLocScreen(...)`
-# We also need state variables for them.
+---
 
-# Let's just use regex to replace things
-# Search for the class MainActivity
-content = re.sub(
-    r'var numbersList by remember \{ mutableStateOf\(whitelistManager\.getNumbers\(\)\.toList\(\)\) \}',
-    '''var numbersList by remember { mutableStateOf(whitelistManager.getNumbers().toList()) }
-                            var currentPassphrase by remember { mutableStateOf(whitelistManager.getPassphrase() ?: "") }
-                            var currentPin by remember { mutableStateOf(whitelistManager.getPin() ?: "") }''',
-    content
-)
+## Notes for Review
 
-content = re.sub(
-    r'QuicLocScreen\(\s*modifier = Modifier.padding\(innerPadding\),\s*numbersList = numbersList,\s*notificationAccessGranted = notificationAccessGranted,\s*noLockScreenWarning = noLockScreenWarning,\s*onRequestNotificationAccess = \{\s*startActivity\(Intent\(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS\)\)\s*},\s*onAddNumber = \{ newNumber ->\s*whitelistManager.addNumber\(newNumber\)\s*numbersList = whitelistManager.getNumbers\(\).toList\(\)\s*},\s*onRemoveNumber = \{ numberToRemove ->\s*whitelistManager.removeNumber\(numberToRemove\)\s*numbersList = whitelistManager.getNumbers\(\).toList\(\)\s*},\s*onPickContact = \{ contactPickerLauncher.launch\(null\) \}\s*\)',
-    '''QuicLocScreen(
-                                modifier = Modifier.padding(innerPadding),
-                                numbersList = numbersList,
-                                notificationAccessGranted = notificationAccessGranted,
-                                noLockScreenWarning = noLockScreenWarning,
-                                onRequestNotificationAccess = {
-                                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                                },
-                                onAddNumber = { newNumber ->
-                                    whitelistManager.addNumber(newNumber)
-                                    numbersList = whitelistManager.getNumbers().toList()
-                                },
-                                onRemoveNumber = { numberToRemove ->
-                                    whitelistManager.removeNumber(numberToRemove)
-                                    numbersList = whitelistManager.getNumbers().toList()
-                                },
-                                onPickContact = { contactPickerLauncher.launch(null) },
-                                currentPassphrase = currentPassphrase,
-                                currentPin = currentPin,
-                                onSavePassphrase = { newPassphrase, newPin ->
-                                    whitelistManager.setPassphrase(newPassphrase)
-                                    whitelistManager.setPin(newPin)
-                                    currentPassphrase = newPassphrase
-                                    currentPin = newPin
-                                }
-                            )''',
-    content
-)
+If Google Play reviewers contact you for additional clarification, use this response template:
 
-# Now update QuicLocScreen parameters
-content = re.sub(
-    r'fun QuicLocScreen\(\s*modifier: Modifier = Modifier,\s*numbersList: List<String>,\s*notificationAccessGranted: Boolean,\s*noLockScreenWarning: Boolean,\s*onRequestNotificationAccess: \(\) -> Unit,\s*onAddNumber: \(String\) -> Unit,\s*onRemoveNumber: \(String\) -> Unit,\s*onPickContact: \(\) -> Unit\s*\)',
-    '''fun QuicLocScreen(
-    modifier: Modifier = Modifier,
-    numbersList: List<String>,
-    notificationAccessGranted: Boolean,
-    noLockScreenWarning: Boolean,
-    onRequestNotificationAccess: () -> Unit,
-    onAddNumber: (String) -> Unit,
-    onRemoveNumber: (String) -> Unit,
-    onPickContact: () -> Unit,
-    currentPassphrase: String = "",
-    currentPin: String = "",
-    onSavePassphrase: (String, String) -> Unit = { _, _ -> }
-)''',
-    content
-)
-
-# And add the UI fields in QuicLocScreen
-ui_addition = '''
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = "Single-Use Tracking Passphrase",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
-        var passphraseInput by remember { mutableStateOf(currentPassphrase) }
-        var pinInput by remember { mutableStateOf(currentPin) }
-
-        OutlinedTextField(
-            value = passphraseInput,
-            onValueChange = { passphraseInput = it },
-            label = { Text("Passphrase (10-150 chars)") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        OutlinedTextField(
-            value = pinInput,
-            onValueChange = { pinInput = it },
-            label = { Text("6-Digit PIN") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Button(
-            onClick = {
-                if (passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() }) {
-                    onSavePassphrase(passphraseInput, pinInput)
-                }
-            },
-            enabled = passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Save Passphrase & PIN")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-'''
-
-content = content.replace(
-    'Text(\n            text = "Whitelist a contact:",',
-    ui_addition + '\n        Text(\n            text = "Whitelist a contact:",'
-)
-
-with open('app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt', 'w') as f:
-    f.write(content)
+> QuicLoc is a single-purpose personal safety tool. Its only function is to allow a user's pre-approved trusted contacts to request the user's location by sending a keyword. The app responds automatically with a Google Maps link. All sensitive permissions (SMS, notification access, background location) are used exclusively for this single function. No data is collected, stored server-side, or shared with any third party including the developer. The whitelist of approved contacts is encrypted on-device using Android Keystore-backed AES-256 encryption and is protected by biometric authentication. The app has no network connectivity of its own — it uses only Android system APIs and Google Play Services for GPS.
 
 
 ######################################################
-# FILE: patch_mainactivity2.py
+# FILE: docs/PRIVACY_POLICY.md
 ######################################################
 
-with open('app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt', 'r') as f:
-    content = f.read()
+# Privacy Policy
 
-import re
+**Effective Date:** April 4, 2026
 
-# Update MainActivity to request CAMERA and SYSTEM_ALERT_WINDOW when saving passphrase
-save_logic = """
-                                onSavePassphrase = { newPassphrase, newPin ->
-                                    whitelistManager.setPassphrase(newPassphrase)
-                                    whitelistManager.setPin(newPin)
-                                    currentPassphrase = newPassphrase
-                                    currentPin = newPin
+QuicLoc ("we," "our," or "us") operates the QuicLoc Android application. We are committed to protecting your privacy and ensuring your personal information remains secure.
 
-                                    // Request CAMERA permission if not granted
-                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                        androidx.core.app.ActivityCompat.requestPermissions(this@MainActivity, arrayOf(android.Manifest.permission.CAMERA), 10)
-                                    }
-                                    // Request SYSTEM_ALERT_WINDOW if not granted
-                                    if (!android.provider.Settings.canDrawOverlays(this@MainActivity)) {
-                                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName"))
-                                        startActivity(intent)
-                                    }
-                                }
-"""
+### Data Collection and Use
 
-content = re.sub(
-    r'onSavePassphrase = \{ newPassphrase, newPin ->\s*whitelistManager\.setPassphrase\(newPassphrase\)\s*whitelistManager\.setPin\(newPin\)\s*currentPassphrase = newPassphrase\s*currentPin = newPin\s*\}',
-    save_logic.strip(),
-    content
-)
+**QuicLoc does not collect, store, transmit, or share any personal user data with the developer or any third party.**
 
-with open('app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt', 'w') as f:
-    f.write(content)
+*   **No Analytics:** We do not use any third-party analytics or crash reporting services.
+*   **No Servers:** QuicLoc operates entirely on your local device. We do not have any servers that receive, process, or store your location or contact information.
+*   **Local Processing:** All sensitive data, including your whitelist of trusted contacts and location information, is managed exclusively on your device. Contact data is stored using AES-256-GCM encryption backed by the Android Keystore.
+*   **Permissions:** QuicLoc requires certain permissions to function (e.g., SMS, Location, Notification Access). These are used strictly to provide the app's core functionality, such as responding to location requests from trusted contacts. This information is never transmitted to us or any third party.
+
+### Third-Party Services
+
+QuicLoc does not use any third-party services or SDKs that collect data on your behalf.
+
+### Your Choices
+
+Since QuicLoc does not collect any data, there is no user data for you to manage, delete, or request from us. You have full control over the application's data and functionality through the app settings and standard Android permission controls.
+
+### Contact Us
+
+If you have any questions or concerns about this privacy policy, please reach out via the contact information provided on the [QuicLoc GitHub repository](https://github.com/your-username/quicloc).
+
+### Changes to This Privacy Policy
+
+We may update this Privacy Policy from time to time. We will notify you of any changes by updating the "Effective Date" at the top of this policy.
 
 
 ######################################################
-# FILE: patch_manifest.py
-######################################################
-
-import re
-
-with open('app/src/main/AndroidManifest.xml', 'r') as f:
-    content = f.read()
-
-# Add permissions
-if 'android.permission.CAMERA' not in content:
-    content = content.replace(
-        '<uses-permission android:name="android.permission.READ_CONTACTS" />',
-        '<uses-permission android:name="android.permission.READ_CONTACTS" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />'
-    )
-
-# Add Activity and Service
-if 'TrackingLockActivity' not in content:
-    content = content.replace(
-        '</application>',
-        '''    <activity
-            android:name=".TrackingLockActivity"
-            android:theme="@style/Theme.QuicLoc"
-            android:showOnLockScreen="true"
-            android:showForAllUsers="true"
-            android:excludeFromRecents="true"
-            android:launchMode="singleInstance"
-            android:exported="false" />
-
-        <service
-            android:name=".TrackingService"
-            android:exported="false"
-            android:foregroundServiceType="location|camera" />
-
-    </application>'''
-    )
-
-with open('app/src/main/AndroidManifest.xml', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: patch_notiflistener.py
-######################################################
-
-with open('app/src/main/java/com/hereliesaz/quicloc/NotificationListener.kt', 'r') as f:
-    content = f.read()
-
-import re
-
-new_logic = """
-        val whitelistManager = WhitelistManager(applicationContext)
-        val passphrase = whitelistManager.getPassphrase()
-        val isPassphraseTrigger = passphrase != null && passphrase.isNotEmpty() &&
-            (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
-
-        if (isPassphraseTrigger) {
-            Log.d(TAG, "Passphrase trigger from '$title' via $packageName — starting TrackingService")
-            whitelistManager.setPassphrase(null) // single-use
-
-            // Start tracking service
-            TrackingService.startForNotification(
-                applicationContext,
-                sender = title,
-                source = appName
-            )
-            return
-        }
-
-        if (body != "loc" && body != "quicloc") return
-
-        // Check whitelist — use title as sender identifier (display name or number)
-        if (!whitelistManager.isWhitelistedByName(title)) {
-            Log.d(TAG, "Sender '$title' not whitelisted, ignoring.")
-            return
-        }
-"""
-
-content = re.sub(
-    r'if \(body != "loc" && body != "quicloc"\) return\n\n\s*// Check whitelist — use title as sender identifier \(display name or number\)\n\s*val whitelistManager = WhitelistManager\(applicationContext\)\n\s*if \(!whitelistManager\.isWhitelistedByName\(title\)\) \{\n\s*Log\.d\(TAG, "Sender \'\$title\' not whitelisted, ignoring\."\)\n\s*return\n\s*\}',
-    new_logic.strip(),
-    content
-)
-
-with open('app/src/main/java/com/hereliesaz/quicloc/NotificationListener.kt', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: patch_privacy.py
-######################################################
-
-with open('PRIVACY_POLICY.md', 'r') as f:
-    content = f.read()
-
-# Add camera, passphrase, and photo data
-import re
-
-content = re.sub(
-    r'- Your camera or microphone',
-    '- Your microphone',
-    content
-)
-
-camera_data = """### 5. Camera (Photos)
-When QuicLoc enters Panic Mode (triggered by entering an incorrect PIN 3 times on the lock screen), the app uses the front-facing camera to capture a photo of the user. This photo is attached to an MMS message along with the location link and sent exclusively to the trusted contact who requested the location. The photo is never uploaded to external servers, processed by third-party APIs, or shared with the developer.
-
-### 6. Passphrase and PIN
-You can optionally configure a single-use passphrase and a 6-digit PIN. These are securely encrypted on your device alongside your whitelist. They are never transmitted off your device.
-"""
-
-content = content.replace(
-    '---',
-    '---\n\n' + camera_data,
-    1 # Only the first occurrence? No we need to place it in Data the App Accesses
-)
-
-# A better way is to replace the start of Data the App Does NOT Access
-content = content.replace(
-    '## Data the App Does NOT Access',
-    camera_data + '\n## Data the App Does NOT Access'
-)
-
-# And add CAMERA permission
-perm_addition = "| `CAMERA` | To capture a photo of the intruder if Panic Mode is triggered |"
-content = content.replace(
-    '| `BIND_NOTIFICATION_LISTENER_SERVICE` | To detect the trigger word in notifications from non-SMS messaging apps |',
-    '| `BIND_NOTIFICATION_LISTENER_SERVICE` | To detect the trigger word in notifications from non-SMS messaging apps |\n' + perm_addition
-)
-
-with open('PRIVACY_POLICY.md', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: patch_readme.py
-######################################################
-
-with open('README.md', 'r') as f:
-    content = f.read()
-
-import re
-
-new_features = """
-- **Fully background** — operates silently when the screen is off. Auto-replies work without the app being open or unlocked.
-- **Passphrase & Device Lock** — Set a 10-150 character single-use passphrase and a 6-digit PIN. Sending the passphrase starts a 5-minute location tracking interval and forces a lock screen on the device. Failing the PIN 3 times captures a photo of the intruder and escalates tracking to 1-minute intervals with MMS image updates.
-- **No data collection** — no analytics, no crash reporters, no servers. Nothing leaves your device except the location reply sent directly to the requesting contact.
-"""
-
-content = re.sub(
-    r'- \*\*Fully background\*\* — operates silently when the screen is off\. Auto-replies work without the app being open or unlocked\.\n- \*\*No data collection\*\* — no analytics, no crash reporters, no servers\. Nothing leaves your device except the location reply sent directly to the requesting contact\.',
-    new_features.strip(),
-    content
-)
-
-with open('README.md', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: patch_smsreceiver.py
-######################################################
-
-with open('app/src/main/java/com/hereliesaz/quicloc/SmsReceiver.kt', 'r') as f:
-    content = f.read()
-
-import re
-
-new_logic = """
-            val passphrase = whitelistManager.getPassphrase()
-            val isPassphraseTrigger = passphrase != null && passphrase.isNotEmpty() &&
-                (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
-
-            if (isPassphraseTrigger) {
-                Log.d(TAG, "Passphrase trigger from $sender — starting TrackingService")
-                // Invalidate passphrase (single-use)
-                whitelistManager.setPassphrase(null)
-
-                // Start tracking service
-                TrackingService.startForSms(context, sender)
-                continue
-            }
-
-            if (!whitelistManager.isWhitelisted(sender)) {
-                Log.d(TAG, "Sender $sender not whitelisted, ignoring.")
-                continue
-            }
-
-            if (body == "loc" || body == "quicloc") {
-                Log.d(TAG, "Trigger from $sender — starting LocationReplyService")
-                // Hand off to the foreground service immediately.
-                // The receiver returns in milliseconds; the service does the
-                // actual GPS wait and reply with no time limit.
-                LocationReplyService.startForSms(context, sender)
-            }
-"""
-
-content = re.sub(
-    r'if \(!whitelistManager\.isWhitelisted\(sender\)\) \{\n\s*Log\.d\(TAG, "Sender \$sender not whitelisted, ignoring\."\)\n\s*continue\n\s*\}\n\n\s*if \(body == "loc" \|\| body == "quicloc"\) \{\n\s*Log\.d\(TAG, "Trigger from \$sender — starting LocationReplyService"\)\n\s*// Hand off to the foreground service immediately\.\n\s*// The receiver returns in milliseconds; the service does the\n\s*// actual GPS wait and reply with no time limit\.\n\s*LocationReplyService\.startForSms\(context, sender\)\n\s*\}',
-    new_logic.strip(),
-    content
-)
-
-with open('app/src/main/java/com/hereliesaz/quicloc/SmsReceiver.kt', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: patch_tracking_lock.py
-######################################################
-
-with open('app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt', 'r') as f:
-    content = f.read()
-
-import re
-
-# Fix panic mode silent failure
-panic_logic = """
-    private fun triggerPanicMode() {
-        Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
-        val currentCapture = imageCapture
-        if (currentCapture == null) {
-            Log.e(TAG, "Image capture is null, entering panic mode without photo")
-            TrackingService.enterPanicMode(this@TrackingLockActivity, null)
-            return
-        }
-
-        val photoFile = File(externalMediaDirs.firstOrNull(), "${System.currentTimeMillis()}_lock.jpg")
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-
-        currentCapture.takePicture(
-            outputOptions, ContextCompat.getMainExecutor(this), object : ImageCapture.OnImageSavedCallback {
-                override fun onError(exc: ImageCaptureException) {
-                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
-                    TrackingService.enterPanicMode(this@TrackingLockActivity, null)
-                }
-
-                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    Log.d(TAG, "Photo capture succeeded: ${photoFile.absolutePath}")
-                    TrackingService.enterPanicMode(this@TrackingLockActivity, photoFile.absolutePath)
-                }
-            })
-    }
-"""
-
-content = re.sub(
-    r'private fun triggerPanicMode\(\) \{.*?(?=override fun onDestroy\(\))',
-    panic_logic,
-    content,
-    flags=re.DOTALL
-)
-
-# Address home bypass by hooking into onPause
-on_pause_logic = """
-    override fun onPause() {
-        super.onPause()
-        // If not finishing, bring it back to the front
-        if (!isFinishing) {
-            val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {
-                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-            startActivity(intent)
-        }
-    }
-"""
-
-content = content.replace(
-    'override fun onBackPressed() {\n        // Prevent back button\n    }',
-    'override fun onBackPressed() {\n        // Prevent back button\n    }\n' + on_pause_logic
-)
-
-with open('app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: patch_trackinglock_userleavehint.py
-######################################################
-
-with open('app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt', 'r') as f:
-    content = f.read()
-
-import re
-
-# Remove onPause and use onUserLeaveHint
-on_pause_logic = """
-    override fun onPause() {
-        super.onPause()
-        // If not finishing, bring it back to the front
-        if (!isFinishing) {
-            val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {
-                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-            startActivity(intent)
-        }
-    }
-"""
-
-replacement = """
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        if (!isFinishing) {
-            val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {
-                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-            startActivity(intent)
-        }
-    }
-"""
-
-content = content.replace(on_pause_logic.strip(), replacement.strip())
-
-with open('app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: patch_trackingservice_fgs.py
-######################################################
-
-with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'r') as f:
-    content = f.read()
-
-import re
-
-# Fix intent == null
-content = re.sub(
-    r'if \(intent == null\) return START_STICKY',
-    'if (intent == null) return START_NOT_STICKY',
-    content
-)
-
-# Fix OOM crash by downsampling
-mms_logic = """
-            val file = java.io.File(photoPath)
-            if (file.exists()) {
-                val options = android.graphics.BitmapFactory.Options().apply {
-                    inJustDecodeBounds = true
-                }
-                android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
-
-                // Calculate inSampleSize
-                var inSampleSize = 1
-                val reqWidth = 800
-                val reqHeight = 800
-                if (options.outHeight > reqHeight || options.outWidth > reqWidth) {
-                    val halfHeight = options.outHeight / 2
-                    val halfWidth = options.outWidth / 2
-                    while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
-                        inSampleSize *= 2
-                    }
-                }
-
-                options.inJustDecodeBounds = false
-                options.inSampleSize = inSampleSize
-
-                val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
-                message.setImage(bitmap)
-                transaction.sendNewMessage(message, com.klinker.android.send_message.Transaction.NO_THREAD_ID)
-                Log.d(TAG, "MMS enqueued via library")
-            } else {
-                Log.e(TAG, "Photo file not found: $photoPath")
-            }
-"""
-
-content = re.sub(
-    r'val file = java\.io\.File\(photoPath\)\n\s*if \(file\.exists\(\)\) \{\n\s*val bitmap = android\.graphics\.BitmapFactory\.decodeFile\(file\.absolutePath\)\n\s*message\.setImage\(bitmap\)\n\s*transaction\.sendNewMessage\(message, com\.klinker\.android\.send_message\.Transaction\.NO_THREAD_ID\)\n\s*Log\.d\(TAG, "MMS enqueued via library"\)\n\s*\} else \{\n\s*Log\.e\(TAG, "Photo file not found: \$photoPath"\)\n\s*\}',
-    mms_logic.strip(),
-    content
-)
-
-with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: patch_trackingservice_fixes.py
-######################################################
-
-with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'r') as f:
-    content = f.read()
-
-import re
-
-# 1. In sendLocationUpdate, trigger sendMmsPhoto even if succeeded is false.
-loc_update = """
-    @SuppressLint("MissingPermission")
-    private fun sendLocationUpdate() {
-        val targetSender = sender ?: return
-        Log.d(TAG, "Fetching location for tracking update...")
-        LocationHelper.getCurrentLocationAndReply(
-            context = this,
-            phoneNumber = targetSender,
-            onResult = { succeeded ->
-                // Also send photo if in panic mode, regardless of location success
-                if (isPanicMode && photoPathToSend != null) {
-                    sendMmsPhoto(targetSender, photoPathToSend!!)
-                }
-            }
-        )
-    }
-"""
-
-content = re.sub(
-    r'@SuppressLint\("MissingPermission"\)\n\s*private fun sendLocationUpdate\(\) \{.*?(?=private fun sendMmsPhoto)',
-    loc_update.strip() + '\n\n    ',
-    content,
-    flags=re.DOTALL
-)
-
-# 2. In sendMmsPhoto, move to a background thread
-mms_logic = """
-    private fun sendMmsPhoto(targetSender: String, photoPath: String) {
-        // Run on background thread to avoid ANR
-        Thread {
-            Log.d(TAG, "Sending MMS photo to $targetSender from $photoPath")
-            try {
-                val settings = com.klinker.android.send_message.Settings().apply {
-                    useSystemSending = true
-                }
-                val transaction = com.klinker.android.send_message.Transaction(this, settings)
-                val message = com.klinker.android.send_message.Message("QuicLoc Lock Image", targetSender)
-
-                // Add image
-                val file = java.io.File(photoPath)
-                if (file.exists()) {
-                    val options = android.graphics.BitmapFactory.Options().apply {
-                        inJustDecodeBounds = true
-                    }
-                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
-
-                    // Calculate inSampleSize
-                    var inSampleSize = 1
-                    val reqWidth = 800
-                    val reqHeight = 800
-                    if (options.outHeight > reqHeight || options.outWidth > reqWidth) {
-                        val halfHeight = options.outHeight / 2
-                        val halfWidth = options.outWidth / 2
-                        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
-                            inSampleSize *= 2
-                        }
-                    }
-
-                    options.inJustDecodeBounds = false
-                    options.inSampleSize = inSampleSize
-
-                    val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
-                    message.setImage(bitmap)
-                    transaction.sendNewMessage(message, com.klinker.android.send_message.Transaction.NO_THREAD_ID)
-                    Log.d(TAG, "MMS enqueued via library")
-                } else {
-                    Log.e(TAG, "Photo file not found: $photoPath")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to send MMS", e)
-            }
-        }.start()
-    }
-"""
-
-content = re.sub(
-    r'private fun sendMmsPhoto\(targetSender: String, photoPath: String\) \{.*?(?=private fun stopTracking\(\))',
-    mms_logic.strip() + '\n\n    ',
-    content,
-    flags=re.DOTALL
-)
-
-with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: patch_trackingservice_overlay.py
-######################################################
-
-with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'r') as f:
-    content = f.read()
-
-import re
-
-# Instead of just FullScreenIntent, let's start the activity immediately
-start_logic = """
-            Log.d(TAG, "Starting tracking for $sender via $source")
-
-            // Show lock screen immediately via intent
-            val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            }
-            startActivity(lockIntent)
-
-            val pendingIntent = PendingIntent.getActivity(
-                this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val notification = Notification.Builder(this, CHANNEL_ID)
-"""
-
-content = re.sub(
-    r'Log\.d\(TAG, "Starting tracking for \$sender via \$source"\)\s*// Show lock screen immediately via Full Screen Intent\s*val lockIntent = Intent\(this, TrackingLockActivity::class\.java\)\.apply \{\s*addFlags\(Intent\.FLAG_ACTIVITY_NEW_TASK or Intent\.FLAG_ACTIVITY_CLEAR_TASK\)\s*\}\s*val pendingIntent = PendingIntent\.getActivity\(\s*this, 0, lockIntent, PendingIntent\.FLAG_UPDATE_CURRENT or PendingIntent\.FLAG_IMMUTABLE\s*\)\s*val notification = Notification\.Builder\(this, CHANNEL_ID\)',
-    start_logic.strip(),
-    content
-)
-
-with open('app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: patch_version.py
-######################################################
-
-with open('app/version.properties', 'r') as f:
-    lines = f.readlines()
-
-new_lines = []
-for line in lines:
-    if line.startswith('VERSION_B='):
-        parts = line.split('=')
-        val = int(parts[1].strip())
-        new_lines.append(f'VERSION_B={val + 1}\n')
-    elif line.startswith('VERSION_C='):
-        new_lines.append('VERSION_C=0\n')
-    else:
-        new_lines.append(line)
-
-with open('app/version.properties', 'w') as f:
-    f.writelines(new_lines)
-
-
-######################################################
-# FILE: patch_whitelistmanager.py
-######################################################
-
-with open('app/src/main/java/com/hereliesaz/quicloc/WhitelistManager.kt', 'r') as f:
-    content = f.read()
-
-# Add getPassphrase, setPassphrase, getPin, setPin
-additions = """
-    private const val KEY_PASSPHRASE = "passphrase"
-    private const val KEY_PIN = "pin"
-
-    fun getPassphrase(): String? {
-        return prefs.getString(KEY_PASSPHRASE, null)
-    }
-
-    fun setPassphrase(passphrase: String?) {
-        prefs.edit().putString(KEY_PASSPHRASE, passphrase).apply()
-    }
-
-    fun getPin(): String? {
-        return prefs.getString(KEY_PIN, null)
-    }
-
-    fun setPin(pin: String?) {
-        prefs.edit().putString(KEY_PIN, pin).apply()
-    }
-"""
-
-if "KEY_PASSPHRASE" not in content:
-    content = content.replace(
-        'private const val KEY_WHITELIST = "whitelist"',
-        'private const val KEY_WHITELIST = "whitelist"\n' + additions.split('\n', 1)[1].split('\n\n    fun getPassphrase()')[0]
-    )
-    content = content.replace(
-        'fun getNumbers(): Set<String> {',
-        additions.split('\n\n    fun getPassphrase()')[1].replace('    fun', '    fun getPassphrase()') + '\n    fun getNumbers(): Set<String> {'
-    )
-
-with open('app/src/main/java/com/hereliesaz/quicloc/WhitelistManager.kt', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: patch_whitelistmanager2.py
-######################################################
-
-with open('app/src/main/java/com/hereliesaz/quicloc/WhitelistManager.kt', 'r') as f:
-    content = f.read()
-
-import re
-content = re.sub(r'    : String\? \{\n        return prefs.getString\(KEY_PASSPHRASE, null\)\n    \}\n\n    fun getPassphrase\(\) setPassphrase\(passphrase: String\?\) \{\n        prefs.edit\(\).putString\(KEY_PASSPHRASE, passphrase\).apply\(\)\n    \}\n\n    fun getPassphrase\(\) getPin\(\): String\? \{\n        return prefs.getString\(KEY_PIN, null\)\n    \}\n\n    fun getPassphrase\(\) setPin\(pin: String\?\) \{\n        prefs.edit\(\).putString\(KEY_PIN, pin\).apply\(\)\n    \}',
-'''    fun getPassphrase(): String? {
-        return prefs.getString(KEY_PASSPHRASE, null)
-    }
-
-    fun setPassphrase(passphrase: String?) {
-        prefs.edit().putString(KEY_PASSPHRASE, passphrase).apply()
-    }
-
-    fun getPin(): String? {
-        return prefs.getString(KEY_PIN, null)
-    }
-
-    fun setPin(pin: String?) {
-        prefs.edit().putString(KEY_PIN, pin).apply()
-    }''', content)
-
-with open('app/src/main/java/com/hereliesaz/quicloc/WhitelistManager.kt', 'w') as f:
-    f.write(content)
-
-
-######################################################
-# FILE: plan.md
+# FILE: docs/plan.md
 ######################################################
 
 # Plan
@@ -9473,7 +8436,7 @@ Let's check if we can add a simple PDU builder or library.
 
 
 ######################################################
-# FILE: plan_update.md
+# FILE: docs/plan_update.md
 ######################################################
 
 The review pointed out several blocking issues:
@@ -9494,28 +8457,198 @@ Let's verify `LocationHelper.kt` just to be absolutely sure.
 
 
 ######################################################
-# FILE: req.py
+# FILE: gradle.properties
+######################################################
+
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+kotlin.code.style=official
+android.defaults.buildfeatures.resvalues=true
+android.sdk.defaultTargetSdkToCompileSdkIfUnset=false
+android.enableAppCompileTimeRClass=false
+android.usesSdkInManifest.disallowed=false
+android.uniquePackageNames=false
+android.dependency.useConstraints=true
+android.r8.strictFullModeForKeepRules=false
+android.r8.optimizedResourceShrinking=false
+android.builtInKotlin=false
+android.newDsl=false
+
+
+######################################################
+# FILE: gradle/libs.versions.toml
+######################################################
+
+[versions]
+activity-compose = "1.13.0"
+androidSmsmms = "5.2.6"
+androidx-compose-ui = "1.11.1"
+androidx-compose-ui-tooling = "1.11.1"
+androidx-compose-ui-tooling-preview = "1.11.1"
+appcompat = "1.7.1"
+biometric = "1.1.0"
+camera = "1.6.1"
+compose-material3 = "1.4.0"
+core-ktx = "1.7.0"
+core-ktx-version = "1.18.0"
+espresso-core = "3.7.0"
+junit = "4.13.2"
+junitVersion = "1.3.0"
+lifecycle-viewmodel-compose = "2.10.0"
+material = "1.14.0"
+playServicesLocation = "21.3.0"
+robolectric = "4.16.1"
+security-crypto = "1.1.0"
+concurrent-futures = "1.3.0"
+guava-listenablefuture = "9999.0-empty-to-avoid-conflict-with-guava"
+
+[libraries]
+android-smsmms = { group = "com.klinkerapps", name = "android-smsmms", version.ref = "androidSmsmms" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activity-compose" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
+androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camera" }
+androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camera" }
+androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camera" }
+androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camera" }
+androidx-compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
+androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "compose-material3" }
+androidx-compose-ui = { group = "androidx.compose.ui", name = "ui", version.ref = "androidx-compose-ui" }
+androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling", version.ref = "androidx-compose-ui-tooling" }
+androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview", version.ref = "androidx-compose-ui-tooling-preview" }
+androidx-concurrent-futures = { group = "androidx.concurrent", name = "concurrent-futures", version.ref = "concurrent-futures" }
+androidx-concurrent-futures-ktx = { group = "androidx.concurrent", name = "concurrent-futures-ktx", version.ref = "concurrent-futures" }
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx-version" }
+androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso-core" }
+androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle-viewmodel-compose" }
+androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "security-crypto" }
+core-ktx = { group = "androidx.test", name = "core-ktx", version.ref = "core-ktx" }
+guava-listenablefuture = { group = "com.google.guava", name = "listenablefuture", version.ref = "guava-listenablefuture" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+
+[plugins]
+
+
+######################################################
+# FILE: gradle/wrapper/gradle-wrapper.jar
 ######################################################
 
 [BINARY FILE - SKIPPED]
 
 
 ######################################################
-# FILE: search_mms.py
+# FILE: gradle/wrapper/gradle-wrapper.properties
 ######################################################
 
-import urllib.request
-import json
-import os
-
-# We will just write a simple script to look for android MMS sending without third party servers
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-9.5.1-bin.zip
+networkTimeout=10000
+retries=0
+retryBackOffMs=500
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
 
 
 ######################################################
-# FILE: search_mms_lib.py
+# FILE: gradlew
 ######################################################
 
 [BINARY FILE - SKIPPED]
+
+
+######################################################
+# FILE: gradlew.bat
+######################################################
+
+@rem
+@rem Copyright 2015 the original author or authors.
+@rem
+@rem Licensed under the Apache License, Version 2.0 (the "License");
+@rem you may not use this file except in compliance with the License.
+@rem You may obtain a copy of the License at
+@rem
+@rem      https://www.apache.org/licenses/LICENSE-2.0
+@rem
+@rem Unless required by applicable law or agreed to in writing, software
+@rem distributed under the License is distributed on an "AS IS" BASIS,
+@rem WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+@rem See the License for the specific language governing permissions and
+@rem limitations under the License.
+@rem
+@rem SPDX-License-Identifier: Apache-2.0
+@rem
+
+@if "%DEBUG%"=="" @echo off
+@rem ##########################################################################
+@rem
+@rem  Gradle startup script for Windows
+@rem
+@rem ##########################################################################
+
+@rem Set local scope for the variables, and ensure extensions are enabled
+setlocal EnableExtensions
+
+set DIRNAME=%~dp0
+if "%DIRNAME%"=="" set DIRNAME=.
+@rem This is normally unused
+set APP_BASE_NAME=%~n0
+set APP_HOME=%DIRNAME%
+
+@rem Resolve any "." and ".." in APP_HOME to make it shorter.
+for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
+
+@rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
+
+@rem Find java.exe
+if defined JAVA_HOME goto findJavaFromJavaHome
+
+set JAVA_EXE=java.exe
+%JAVA_EXE% -version >NUL 2>&1
+if %ERRORLEVEL% equ 0 goto execute
+
+echo. 1>&2
+echo ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH. 1>&2
+echo. 1>&2
+echo Please set the JAVA_HOME variable in your environment to match the 1>&2
+echo location of your Java installation. 1>&2
+
+"%COMSPEC%" /c exit 1
+
+:findJavaFromJavaHome
+set JAVA_HOME=%JAVA_HOME:"=%
+set JAVA_EXE=%JAVA_HOME%/bin/java.exe
+
+if exist "%JAVA_EXE%" goto execute
+
+echo. 1>&2
+echo ERROR: JAVA_HOME is set to an invalid directory: %JAVA_HOME% 1>&2
+echo. 1>&2
+echo Please set the JAVA_HOME variable in your environment to match the 1>&2
+echo location of your Java installation. 1>&2
+
+"%COMSPEC%" /c exit 1
+
+:execute
+@rem Setup the command line
+
+
+
+@rem Execute Gradle
+@rem endlocal doesn't take effect until after the line is parsed and variables are expanded
+@rem which allows us to clear the local environment before executing the java command
+endlocal & "%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %GRADLE_OPTS% "-Dorg.gradle.appname=%APP_BASE_NAME%" -jar "%APP_HOME%\gradle\wrapper\gradle-wrapper.jar" %* & call :exitWithErrorLevel
+
+:exitWithErrorLevel
+@rem Use "%COMSPEC%" /c exit to allow operators to work properly in scripts
+"%COMSPEC%" /c exit %ERRORLEVEL%
 
 
 ######################################################
@@ -9541,39 +8674,6 @@ dependencyResolutionManagement {
 }
 rootProject.name = "QuicLoc"
 include(":app")
-
-
-######################################################
-# FILE: test_camera.kt
-######################################################
-
-import android.hardware.camera2.*
-fun main() {}
-
-
-######################################################
-# FILE: test_camera.py
-######################################################
-
-print("Need to implement taking a photo in background using CameraX or Camera2")
-
-
-######################################################
-# FILE: test_mms.kt
-######################################################
-
-import android.telephony.SmsManager
-
-fun main() {
-    println("Checking...")
-}
-
-
-######################################################
-# FILE: test_mms.py
-######################################################
-
-[BINARY FILE - SKIPPED]
 
 
 ======================================================

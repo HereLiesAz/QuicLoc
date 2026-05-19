@@ -80,7 +80,7 @@ Android requires **Background Location** to be granted separately after foregrou
 
 ## Privacy
 
-QuicLoc does not collect, store, transmit, or share any user data with the developer or any third party. See [PRIVACY_POLICY.md](./PRIVACY_POLICY.md) for the full policy.
+QuicLoc does not collect, store, transmit, or share any user data with the developer or any third party. See [PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md) for the full policy.
 
 ---
 
@@ -123,7 +123,7 @@ Version state is tracked in `app/version.properties`.
 
 ## Google Play
 
-This app uses sensitive permissions (`NotificationListenerService`, background location, SMS) that require manual review by Google Play. See [DECLARATIONS.md](./DECLARATIONS.md) for the full Play Console declaration text and Data Safety form guidance.
+This app uses sensitive permissions (`NotificationListenerService`, background location, SMS) that require manual review by Google Play. See [DECLARATIONS.md](docs/DECLARATIONS.md) for the full Play Console declaration text and Data Safety form guidance.
 
 ---
 
