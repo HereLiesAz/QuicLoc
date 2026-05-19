@@ -7,6 +7,15 @@ import android.widget.ImageButton
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 
+/**
+ * Legacy `RecyclerView.Adapter` from the pre-Compose UI. The current
+ * settings screen renders the whitelist via Compose ([MainActivity]'s
+ * `QuicLocScreen`), so this class is unused.
+ *
+ * Slated for deletion (along with `whitelist_item.xml`) — kept temporarily
+ * so older diffs/blame still resolve.
+ */
+@Deprecated("Replaced by Compose rendering in QuicLocScreen. Will be removed.")
 class WhitelistAdapter(
     private var numbers: List<String>,
     private val onDeleteClick: (String) -> Unit

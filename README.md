@@ -16,7 +16,9 @@ No app needs to be open. No buttons need to be pressed.
 
 ## Features
 
-- **Homescreen Widget** — Tap the widget once to mark your parking spot (texts your own number `#Parking`), double tap to alert up to 3 priority starred contacts (`#SafetyCheck`), or triple tap to alert your entire whitelist (`#Emergency`).
+- **Homescreen Widget** — Tap twice to mark your parking spot (texts your own number `#Parking`), three times to alert up to 3 priority starred contacts (`#SafetyCheck`), or four times to alert your entire whitelist (`#Emergency`). A single tap opens the widget help screen.
+- **Master Enable/Disable Toggle** — A switch at the top of settings (mirrored in a persistent reminder notification) pauses all triggers without uninstalling.
+- **Real Device Lockdown** — Optional Device Admin grant lets the passphrase trigger actually lock the device via `DevicePolicyManager.lockNow()`. Without it, the lock screen only covers the display.
 - **Works across messaging apps** — responds to SMS, WhatsApp, Telegram, Signal, Google Messages, Messenger, and any app that supports notification inline replies.
 - **Encrypted whitelist & Priority Contacts** — trusted contacts, "My Phone Number", and up to 3 "starred" priority contacts are stored using AES-256-GCM encryption backed by the Android Keystore. The data never leaves your device.
 - **Biometric protection** — the app requires fingerprint, face unlock, or device PIN to open. Falls back to PIN/pattern if no biometric is enrolled.

@@ -7,6 +7,18 @@ import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
 
+/**
+ * Home-screen widget. Every tap fires
+ * `LocationReplyService.ACTION_WIDGET_TAP`; the service counts taps within
+ * a 400 ms window and dispatches based on count:
+ *
+ *   - 1 tap → [WidgetHelpActivity]
+ *   - 2 taps → Parking SMS to your own number
+ *   - 3 taps → Safety Check SMS to starred contacts
+ *   - 4 taps → Emergency SMS to the entire whitelist
+ *
+ * See [LocationReplyService.widgetTapRunnable] for the dispatch logic.
+ */
 class QuicLocWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {

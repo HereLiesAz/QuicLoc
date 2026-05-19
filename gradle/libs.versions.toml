@@ -15,6 +15,7 @@ junit = "4.13.2"
 junitVersion = "1.2.1"
 lifecycle-viewmodel-compose = "2.8.7"
 material = "1.12.0"
+playServicesAuth = "21.2.0"
 playServicesLocation = "21.3.0"
 robolectric = "4.14.1"
 security-crypto = "1.1.0-alpha06"
@@ -47,6 +48,7 @@ core-ktx = { group = "androidx.test", name = "core-ktx", version.ref = "core-ktx
 guava-listenablefuture = { group = "com.google.guava", name = "listenablefuture", version.ref = "guava-listenablefuture" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 

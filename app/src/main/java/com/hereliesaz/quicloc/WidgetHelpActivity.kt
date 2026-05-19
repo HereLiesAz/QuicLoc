@@ -14,6 +14,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
+/**
+ * Transparent full-screen activity shown when the widget is tapped exactly
+ * once. The user taps anywhere on screen to advance through three hint
+ * messages, then the activity finishes itself.
+ *
+ * Triggered (instead of an actual SMS) because a single accidental tap on
+ * the widget is the most likely-to-happen widget interaction, and spamming
+ * the user's own number with `#Parking` every time they brush past the
+ * widget would be a worse default than showing a one-time hint.
+ */
 class WidgetHelpActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
