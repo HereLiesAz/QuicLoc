@@ -224,19 +224,55 @@ Notes:
         title = "Permissions",
         summary = "Why QuicLoc needs each permission.",
         body = """
-QuicLoc asks for several sensitive permissions. Here's what each one is for:
+QuicLoc asks for several sensitive permissions. Each one is tied to a specific feature — none is collected for analytics or sent off the device. Here's the full list and exactly why each must be granted:
 
-• SMS (Receive + Send): detect "loc" from whitelisted numbers, reply with the Maps link.
-• Fine + Coarse Location: fetch the position to share. Used only when answering a request.
-• Background Location ("Allow all the time"): so QuicLoc can answer when the screen is off or the app is closed. On Android 11+, you must tap "Allow all the time" in the location settings screen — Android doesn't let apps ask for this directly.
-• Notification Access: read notification titles and bodies from messaging apps, so the trigger works outside SMS. QuicLoc only acts on whitelisted senders sending the exact trigger word.
-• Camera: photograph an intruder after 3 failed PIN attempts during find-my-phone mode.
-• Contacts: optional — used only by the "Pick from Contacts" button to populate the whitelist.
-• Biometric / Use Fingerprint: gate the app UI behind your fingerprint or device PIN.
-• Boot Completed: restore the reminder notification after reboot.
-• Foreground Service (Location + Camera): keep the location-reply and tracking services alive long enough to finish what they're doing without being killed by Android.
+Messaging
 
-Nothing is sent to any server. No analytics, no crash reporters, no QuicLoc backend.
+• Receive SMS: the SmsReceiver inspects incoming texts for the trigger word. Without it, SMS-based requests can't be detected at all.
+• Send SMS: the reply with your Maps link is sent through SmsManager. Without it, QuicLoc can detect a request but can't answer.
+• Notification Access (special access, granted in Settings): reads only the title and body of incoming notifications so the trigger works inside WhatsApp, Telegram, Signal, etc. QuicLoc ignores everything not from a whitelisted sender containing the exact trigger word.
+
+Location
+
+• Fine Location: gets a GPS fix accurate enough to be useful as a Maps link. Used only while answering a request.
+• Coarse Location: fallback when GPS isn't available (indoors, denied sky view). Same usage window as Fine.
+• Background Location ("Allow all the time"): the entire point of QuicLoc is to respond while the screen is off and the app is closed. Android 11+ won't let apps ask for this directly, so you'll be sent to the system Location Settings screen to flip it manually. Without it, QuicLoc only works while you happen to have the app open.
+
+Camera
+
+• Camera: in find-my-phone (passphrase) mode, after 3 failed PIN attempts the front camera silently captures one frame of whoever is holding your phone and sends it to the requester via MMS. Asked up front because the lock screen can't show a permission dialog at the moment it's needed.
+
+Authentication
+
+• Biometric: gates the QuicLoc configuration UI behind your fingerprint or face. The background services keep working regardless, but no one can change your whitelist or PIN without unlocking the app.
+• Use Fingerprint: the legacy (pre-Android 9) name for the same capability. Both are declared so older devices are covered.
+
+Foreground services (keep work alive when the screen is off)
+
+• Foreground Service: required by Android to start any service that needs to run while the app isn't visible. Both the location-reply service and the tracking service rely on this.
+• Foreground Service – Location (Android 14+): the type-specific grant that tells Android "this foreground service is allowed to use location." Without it, Android 14+ would kill the reply mid-fetch.
+• Foreground Service – Camera (Android 14+): same idea for the panic-mode photo. Required because the tracking service is declared with foregroundServiceType="location|camera".
+
+Notifications
+
+• Post Notifications (Android 13+): required to show the foreground-service notification while a reply is in flight, the optional always-on reminder, and the tracking-active alert. Without it, services would be killed silently by the system.
+• Full-Screen Intent: lets the find-my-phone trigger surface a full-screen lock activity (cover-screen mode) when Device Admin isn't granted. On Android 14+ you'll also need to enable "Full screen notifications" for QuicLoc in system Settings.
+
+System integration
+
+• Boot Completed: lets QuicLoc re-post the persistent reminder notification after a reboot if you've opted into it. It does not auto-start any services beyond that notification.
+• Vibrate: short haptic confirmation when you tap the home-screen widget, so you know the request actually fired.
+• Internet + Network State: required transitively by Google Play Services (the fused location provider and the Phone Number Hint API). QuicLoc itself makes no HTTP calls — there is no backend.
+
+Contacts (optional)
+
+• Read Contacts: only used by the "Pick from Contacts" button when you're populating the whitelist. Skip it and you can still type numbers and names manually.
+
+Device Admin (optional, special access)
+
+• Bind Device Admin: only consumed by lockNow() so the find-my-phone passphrase can actually lock the screen instead of just covering it. Cannot wipe data, change your PIN, or block uninstall. Revocable any time in Settings → Security → Device admin apps.
+
+Nothing in this list is sent to any server. No analytics, no crash reporters, no QuicLoc backend. Every permission corresponds to a feature you can see and revoke.
 """.trim(),
     )
 

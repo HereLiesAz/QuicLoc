@@ -8,7 +8,13 @@
       "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -15)",
       "Bash(./gradlew assembleDebug)",
       "Bash(awk 'BEGIN{o=0;c=0} { for\\(i=1;i<=length\\($0\\);i++\\){ch=substr\\($0,i,1\\); if\\(ch==\"{\"\\)o++; else if\\(ch==\"}\"\\)c++} } END{print \"open=\",o,\" close=\",c,\" diff=\",o-c}' app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(sh ./gradlew compileReleaseKotlin)",
+      "Bash(git commit -m ' *)",
+      "Bash(git stash *)",
+      "Bash(git pull *)",
+      "Bash(./gradlew :app:compileDebugKotlin)",
+      "Bash(sh /run/media/az/0722-7C65/QuicLoc/gradlew -p /run/media/az/0722-7C65/QuicLoc :app:compileDebugKotlin)"
     ]
   }
 }

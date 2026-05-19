@@ -96,47 +96,148 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     // Set to false whenever the app is backgrounded, so re-auth is required on return.
     private var isAuthenticated = false
 
-    private val REQUIRED_PERMISSIONS = arrayOf(
+    /**
+     * Static description for each runtime permission QuicLoc may ask for.
+     * Order in [FIRST_LAUNCH_FLOW] determines the order the user sees them
+     * in the one-at-a-time rationale chain.
+     */
+    private data class PermissionRationale(
+        val permission: String,
+        val title: String,
+        val body: String,
+    )
+
+    private val RATIONALES: Map<String, PermissionRationale> = listOf(
+        PermissionRationale(
+            Manifest.permission.RECEIVE_SMS,
+            "Receive SMS",
+            "Lets QuicLoc detect the trigger word \"loc\" arriving from a whitelisted phone number. " +
+                "Without it, an SMS trigger can never reach the app. QuicLoc never reads any other message content."
+        ),
+        PermissionRationale(
+            Manifest.permission.SEND_SMS,
+            "Send SMS",
+            "Lets QuicLoc reply with a Google Maps link to your location. " +
+                "Without it, QuicLoc can detect a request but can't answer it."
+        ),
+        PermissionRationale(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            "Precise Location",
+            "Gets a GPS fix accurate enough to be useful as a Maps link. " +
+                "Used only while answering a request from a whitelisted contact — never proactively, never stored."
+        ),
+        PermissionRationale(
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            "Approximate Location",
+            "Fallback when GPS isn't available (indoors, no sky view). " +
+                "Used only while answering a request, alongside Precise Location."
+        ),
+        PermissionRationale(
+            Manifest.permission.CAMERA,
+            "Camera",
+            "Powers panic-mode photo capture. If a thief enters the wrong PIN 3 times during find-my-phone mode, " +
+                "QuicLoc silently takes one frame from the front camera and MMSes it to the requester. " +
+                "Asked up front because the lock screen can't show a permission dialog at the moment it's needed."
+        ),
+        PermissionRationale(
+            "android.permission.POST_NOTIFICATIONS",
+            "Show Notifications",
+            "Required on Android 13+ so QuicLoc can show the foreground-service notification while a reply is in flight, " +
+                "plus the optional always-on reminder and the tracking-active alert. " +
+                "Without it, Android silently kills the reply before it finishes."
+        ),
+        PermissionRationale(
+            Manifest.permission.READ_CONTACTS,
+            "Read Contacts",
+            "Used only when you tap \"Pick from Contacts\" to read this contact's display name and phone numbers " +
+                "and add them to your whitelist. Skip it and you can still add contacts by typing them in manually."
+        ),
+    ).associateBy { it.permission }
+
+    /**
+     * The order runtime permissions are presented in the first-launch chain.
+     * READ_CONTACTS is intentionally NOT here — it's prompted only when the
+     * user taps "Pick from Contacts".
+     */
+    private val FIRST_LAUNCH_FLOW: List<String> = listOf(
         Manifest.permission.RECEIVE_SMS,
         Manifest.permission.SEND_SMS,
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.ACCESS_COARSE_LOCATION,
-        Manifest.permission.CAMERA
+        Manifest.permission.CAMERA,
     ).let {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             it + "android.permission.POST_NOTIFICATIONS"
         } else it
     }
 
-    private val backgroundLocationLauncher = registerForActivityResult(
+    /** Set when the launcher fires, called once the system dialog dismisses. */
+    private var afterPermissionResult: (granted: Boolean) -> Unit = {}
+
+    private val singlePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (!isGranted) {
-            Toast.makeText(
-                this,
-                "Background location permission is required for QuicLoc to work when the app is closed.",
-                Toast.LENGTH_LONG
-            ).show()
-        }
-        checkNotificationListenerPermission()
+    ) { granted ->
+        val next = afterPermissionResult
+        afterPermissionResult = {}
+        next(granted)
     }
 
-    private val multiplePermissionsLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val hasSms = permissions[Manifest.permission.RECEIVE_SMS] == true &&
-                permissions[Manifest.permission.SEND_SMS] == true
-        val hasLocation = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+    /**
+     * State of the rationale modal — null when no dialog is showing.
+     * The dialog is rendered in [setContent] alongside the other modals.
+     */
+    private data class RationaleDialogState(
+        val title: String,
+        val body: String,
+        val confirmLabel: String,
+        val onContinue: () -> Unit,
+        val onSkip: () -> Unit,
+    )
 
-        if (hasSms && hasLocation) {
-            checkBackgroundLocationPermission()
-        } else {
-            Toast.makeText(
-                this,
-                "SMS and Location permissions are required for QuicLoc to function.",
-                Toast.LENGTH_LONG
-            ).show()
+    private val pendingRationaleState = mutableStateOf<RationaleDialogState?>(null)
+
+    /**
+     * Show one rationale dialog, then on "Continue" launch the system grant
+     * dialog for [permission]. On any result (grant or deny), invoke
+     * [onAfter] so the caller can advance to the next step.
+     */
+    private fun promptRuntimePermission(permission: String, onAfter: (granted: Boolean) -> Unit) {
+        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
+            onAfter(true)
+            return
+        }
+        val rationale = RATIONALES[permission] ?: run {
+            // Unknown permission — fall back to launching directly with no rationale.
+            afterPermissionResult = onAfter
+            beginSystemFlow()
+            singlePermissionLauncher.launch(permission)
+            return
+        }
+        pendingRationaleState.value = RationaleDialogState(
+            title = rationale.title,
+            body = rationale.body,
+            confirmLabel = "Grant",
+            onContinue = {
+                pendingRationaleState.value = null
+                afterPermissionResult = onAfter
+                beginSystemFlow()
+                singlePermissionLauncher.launch(permission)
+            },
+            onSkip = {
+                pendingRationaleState.value = null
+                onAfter(false)
+            }
+        )
+    }
+
+    /** Walk through [queue] sequentially, then invoke [onDone]. */
+    private fun runPermissionChain(queue: List<String>, onDone: () -> Unit) {
+        if (queue.isEmpty()) {
+            onDone()
+            return
+        }
+        promptRuntimePermission(queue.first()) { _ ->
+            runPermissionChain(queue.drop(1), onDone)
         }
     }
 
@@ -184,6 +285,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             .getPhoneNumberHintIntent(request)
             .addOnSuccessListener { pendingIntent ->
                 try {
+                    beginSystemFlow()
                     phoneHintLauncher.launch(
                         IntentSenderRequest.Builder(pendingIntent).build()
                     )
@@ -223,10 +325,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     }
 
     private fun requestExport() {
+        beginSystemFlow()
         exportBackupLauncher.launch("quicloc-backup.qlb")
     }
 
     private fun requestImport() {
+        beginSystemFlow()
         importBackupLauncher.launch(arrayOf("*/*"))
     }
 
@@ -237,14 +341,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         enabledState.value = AppSettings.isEnabled(this)
         reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
         deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
-    }
-
-    private val readContactsLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { _ ->
-        // Whether granted or not, open the picker — we'll get name regardless,
-        // and phone numbers only if READ_CONTACTS was granted.
-        contactPickerLauncher.launch(null)
     }
 
     private val contactPickerLauncher = registerForActivityResult(
@@ -358,6 +454,30 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 result
                             },
                             onSkip = { pendingImportUriState.value = null }
+                        )
+                    }
+
+                    // One-at-a-time permission rationale dialog. Set by
+                    // promptRuntimePermission / checkBackgroundLocationPermission /
+                    // checkNotificationListenerPermission. Drives both the
+                    // first-launch chain and any later request.
+                    val rationale by pendingRationaleState
+                    rationale?.let { state ->
+                        AlertDialog(
+                            onDismissRequest = state.onSkip,
+                            title = { Text(state.title) },
+                            text = {
+                                Text(
+                                    text = state.body,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            },
+                            confirmButton = {
+                                Button(onClick = state.onContinue) { Text(state.confirmLabel) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = state.onSkip) { Text("Skip") }
+                            }
                         )
                     }
 
@@ -484,7 +604,10 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 onRequestExportBackup = { requestExport() },
                                 onRequestImportBackup = { requestImport() },
                                 onRequestNotificationAccess = {
-                                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                                    // Re-use the same rationale dialog so the
+                                    // banner button takes the user through the
+                                    // explanation before opening Settings.
+                                    checkNotificationListenerPermission()
                                 },
                                 onAddNumber = { number ->
                                     if (number.isNotBlank()) {
@@ -518,29 +641,19 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     currentPassphrase = newPassphrase
                                     currentPin = newPin
 
-                                    val perms = mutableListOf<String>()
-                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                        perms.add(android.Manifest.permission.CAMERA)
+                                    // Find-my-phone is now armed — make sure every
+                                    // permission its trigger flow needs is granted.
+                                    // Each one is preceded by its own rationale dialog.
+                                    val needed = listOf(
+                                        Manifest.permission.RECEIVE_SMS,
+                                        Manifest.permission.SEND_SMS,
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                                        Manifest.permission.CAMERA,
+                                    ).filter {
+                                        ContextCompat.checkSelfPermission(this@MainActivity, it) != PackageManager.PERMISSION_GRANTED
                                     }
-                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.RECEIVE_SMS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                        perms.add(android.Manifest.permission.RECEIVE_SMS)
-                                    }
-                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.SEND_SMS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                        perms.add(android.Manifest.permission.SEND_SMS)
-                                    }
-                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                        perms.add(android.Manifest.permission.ACCESS_FINE_LOCATION)
-                                    }
-                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.ACCESS_COARSE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                        perms.add(android.Manifest.permission.ACCESS_COARSE_LOCATION)
-                                    }
-                                    if (androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.READ_CONTACTS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                        perms.add(android.Manifest.permission.READ_CONTACTS)
-                                    }
-
-                                    if (perms.isNotEmpty()) {
-                                        androidx.core.app.ActivityCompat.requestPermissions(this@MainActivity, perms.toTypedArray(), 10)
-                                    }
+                                    runPermissionChain(needed) {}
                                 }
                             )
                             }
@@ -551,10 +664,27 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         }
     }
 
+    /**
+     * Set to true right before we launch a system UI we expect to round-trip
+     * through (permission dialog, settings screen, contact picker, biometric
+     * prompt for grant, etc.). While set, onPause/onResume skip the re-lock
+     * and re-auth — otherwise every system dialog would trap the user in a
+     * fingerprint loop on return. Cleared on the next onResume.
+     */
+    private var expectingActivityReturn = false
+
+    /** Call immediately before launching any system UI we expect to come back from. */
+    private fun beginSystemFlow() {
+        expectingActivityReturn = true
+    }
+
     override fun onResume() {
         super.onResume()
-        // Re-auth every time the app comes to the foreground
-        if (!isAuthenticated) {
+        if (expectingActivityReturn) {
+            // We just got back from a system UI we launched on purpose.
+            // Stay authenticated and don't re-trigger the permission chain.
+            expectingActivityReturn = false
+        } else if (!isAuthenticated) {
             promptBiometric()
         }
         // User may have toggled state from the reminder notification or
@@ -566,7 +696,10 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
     override fun onPause() {
         super.onPause()
-        // Lock the app when it goes to the background
+        // Don't re-lock if we're round-tripping through a system UI we
+        // launched intentionally — otherwise the user has to re-authenticate
+        // after every permission dialog.
+        if (expectingActivityReturn) return
         isAuthenticated = false
         authState.value = false
     }
@@ -597,11 +730,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     // -------------------------------------------------------------------------
 
     private fun launchContactPicker() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            readContactsLauncher.launch(Manifest.permission.READ_CONTACTS)
-        } else {
+        // Either we already have READ_CONTACTS, or we route through the
+        // rationale dialog first. The picker is launched whether the user
+        // grants or skips — without the permission we still get the display
+        // name back, just not the phone numbers.
+        promptRuntimePermission(Manifest.permission.READ_CONTACTS) { _ ->
+            beginSystemFlow()
             contactPickerLauncher.launch(null)
         }
     }
@@ -650,45 +784,103 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     // Permissions
     // -------------------------------------------------------------------------
 
+    /**
+     * Walks the user through every still-missing permission, one rationale
+     * dialog → one system dialog at a time, in the order defined by
+     * [FIRST_LAUNCH_FLOW]. Then checks background location, then notification
+     * access. Each step is independently skippable.
+     */
     private fun checkPermissions() {
-        val hasSms = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
+        val missing = FIRST_LAUNCH_FLOW.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        runPermissionChain(missing) {
+            // Warn if the user skipped any critical perm — but don't block the chain.
+            val hasSms = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
                 ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
-        val hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            val hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val hasCamera = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-        val hasNotif = if (android.os.Build.VERSION.SDK_INT >= 33) {
-            ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED
-        } else true
-
-        if (!hasSms || !hasLocation || !hasCamera || !hasNotif) {
-            multiplePermissionsLauncher.launch(REQUIRED_PERMISSIONS)
-        } else {
+            if (!hasSms || !hasLocation) {
+                Toast.makeText(
+                    this,
+                    "SMS and Location are required for QuicLoc to answer requests.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
             checkBackgroundLocationPermission()
         }
     }
 
+    /**
+     * Background location is requested *after* foreground location is granted,
+     * via its own rationale dialog. Android 11+ sends the user to the system
+     * Location Settings screen to flip "Allow all the time" — the launcher
+     * can't ask directly. Returns to [checkNotificationListenerPermission]
+     * once the result comes back, whether granted or not.
+     */
     private fun checkBackgroundLocationPermission() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            if (ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.ACCESS_BACKGROUND_LOCATION
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-                return
-            }
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
+            checkNotificationListenerPermission()
+            return
         }
-        checkNotificationListenerPermission()
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            checkNotificationListenerPermission()
+            return
+        }
+        pendingRationaleState.value = RationaleDialogState(
+            title = "Background Location",
+            body = "QuicLoc's whole point is to respond while the screen is off and the app is closed. " +
+                "Android won't let us ask for this directly — the next screen is the system Location Settings page. " +
+                "Please tap \"Allow all the time\" there. Without this, QuicLoc only works while you happen to have the app open.",
+            confirmLabel = "Open Settings",
+            onContinue = {
+                pendingRationaleState.value = null
+                afterPermissionResult = { granted ->
+                    if (!granted) {
+                        Toast.makeText(
+                            this,
+                            "Background location not granted — QuicLoc can't answer when the app is closed.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    checkNotificationListenerPermission()
+                }
+                beginSystemFlow()
+                singlePermissionLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            },
+            onSkip = {
+                pendingRationaleState.value = null
+                checkNotificationListenerPermission()
+            }
+        )
     }
 
+    /**
+     * Notification Access is special-access (no runtime API), so the
+     * rationale dialog hands the user off to system Settings via
+     * ACTION_NOTIFICATION_LISTENER_SETTINGS. The result isn't observable
+     * directly — we re-check in onResume.
+     */
     private fun checkNotificationListenerPermission() {
-        if (!isNotificationListenerEnabled()) {
-            Toast.makeText(
-                this,
-                "Grant Notification Access so QuicLoc can respond in WhatsApp, Telegram, and other apps.",
-                Toast.LENGTH_LONG
-            ).show()
-        }
+        if (isNotificationListenerEnabled()) return
+        pendingRationaleState.value = RationaleDialogState(
+            title = "Notification Access",
+            body = "Extends the trigger to WhatsApp, Telegram, Signal, and other messaging apps. " +
+                "QuicLoc only reads the title and body of incoming notifications, and only acts on whitelisted senders " +
+                "sending the exact trigger word. The next screen is the system Notification Access settings page — " +
+                "toggle QuicLoc on. Skip this and only SMS triggers will work.",
+            confirmLabel = "Open Settings",
+            onContinue = {
+                pendingRationaleState.value = null
+                beginSystemFlow()
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            },
+            onSkip = { pendingRationaleState.value = null }
+        )
     }
 
     private fun requestDeviceAdmin() {
@@ -704,6 +896,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         }
         AppSettings.markDeviceAdminPrompted(this)
         try {
+            beginSystemFlow()
             deviceAdminLauncher.launch(intent)
         } catch (e: Exception) {
             Toast.makeText(

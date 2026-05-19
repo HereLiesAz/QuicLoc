@@ -70,7 +70,35 @@ Select: **Yes**
 
 ---
 
-## 5. Data Safety Section
+## 5. Full-Screen Intent Permission Declaration
+
+**Location in Play Console:**
+> App content → Sensitive app permissions → Full-screen intent permission
+
+**Does your app use the USE_FULL_SCREEN_INTENT permission?**
+Select: **Yes**
+
+**Describe why your app needs full-screen intent:**
+
+> QuicLoc declares USE_FULL_SCREEN_INTENT solely for its find-my-phone (single-use passphrase) safety feature. When the user has set a passphrase and a trigger message containing that passphrase is received, QuicLoc launches `TrackingLockActivity` as a full-screen intent so the lock screen is covered immediately, regardless of whether the device is asleep, in a call, or showing another full-screen activity. This is the only path that fires the full-screen intent, and it is gated on user setup (no passphrase = no full-screen intent ever). The activity displays a PIN prompt and, after 3 failed attempts, transitions the device into panic mode. No advertising, notification spam, or non-safety use case relies on this permission. Device Admin (`lockNow()`) is the preferred lockdown path; the full-screen intent is the fallback when Device Admin is not granted.
+
+---
+
+## 6. Device Admin Permission Declaration
+
+**Location in Play Console:**
+> App content → Restricted permissions → Device Administration API
+
+**Does your app use the Device Administration API?**
+Select: **Yes**
+
+**Describe why your app needs Device Admin and which policies it uses:**
+
+> QuicLoc registers `QuicLocDeviceAdmin` as a DeviceAdminReceiver solely so it can call `DevicePolicyManager.lockNow()` when the user's pre-configured find-my-phone passphrase is received in a trigger message. This is the only DPM API the app invokes. The app does not call `wipeData()`, `resetPassword()`, `setPasswordQuality()`, `setMaximumFailedPasswordsForWipe()`, `setUninstallBlocked()`, or any other Device Admin policy. The Device Admin grant is optional — when not granted, QuicLoc falls back to a cover-screen activity (`TrackingLockActivity`) that achieves the same intent without administrative privilege. The user is shown a custom in-app explanation dialog (`device_admin_explanation_body`) before the system grant screen is launched, and the grant is revocable at any time in Settings → Security → Device admin apps. Use case: personal device security, lost/stolen phone recovery.
+
+---
+
+## 7. Data Safety Section
 
 **Location in Play Console:**
 > App content → Data safety
@@ -104,7 +132,7 @@ Fill in the Data safety form as follows:
 
 ---
 
-## 6. App Category and Content Rating
+## 8. App Category and Content Rating
 
 **Category:** Tools / Utilities
 
