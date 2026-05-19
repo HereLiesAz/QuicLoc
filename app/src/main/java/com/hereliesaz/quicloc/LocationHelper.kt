@@ -14,6 +14,34 @@ import android.util.Log
 import com.google.android.gms.location.*
 import com.google.android.gms.tasks.CancellationTokenSource
 
+/**
+ * Single source of truth for "get the device's current GPS location and
+ * reply to the requester". Used by [LocationReplyService] for both the SMS
+ * and notification-inline-reply paths, and by [TrackingService] for the
+ * find-my-phone periodic updates.
+ *
+ * The location fetch is a three-stage fallback with a single 30-second
+ * overall deadline:
+ *
+ *   1. [FusedLocationProviderClient.getCurrentLocation] HIGH_ACCURACY —
+ *      fast if there's a recent fix.
+ *   2. [FusedLocationProviderClient.lastLocation] — instant, may be stale,
+ *      but better than nothing if 1 and 3 fail.
+ *   3. [FusedLocationProviderClient.requestLocationUpdates] — forces the
+ *      GPS radio on. May take 20–30 s on a cold start outdoors.
+ *
+ * If all three fall through or the deadline expires, we send an error
+ * reply back to the requester so they aren't left wondering whether the
+ * trigger reached us at all.
+ *
+ * Three send modes:
+ *
+ *   - [getCurrentLocationAndReply] — SMS send via [SmsManager].
+ *   - [getCurrentLocationAndReplyViaNotification] — chat-app inline reply
+ *     via the original notification's [Notification.Action] `RemoteInput`.
+ *   - [handleWidgetTaps] — SMS fan-out to multiple destinations based on
+ *     widget tap count (2/3/4 taps).
+ */
 object LocationHelper {
     private const val TAG = "QuicLoc.LocationHelper"
 

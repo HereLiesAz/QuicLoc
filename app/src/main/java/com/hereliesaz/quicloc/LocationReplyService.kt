@@ -17,6 +17,8 @@ import android.util.Log
 import android.view.View
 import android.widget.RemoteViews
 import androidx.core.app.ServiceCompat
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Foreground service that fetches the device's location and sends a reply.
@@ -24,11 +26,11 @@ import androidx.core.app.ServiceCompat
  * Why a Service instead of goAsync():
  *   BroadcastReceiver.goAsync() only buys 10 seconds before Android kills the
  *   process. GPS acquisition from a cold start can take 20-30 seconds in poor
- *   conditions. A foreground service has no such time limit and survives as long
- *   as needed (up to our own 30-second timeout), then stops itself.
+ *   conditions. A foreground service has no such time limit and survives as
+ *   long as needed (up to our own 30-second timeout), then stops itself.
  *
- * Started by SmsReceiver and NotificationListener. Stops itself once a reply
- * is sent or the timeout is reached.
+ * Started by SmsReceiver, NotificationListener, and the home-screen widget.
+ * Stops itself once a reply is sent or the timeout is reached.
  */
 class LocationReplyService : Service() {
 
@@ -39,13 +41,13 @@ class LocationReplyService : Service() {
 
         const val ACTION_WIDGET_TAP = "com.hereliesaz.quicloc.ACTION_WIDGET_TAP"
         const val EXTRA_SENDER = "sender"
-        const val EXTRA_SOURCE = "source"         // "SMS", "WhatsApp", etc.
-        const val EXTRA_REPLY_MODE = "reply_mode" // "sms" or "notification"
+        const val EXTRA_SOURCE = "source"           // "SMS", package name for notifs, "Widget"
+        const val EXTRA_REPLY_MODE = "reply_mode"   // "sms" or "notification"
+        const val EXTRA_ACTION_TOKEN = "action_token"
 
-        // Parcelable-friendly: pass notification action fields separately
-        // (Notification.Action isn't easily parcelable across process boundaries)
-        // For notification replies we pass the action via a static holder instead.
-        var pendingNotificationAction: Notification.Action? = null
+        // Keyed by per-trigger UUID so concurrent triggers don't clobber each
+        // other (fixes the previous static-singleton race).
+        private val pendingActions = ConcurrentHashMap<String, Notification.Action>()
 
         fun startForSms(context: Context, sender: String) {
             val intent = Intent(context, LocationReplyService::class.java).apply {
@@ -62,15 +64,16 @@ class LocationReplyService : Service() {
             source: String,
             action: Notification.Action
         ) {
-            pendingNotificationAction = action
+            val token = UUID.randomUUID().toString()
+            pendingActions[token] = action
             val intent = Intent(context, LocationReplyService::class.java).apply {
                 putExtra(EXTRA_SENDER, sender)
                 putExtra(EXTRA_SOURCE, source)
                 putExtra(EXTRA_REPLY_MODE, "notification")
+                putExtra(EXTRA_ACTION_TOKEN, token)
             }
             context.startForegroundService(intent)
         }
-
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -96,7 +99,7 @@ class LocationReplyService : Service() {
         widgetTapCount = 0
         Log.d(TAG, "Widget tap timer expired, tap count: $count")
 
-        val statusText = when(count) {
+        val statusText = when (count) {
             1 -> "Help"
             2 -> "Parking"
             3 -> "Safety Check"
@@ -119,13 +122,13 @@ class LocationReplyService : Service() {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
             startActivity(intent)
-            // Will be stopped by the fade away runnable
+            // Will be stopped by the fade-away runnable
             return@Runnable
         }
 
         LocationHelper.handleWidgetTaps(this, count) { succeeded ->
             RequestHistoryManager(this).record("Widget ($count taps)", "Widget", succeeded)
-            // Only stopSelf if not waiting for fade away
+            // Only stopSelf if not waiting for fade-away
             if (statusText == null) stopSelf(startId)
         }
     }
@@ -191,6 +194,14 @@ class LocationReplyService : Service() {
             return START_NOT_STICKY
         }
 
+        // Hard gate: if user disabled QuicLoc between trigger and service
+        // start, abort. Widget taps are user-initiated so they still fire.
+        if (intent.action != ACTION_WIDGET_TAP && !AppSettings.isEnabled(applicationContext)) {
+            Log.d(TAG, "QuicLoc disabled — aborting reply")
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+
         if (intent.action == ACTION_WIDGET_TAP) {
             widgetTapCount++
             performHapticFeedback()
@@ -200,7 +211,10 @@ class LocationReplyService : Service() {
             return START_NOT_STICKY
         }
 
-        val sender = intent.getStringExtra(EXTRA_SENDER) ?: run { stopSelf(startId); return START_NOT_STICKY }
+        val sender = intent.getStringExtra(EXTRA_SENDER) ?: run {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         val source = intent.getStringExtra(EXTRA_SOURCE) ?: "Unknown"
         val replyMode = intent.getStringExtra(EXTRA_REPLY_MODE) ?: "sms"
 
@@ -218,14 +232,14 @@ class LocationReplyService : Service() {
                 )
             }
             "notification" -> {
-                val action = pendingNotificationAction
+                val token = intent.getStringExtra(EXTRA_ACTION_TOKEN)
+                val action = token?.let { pendingActions.remove(it) }
                 if (action == null) {
-                    Log.e(TAG, "No pending notification action found")
+                    Log.e(TAG, "No pending notification action for token $token")
                     RequestHistoryManager(this).record(sender, source, false)
                     stopSelf(startId)
                     return START_NOT_STICKY
                 }
-                pendingNotificationAction = null
                 LocationHelper.getCurrentLocationAndReplyViaNotification(
                     context = this,
                     replyAction = action,

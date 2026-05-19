@@ -24,6 +24,37 @@ import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
+/**
+ * Cover-screen lock activity shown by [TrackingService] when the passphrase
+ * trigger fires. Acts as a fallback when Device Admin isn't granted — when
+ * admin IS granted, [LockdownController.lockNow] handles the real lock and
+ * this activity is just a place to enter the PIN to stop tracking.
+ *
+ * Window flags (`showWhenLocked`, `turnScreenOn`, etc.) let it draw over
+ * the keyguard. `onUserLeaveHint` re-launches itself when the user presses
+ * Home — though this background activity launch is restricted on Android
+ * 10+ and may not always succeed.
+ *
+ * 3 wrong PIN entries → panic mode:
+ *
+ *   1. Capture front-camera photo via CameraX.
+ *   2. Hand the photo path to [TrackingService.enterPanicMode] which
+ *      shortens the tracking interval to 1 min and sends the photo via MMS
+ *      on the next tick.
+ *
+ * Correct PIN → [TrackingService.stopTracking] + `finishAndRemoveTask`.
+ *
+ * Known limitations:
+ *
+ *   - Without Device Admin, the screen is only *covered*, not locked. A
+ *     thief can still pull the notification shade, tap other apps from
+ *     there, or use Recents.
+ *   - PIN comparison uses `==` (not constant-time). The 3-strikes rule is
+ *     the practical defense.
+ *   - Requesting CAMERA at lock time (line 65) doesn't work over the
+ *     keyguard — the dialog can't appear. We rely on CAMERA being granted
+ *     up front from [MainActivity.checkPermissions].
+ */
 class TrackingLockActivity : ComponentActivity() {
 
     companion object {
@@ -125,6 +156,12 @@ class TrackingLockActivity : ComponentActivity() {
     }
 
 
+    /**
+     * Fires after 3 wrong PIN entries. Captures a front-camera photo (if
+     * possible) and escalates [TrackingService] into panic mode. The photo
+     * lives in [externalMediaDirs] — excluded from Auto Backup via
+     * `data_extraction_rules.xml`.
+     */
     private fun triggerPanicMode() {
         Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
         val currentCapture = imageCapture

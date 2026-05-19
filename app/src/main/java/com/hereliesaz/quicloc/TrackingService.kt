@@ -15,6 +15,34 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.app.ServiceCompat
 
+/**
+ * Persistent foreground service that powers the find-my-phone path.
+ *
+ * Started when a `loc <passphrase>` message is received via SMS or chat-app
+ * notification (regardless of whitelist — passphrase is the credential).
+ * Locks the device (via [LockdownController]) and then posts location
+ * updates back to the triggering number on a fixed interval:
+ *
+ *   - 5 minutes normally
+ *   - 1 minute in panic mode (entered after 3 wrong PIN attempts)
+ *
+ * In panic mode, each tick also sends the captured intruder photo as MMS.
+ *
+ * Service-level concerns:
+ *
+ *   - `START_STICKY` + state persisted in `quicloc_tracking_state` prefs so
+ *     the service can resume on its own after an OS kill. The null-intent
+ *     restart path in [onStartCommand] handles this.
+ *   - `foregroundServiceType="location|camera"` — Android 14+ FGS type
+ *     requirement. Note camera-typed FGS background-start is restricted on
+ *     14+; trigger from `NotificationListenerService` works, trigger from
+ *     `SmsReceiver` may not. See [docs/LOCKDOWN.md] for details.
+ *   - Falls back to the cover-screen [TrackingLockActivity] if Device Admin
+ *     isn't granted (see [LockdownController]).
+ *
+ * Stopped only by [TrackingService.stopTracking], which is called when the
+ * user enters the correct PIN in [TrackingLockActivity].
+ */
 class TrackingService : Service() {
 
     companion object {
@@ -28,6 +56,11 @@ class TrackingService : Service() {
         const val ACTION_PANIC_MODE = "com.hereliesaz.quicloc.PANIC_MODE"
         const val EXTRA_PHOTO_PATH = "photo_path"
 
+        /**
+         * Start tracking for a passphrase trigger that arrived via SMS.
+         * [sender] is the originating phone number — all subsequent
+         * location/photo replies go here.
+         */
         fun startForSms(context: Context, sender: String) {
             val intent = Intent(context, TrackingService::class.java).apply {
                 putExtra(EXTRA_SENDER, sender)
@@ -36,6 +69,17 @@ class TrackingService : Service() {
             context.startForegroundService(intent)
         }
 
+        /**
+         * Start tracking for a passphrase trigger that arrived via chat-app
+         * notification. [sender] is the display name from the notification;
+         * [source] is the originating app's package name (used as the
+         * History tab's "source" column).
+         *
+         * The actual location reply still goes via SMS to the sender's
+         * resolved phone number — we don't reply to the chat app for the
+         * tracking case (the trigger may have come from an attacker who
+         * already has the device).
+         */
         fun startForNotification(context: Context, sender: String, source: String) {
             val intent = Intent(context, TrackingService::class.java).apply {
                 putExtra(EXTRA_SENDER, sender)
@@ -44,6 +88,11 @@ class TrackingService : Service() {
             context.startForegroundService(intent)
         }
 
+        /**
+         * Stop the running service. Called by [TrackingLockActivity] after
+         * the user enters the correct PIN. Safe to call when the service
+         * isn't running.
+         */
         fun stopTracking(context: Context) {
             val intent = Intent(context, TrackingService::class.java).apply {
                 action = ACTION_STOP
@@ -51,6 +100,13 @@ class TrackingService : Service() {
             context.startService(intent)
         }
 
+        /**
+         * Escalate the running service into panic mode (1-minute interval,
+         * MMS photo on every tick). Called by [TrackingLockActivity] after
+         * 3 wrong PIN entries. [photoPath] is the absolute path to the
+         * front-camera capture; null if camera capture failed but we still
+         * want to escalate the tracking cadence.
+         */
         fun enterPanicMode(context: Context, photoPath: String?) {
             val intent = Intent(context, TrackingService::class.java).apply {
                 action = ACTION_PANIC_MODE
@@ -67,6 +123,11 @@ class TrackingService : Service() {
     private var photoPathToSend: String? = null
 
 
+    /**
+     * Persists the current sender/source/panic-mode/photo path into plain
+     * `SharedPreferences` so [onStartCommand]'s null-intent restart branch
+     * can rehydrate everything if the OS kills the service.
+     */
     private fun saveState() {
         val prefs = getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
         prefs.edit()
@@ -157,27 +218,53 @@ class TrackingService : Service() {
     }
 
     private fun showForegroundNotification() {
+        // Preferred path: actually lock the device via Device Admin. This
+        // requires the user to have granted admin rights in settings; if not
+        // granted, we fall back to covering the screen with our own Activity.
+        val realLockSucceeded = LockdownController.lockNow(this)
+
         val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         }
-        startActivity(lockIntent)
 
         val pendingIntent = PendingIntent.getActivity(
             this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = Notification.Builder(this, CHANNEL_ID)
+        val builder = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("QuicLoc Tracking Active")
-            .setContentText("Your device is currently locked and transmitting its location.")
+            .setContentText(
+                if (realLockSucceeded)
+                    "Device locked. Your PIN is required to resume tracking-disable."
+                else
+                    "Tracking the device's location. Enter your PIN in the QuicLoc lock screen to stop."
+            )
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setFullScreenIntent(pendingIntent, true)
+            .setContentIntent(pendingIntent)
             .setOngoing(true)
-            .build()
+
+        // Only use a full-screen intent when we couldn't real-lock — the
+        // cover-screen Activity needs to come to the foreground over the
+        // keyguard. On Android 14+ this requires USE_FULL_SCREEN_INTENT to
+        // be granted from settings; if it isn't, the activity won't appear,
+        // but the device is still being tracked via this service.
+        if (!realLockSucceeded) {
+            builder.setFullScreenIntent(pendingIntent, true)
+            // Best-effort: also try to launch directly. This is allowed when
+            // the service was started by a NotificationListenerService (which
+            // grants background-activity-launch privileges) but blocked from
+            // a vanilla SMS broadcast on Android 10+.
+            try {
+                startActivity(lockIntent)
+            } catch (e: SecurityException) {
+                Log.w(TAG, "Could not start lock activity from background", e)
+            }
+        }
 
         ServiceCompat.startForeground(
             this,
             NOTIF_ID,
-            notification,
+            builder.build(),
             if (android.os.Build.VERSION.SDK_INT >= 34) {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
             } else 0

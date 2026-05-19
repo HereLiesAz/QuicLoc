@@ -2,4 +2,8 @@
     <string name="app_name">QuicLoc</string>
     <string name="remove_whitelist_entry">Remove</string>
     <string name="notification_listener_label">QuicLoc Message Listener</string>
+    <string name="device_admin_label">QuicLoc Lockdown</string>
+    <string name="device_admin_description">QuicLoc uses Device Admin only to lock the screen when your find-my-phone passphrase is triggered. It cannot wipe data, change your PIN, prevent uninstall, or access any other admin capability. You can revoke this at any time in Settings → Security → Device admin apps.</string>
+    <string name="device_admin_explanation_title">Grant Device Admin?</string>
+    <string name="device_admin_explanation_body">For the find-my-phone passphrase to actually lock the device (instead of just covering the screen), QuicLoc needs Device Admin rights.\n\nWhat this allows:\n• Locking the screen when your passphrase trigger fires\n\nWhat this does NOT allow:\n• Wiping your data — never requested\n• Changing your PIN or password — never requested\n• Preventing app uninstall — never requested\n• Reading or tracking anything else\n\nYou can revoke this at any time in Settings → Security → Device admin apps. The next screen is the standard Android grant dialog.</string>
 </resources>

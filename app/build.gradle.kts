@@ -92,6 +92,9 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation(libs.play.services.location)
+    // Phone Number Hint API — lets the user one-tap-pick their own number
+    // from a system bottom sheet, no permissions required.
+    implementation(libs.play.services.auth)
 
     // MMS Sending
     implementation(libs.android.smsmms)

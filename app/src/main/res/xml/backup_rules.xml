@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Auto Backup rules for Android 6.0 (API 23) through Android 11 (API 30).
+    Android 12+ uses data_extraction_rules.xml instead.
+
+    Default: everything is included. We explicitly exclude:
+
+    • EncryptedSharedPreferences files — the master key lives in the
+      Android Keystore and does NOT transfer to a new device. Restoring
+      these files just produces undecryptable garbage, so don't bother
+      backing them up.
+
+    • Runtime / ephemeral state — tracking-state prefs hold mid-incident
+      data that's meaningless on another device.
+
+    • External media — the panic-mode intruder photos. Forensic; not
+      something to ship to the user's Google Drive.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="quicloc_secure_prefs.xml" />
+    <exclude domain="sharedpref" path="quicloc_secure_prefs_fallback.xml" />
+    <exclude domain="sharedpref" path="quicloc_history.xml" />
+    <exclude domain="sharedpref" path="quicloc_history_fallback.xml" />
+    <exclude domain="sharedpref" path="quicloc_tracking_state.xml" />
+    <exclude domain="external" path="." />
+</full-backup-content>
