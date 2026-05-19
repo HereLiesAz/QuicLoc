@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import androidx.core.app.NotificationCompat
 
 /**
  * Listens for notifications from any messaging app and replies via the
@@ -131,8 +132,10 @@ class NotificationListener : NotificationListenerService() {
         val notifTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
 
         // 1. MessagingStyle — the right shape for any modern chat app.
+        //    Use the AndroidX compat version so we don't depend on
+        //    platform-class API levels that vary by device SDK.
         try {
-            val style = Notification.MessagingStyle
+            val style = NotificationCompat.MessagingStyle
                 .extractMessagingStyleFromNotification(notification)
             if (style != null) {
                 val msgs = style.messages
