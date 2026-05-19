@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    eb46cb753cf8c6fe38904527778f14f5c3cf6c06
-  Timestamp: 2026-05-19 13:59:49 UTC
+  Branch:    claude/tender-fermi-a9854b
+  Commit:    12ad63221e76330dde9fb19245284c534ac0bf69
+  Timestamp: 2026-05-19 14:24:54 UTC
 ======================================================
 
 
@@ -6244,11 +6244,6 @@ class BackupVaultTest {
         BackupVault.flush(context)
         assertFalse(BackupVault.isAvailable(context))
     }
-#Tue May 19 08:44:58 CDT 2026
-VERSION_A=1
-VERSION_B=2
-VERSION_C=0
-VERSION_D=24
 
     @Test
     fun `changing the PIN regenerates the blob with new salt and IV`() {
@@ -7031,11 +7026,11 @@ class WhitelistManagerTest {
 # FILE: app/version.properties
 ######################################################
 
-#Sun Apr 05 02:29:19 CDT 2026
+#Tue May 19 08:44:58 CDT 2026
 VERSION_A=1
-VERSION_B=1
-VERSION_C=5
-VERSION_D=23
+VERSION_B=2
+VERSION_C=0
+VERSION_D=24
 
 
 ######################################################
@@ -7043,7 +7038,7 @@ VERSION_D=23
 ######################################################
 
 plugins {
-    id("com.android.application") version "9.1.0" apply false
+    id("com.android.application") version "9.2.1" apply false
     id("org.jetbrains.kotlin.android") version "2.3.20" apply false
     id("org.jetbrains.kotlin.plugin.compose") version "2.3.20" apply false
 }
@@ -7434,6 +7429,134 @@ Don't tag a release without:
 
 
 ######################################################
+# FILE: docs/DECLARATIONS.md
+######################################################
+
+# Google Play Declarations for QuicLoc
+
+This document contains the text to submit for each sensitive permission declaration
+required by Google Play. Navigate to **Play Console → App content** and complete
+each section below.
+
+---
+
+## 1. SMS or Call Log Permissions Declaration
+
+**Location in Play Console:**
+> App content → Sensitive app permissions → SMS or Call Log
+
+**Is your app's core functionality an SMS/MMS app, or does it require SMS access for a reason not available through the SMS Intent API?**
+Select: **No — SMS access is needed but it is not a messaging app**
+
+**Describe why your app needs SMS permissions:**
+
+> QuicLoc is a personal safety utility. It monitors incoming SMS messages solely to detect a user-defined trigger word ("loc" or "quicloc") sent by phone numbers the user has explicitly pre-approved in a private, encrypted whitelist. When the trigger word is detected from an approved number, the app automatically replies with the device's current GPS location as a Google Maps link. No SMS content is stored, logged, uploaded, or shared. The app never reads, modifies, or transmits any SMS message content other than detecting the trigger word and sending a single automated reply. SMS intent APIs cannot be used because the app must function passively in the background while the device is idle.
+
+---
+
+## 2. Notification Listener Permission Declaration
+
+**Location in Play Console:**
+> App content → Sensitive app permissions → Notification access
+
+**Does your app use NotificationListenerService?**
+Select: **Yes**
+
+**Describe what your app does with notification access and why it is necessary:**
+
+> QuicLoc uses NotificationListenerService to extend its location-sharing trigger detection to messaging apps beyond SMS (such as WhatsApp, Telegram, and Signal). The service reads only the notification title and body text to check whether they contain the trigger word "loc" or "quicloc" from a pre-approved contact. If the trigger is detected from an approved contact, the app replies via the notification's built-in inline reply action with the device's GPS location as a Google Maps link. No notification content is stored, logged, uploaded, or transmitted anywhere. The service does not read, record, or process notification content from any app or contact not on the user's encrypted whitelist.
+
+---
+
+## 3. Background Location Declaration
+
+**Location in Play Console:**
+> App content → Sensitive app permissions → Background location
+
+**Does your app access location in the background?**
+Select: **Yes**
+
+**Describe why your app needs background location access:**
+
+> QuicLoc's core function is to respond to incoming location requests automatically, including when the device screen is off and the app is not in the foreground. When a trigger message is received from a whitelisted contact, the app must obtain the device's current GPS coordinates to send a location reply. This is the sole purpose of background location access. The location is used only to generate a Google Maps link sent to the requesting contact. Location is never obtained proactively, stored, logged, or transmitted to any server or third party.
+
+**Provide a video demonstrating the background location use:**
+> Record a short screen recording showing:
+> 1. Opening QuicLoc and adding a phone number to the whitelist
+> 2. Locking the device / closing the app
+> 3. Sending "loc" from another device to trigger a response
+> 4. The automatic GPS reply arriving on the sending device
+>
+> Upload this to YouTube (unlisted) and paste the link in the Play Console form.
+
+---
+
+---
+
+## 4. Camera Permission Declaration
+
+**Location in Play Console:**
+> App content → App access
+
+**Describe why your app needs camera access:**
+
+> QuicLoc uses the device's front-facing camera solely for its Panic Mode security feature. If an unauthorized user attempts to bypass the device lock screen by entering an incorrect PIN 3 times, QuicLoc silently captures a photo of the intruder and sends it to the trusted contact who initiated the location request via MMS. The photo is captured locally, transmitted directly to the trusted contact's phone number, and is never uploaded, stored on external servers, or shared with the developer or third parties.
+
+---
+
+## 5. Data Safety Section
+
+**Location in Play Console:**
+> App content → Data safety
+
+Fill in the Data safety form as follows:
+
+### Does your app collect or share any of the required user data types?
+**No** — QuicLoc does not collect any data. It does not transmit any user data to the developer or any third party. The only outbound data is the location reply sent directly from the device to the requesting contact via SMS or notification reply, which is the explicit intended function of the app.
+
+### Data types to declare as NOT collected:
+- Location — not collected (obtained on demand, used in-memory, discarded)
+- Personal info — not collected
+- Financial info — not collected
+- Health and fitness — not collected
+- Messages — not collected
+- Photos and videos — not collected
+- Audio files — not collected
+- Files and docs — not collected
+- Calendar — not collected
+- Contacts — not collected
+- App activity — not collected
+- Web browsing — not collected
+- App info and performance — not collected
+- Device or other IDs — not collected
+
+### Is all data encrypted in transit?
+**N/A** — No data is transmitted to any server. The only transmission is the SMS/notification reply sent directly to the requesting contact through standard Android system APIs.
+
+### Can users request data deletion?
+**Yes** — All user data (the whitelist) is stored locally on-device and can be deleted at any time by removing entries in the app or uninstalling the app entirely.
+
+---
+
+## 6. App Category and Content Rating
+
+**Category:** Tools / Utilities
+
+**Content Rating Questionnaire:**
+Answer **No** to all questions about violence, sexual content, and controlled substances.
+
+The app will receive a rating of **Everyone**.
+
+---
+
+## Notes for Review
+
+If Google Play reviewers contact you for additional clarification, use this response template:
+
+> QuicLoc is a single-purpose personal safety tool. Its only function is to allow a user's pre-approved trusted contacts to request the user's location by sending a keyword. The app responds automatically with a Google Maps link. All sensitive permissions (SMS, notification access, background location) are used exclusively for this single function. No data is collected, stored server-side, or shared with any third party including the developer. The whitelist of approved contacts is encrypted on-device using Android Keystore-backed AES-256 encryption and is protected by biometric authentication. The app has no network connectivity of its own — it uses only Android system APIs and Google Play Services for GPS.
+
+
+######################################################
 # FILE: docs/LOCKDOWN.md
 ######################################################
 
@@ -7692,6 +7815,42 @@ Manifest declaration alone is insufficient on API 34+. Grant is via Settings →
 - `MANAGE_OVERLAY_PERMISSION` / `SYSTEM_ALERT_WINDOW` — we don't draw overlays; the lock screen is a real `Activity`.
 
 Adding any of these requires updating [DECLARATIONS.md](../DECLARATIONS.md) and the privacy policy.
+
+
+######################################################
+# FILE: docs/PRIVACY_POLICY.md
+######################################################
+
+# Privacy Policy
+
+**Effective Date:** April 4, 2026
+
+QuicLoc ("we," "our," or "us") operates the QuicLoc Android application. We are committed to protecting your privacy and ensuring your personal information remains secure.
+
+### Data Collection and Use
+
+**QuicLoc does not collect, store, transmit, or share any personal user data with the developer or any third party.**
+
+*   **No Analytics:** We do not use any third-party analytics or crash reporting services.
+*   **No Servers:** QuicLoc operates entirely on your local device. We do not have any servers that receive, process, or store your location or contact information.
+*   **Local Processing:** All sensitive data, including your whitelist of trusted contacts and location information, is managed exclusively on your device. Contact data is stored using AES-256-GCM encryption backed by the Android Keystore.
+*   **Permissions:** QuicLoc requires certain permissions to function (e.g., SMS, Location, Notification Access). These are used strictly to provide the app's core functionality, such as responding to location requests from trusted contacts. This information is never transmitted to us or any third party.
+
+### Third-Party Services
+
+QuicLoc does not use any third-party services or SDKs that collect data on your behalf.
+
+### Your Choices
+
+Since QuicLoc does not collect any data, there is no user data for you to manage, delete, or request from us. You have full control over the application's data and functionality through the app settings and standard Android permission controls.
+
+### Contact Us
+
+If you have any questions or concerns about this privacy policy, please reach out via the contact information provided on the [QuicLoc GitHub repository](https://github.com/your-username/quicloc).
+
+### Changes to This Privacy Policy
+
+We may update this Privacy Policy from time to time. We will notify you of any changes by updating the "Effective Date" at the top of this policy.
 
 
 ######################################################
@@ -8177,232 +8336,6 @@ If all stages fail, we send an error SMS/reply back to the requester *("QuicLoc 
 
 
 ######################################################
-# FILE: gradle.properties
-plugins {
-    id("com.android.application") version "9.2.1" apply false
-    id("org.jetbrains.kotlin.android") version "2.3.20" apply false
-    id("org.jetbrains.kotlin.plugin.compose") version "2.3.20" apply false
-}
-
-
-######################################################
-# FILE: docs/DECLARATIONS.md
-######################################################
-
-# Google Play Declarations for QuicLoc
-
-This document contains the text to submit for each sensitive permission declaration
-required by Google Play. Navigate to **Play Console → App content** and complete
-each section below.
-
-[versions]
-activity-compose = "1.10.0"
-androidSmsmms = "5.2.6"
-androidx-compose-ui = "1.7.7"
-androidx-compose-ui-tooling = "1.7.7"
-androidx-compose-ui-tooling-preview = "1.7.7"
-appcompat = "1.7.0"
-biometric = "1.1.0"
-camera = "1.4.1"
-compose-material3 = "1.3.1"
-core-ktx = "1.6.1"
-core-ktx-version = "1.15.0"
-espresso-core = "3.6.1"
-junit = "4.13.2"
-junitVersion = "1.2.1"
-lifecycle-viewmodel-compose = "2.8.7"
-material = "1.12.0"
-playServicesAuth = "21.2.0"
-playServicesLocation = "21.3.0"
-robolectric = "4.14.1"
-security-crypto = "1.1.0-alpha06"
-concurrent-futures = "1.2.0"
-guava-listenablefuture = "1.0"
-
-[libraries]
-android-smsmms = { group = "com.klinkerapps", name = "android-smsmms", version.ref = "androidSmsmms" }
-androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activity-compose" }
-androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
-androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
-androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camera" }
-androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camera" }
-androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camera" }
-androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camera" }
-androidx-compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
-androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
-androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "compose-material3" }
-androidx-compose-ui = { group = "androidx.compose.ui", name = "ui", version.ref = "androidx-compose-ui" }
-androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling", version.ref = "androidx-compose-ui-tooling" }
-androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview", version.ref = "androidx-compose-ui-tooling-preview" }
-androidx-concurrent-futures = { group = "androidx.concurrent", name = "concurrent-futures", version.ref = "concurrent-futures" }
-androidx-concurrent-futures-ktx = { group = "androidx.concurrent", name = "concurrent-futures-ktx", version.ref = "concurrent-futures" }
-androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx-version" }
-androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso-core" }
-androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
-androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle-viewmodel-compose" }
-androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "security-crypto" }
-core-ktx = { group = "androidx.test", name = "core-ktx", version.ref = "core-ktx" }
-guava-listenablefuture = { group = "com.google.guava", name = "listenablefuture", version.ref = "guava-listenablefuture" }
-junit = { group = "junit", name = "junit", version.ref = "junit" }
-material = { group = "com.google.android.material", name = "material", version.ref = "material" }
-play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
-play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
-robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
----
-
-## 1. SMS or Call Log Permissions Declaration
-
-**Location in Play Console:**
-> App content → Sensitive app permissions → SMS or Call Log
-
-**Is your app's core functionality an SMS/MMS app, or does it require SMS access for a reason not available through the SMS Intent API?**
-Select: **No — SMS access is needed but it is not a messaging app**
-
-**Describe why your app needs SMS permissions:**
-
-> QuicLoc is a personal safety utility. It monitors incoming SMS messages solely to detect a user-defined trigger word ("loc" or "quicloc") sent by phone numbers the user has explicitly pre-approved in a private, encrypted whitelist. When the trigger word is detected from an approved number, the app automatically replies with the device's current GPS location as a Google Maps link. No SMS content is stored, logged, uploaded, or shared. The app never reads, modifies, or transmits any SMS message content other than detecting the trigger word and sending a single automated reply. SMS intent APIs cannot be used because the app must function passively in the background while the device is idle.
-
----
-
-## 2. Notification Listener Permission Declaration
-
-**Location in Play Console:**
-> App content → Sensitive app permissions → Notification access
-
-**Does your app use NotificationListenerService?**
-Select: **Yes**
-
-**Describe what your app does with notification access and why it is necessary:**
-
-> QuicLoc uses NotificationListenerService to extend its location-sharing trigger detection to messaging apps beyond SMS (such as WhatsApp, Telegram, and Signal). The service reads only the notification title and body text to check whether they contain the trigger word "loc" or "quicloc" from a pre-approved contact. If the trigger is detected from an approved contact, the app replies via the notification's built-in inline reply action with the device's GPS location as a Google Maps link. No notification content is stored, logged, uploaded, or transmitted anywhere. The service does not read, record, or process notification content from any app or contact not on the user's encrypted whitelist.
-
----
-
-## 3. Background Location Declaration
-
-**Location in Play Console:**
-> App content → Sensitive app permissions → Background location
-
-**Does your app access location in the background?**
-Select: **Yes**
-
-**Describe why your app needs background location access:**
-
-> QuicLoc's core function is to respond to incoming location requests automatically, including when the device screen is off and the app is not in the foreground. When a trigger message is received from a whitelisted contact, the app must obtain the device's current GPS coordinates to send a location reply. This is the sole purpose of background location access. The location is used only to generate a Google Maps link sent to the requesting contact. Location is never obtained proactively, stored, logged, or transmitted to any server or third party.
-
-**Provide a video demonstrating the background location use:**
-> Record a short screen recording showing:
-> 1. Opening QuicLoc and adding a phone number to the whitelist
-> 2. Locking the device / closing the app
-> 3. Sending "loc" from another device to trigger a response
-> 4. The automatic GPS reply arriving on the sending device
->
-> Upload this to YouTube (unlisted) and paste the link in the Play Console form.
-
----
-
----
-
-## 4. Camera Permission Declaration
-
-**Location in Play Console:**
-> App content → App access
-
-**Describe why your app needs camera access:**
-
-> QuicLoc uses the device's front-facing camera solely for its Panic Mode security feature. If an unauthorized user attempts to bypass the device lock screen by entering an incorrect PIN 3 times, QuicLoc silently captures a photo of the intruder and sends it to the trusted contact who initiated the location request via MMS. The photo is captured locally, transmitted directly to the trusted contact's phone number, and is never uploaded, stored on external servers, or shared with the developer or third parties.
-
----
-
-## 5. Data Safety Section
-
-**Location in Play Console:**
-> App content → Data safety
-
-Fill in the Data safety form as follows:
-
-### Does your app collect or share any of the required user data types?
-**No** — QuicLoc does not collect any data. It does not transmit any user data to the developer or any third party. The only outbound data is the location reply sent directly from the device to the requesting contact via SMS or notification reply, which is the explicit intended function of the app.
-
-### Data types to declare as NOT collected:
-- Location — not collected (obtained on demand, used in-memory, discarded)
-- Personal info — not collected
-- Financial info — not collected
-- Health and fitness — not collected
-- Messages — not collected
-- Photos and videos — not collected
-- Audio files — not collected
-- Files and docs — not collected
-- Calendar — not collected
-- Contacts — not collected
-- App activity — not collected
-- Web browsing — not collected
-- App info and performance — not collected
-- Device or other IDs — not collected
-
-### Is all data encrypted in transit?
-**N/A** — No data is transmitted to any server. The only transmission is the SMS/notification reply sent directly to the requesting contact through standard Android system APIs.
-
-### Can users request data deletion?
-**Yes** — All user data (the whitelist) is stored locally on-device and can be deleted at any time by removing entries in the app or uninstalling the app entirely.
-
----
-
-## 6. App Category and Content Rating
-
-**Category:** Tools / Utilities
-
-**Content Rating Questionnaire:**
-Answer **No** to all questions about violence, sexual content, and controlled substances.
-
-The app will receive a rating of **Everyone**.
-
----
-
-## Notes for Review
-
-If Google Play reviewers contact you for additional clarification, use this response template:
-
-> QuicLoc is a single-purpose personal safety tool. Its only function is to allow a user's pre-approved trusted contacts to request the user's location by sending a keyword. The app responds automatically with a Google Maps link. All sensitive permissions (SMS, notification access, background location) are used exclusively for this single function. No data is collected, stored server-side, or shared with any third party including the developer. The whitelist of approved contacts is encrypted on-device using Android Keystore-backed AES-256 encryption and is protected by biometric authentication. The app has no network connectivity of its own — it uses only Android system APIs and Google Play Services for GPS.
-
-
-######################################################
-# FILE: docs/PRIVACY_POLICY.md
-######################################################
-
-# Privacy Policy
-
-**Effective Date:** April 4, 2026
-
-QuicLoc ("we," "our," or "us") operates the QuicLoc Android application. We are committed to protecting your privacy and ensuring your personal information remains secure.
-
-### Data Collection and Use
-
-**QuicLoc does not collect, store, transmit, or share any personal user data with the developer or any third party.**
-
-*   **No Analytics:** We do not use any third-party analytics or crash reporting services.
-*   **No Servers:** QuicLoc operates entirely on your local device. We do not have any servers that receive, process, or store your location or contact information.
-*   **Local Processing:** All sensitive data, including your whitelist of trusted contacts and location information, is managed exclusively on your device. Contact data is stored using AES-256-GCM encryption backed by the Android Keystore.
-*   **Permissions:** QuicLoc requires certain permissions to function (e.g., SMS, Location, Notification Access). These are used strictly to provide the app's core functionality, such as responding to location requests from trusted contacts. This information is never transmitted to us or any third party.
-
-### Third-Party Services
-
-QuicLoc does not use any third-party services or SDKs that collect data on your behalf.
-
-### Your Choices
-
-Since QuicLoc does not collect any data, there is no user data for you to manage, delete, or request from us. You have full control over the application's data and functionality through the app settings and standard Android permission controls.
-
-### Contact Us
-
-If you have any questions or concerns about this privacy policy, please reach out via the contact information provided on the [QuicLoc GitHub repository](https://github.com/your-username/quicloc).
-
-### Changes to This Privacy Policy
-
-We may update this Privacy Policy from time to time. We will notify you of any changes by updating the "Effective Date" at the top of this policy.
-
-
-######################################################
 # FILE: docs/plan.md
 ######################################################
 
@@ -8528,6 +8461,7 @@ core-ktx = { group = "androidx.test", name = "core-ktx", version.ref = "core-ktx
 guava-listenablefuture = { group = "com.google.guava", name = "listenablefuture", version.ref = "guava-listenablefuture" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 
