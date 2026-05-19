@@ -1,39 +1,93 @@
 package com.hereliesaz.quicloc
 
 import android.Manifest
+import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import android.os.Bundle
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.text.TextUtils
 import android.widget.Toast
 import androidx.activity.compose.setContent
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.biometric.BiometricManager
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest
+import com.google.android.gms.auth.api.identity.Identity
 
+/**
+ * Top-level navigation state for the authenticated app. A 4-branch `when`
+ * over this sealed type drives both the top-bar title/actions and the
+ * Scaffold body — simpler than the Navigation library at this app's
+ * size.
+ *
+ *   - [Config] — the settings screen ([QuicLocScreen]).
+ *   - [History] — the request log ([HistoryScreen]).
+ *   - [TutorialsHub] — list of all tutorials.
+ *   - [TutorialDetail] — one tutorial's full body. [fromOnboarding] flips
+ *     the confirm-button label ("Got it" vs "Done") and the back-target
+ *     (return to Config to dismiss onboarding, vs return to hub).
+ */
+sealed class MainView {
+    data object Config : MainView()
+    data object History : MainView()
+    data object TutorialsHub : MainView()
+    data class TutorialDetail(val tutorialId: String, val fromOnboarding: Boolean = false) : MainView()
+}
+
+/**
+ * Single-activity Compose host for the entire QuicLoc UI. Extends
+ * [FragmentActivity] because that's what [androidx.biometric.BiometricPrompt]
+ * requires.
+ *
+ * Responsibilities:
+ *
+ *   - Biometric gate on resume ([BiometricHelper]). The background
+ *     components (`SmsReceiver`, `NotificationListener`, foreground
+ *     services) are NOT gated — only the configuration UI.
+ *   - First-launch tutorial flow (auto-shows the "Why QuicLoc?" tutorial
+ *     when [WhitelistManager.isOnboardingCompleted] is false).
+ *   - Runtime permission orchestration in the right order: foreground
+ *     batch → background location → notification listener prompt.
+ *   - Optional flows: Phone Number Hint (auto-fill the user's own number),
+ *     Device Admin grant, backup export/import.
+ *   - Restore-on-launch detection: if a backup blob is present and the
+ *     encrypted prefs are empty, show [RestoreFromBackupDialog].
+ *
+ * Posts the reminder notification on every launch via
+ * [ReminderNotification.refresh] — a no-op if the user hasn't opted in.
+ */
 class MainActivity : FragmentActivity() {   // FragmentActivity required by BiometricPrompt
 
     private lateinit var whitelistManager: WhitelistManager
@@ -91,6 +145,99 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     private var numbersState = mutableStateOf<List<String>>(emptyList())
     private var starredState = mutableStateOf<Set<String>>(emptySet())
     private var myNumberState = mutableStateOf("")
+    private var enabledState = mutableStateOf(true)
+    private var reminderNotifState = mutableStateOf(false)
+    private var deviceAdminState = mutableStateOf(false)
+    private var showLaunchRestoreState = mutableStateOf(false)
+    private var pendingImportUriState = mutableStateOf<Uri?>(null)
+
+    private val deviceAdminLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
+        if (deviceAdminState.value) {
+            Toast.makeText(this, "Lockdown enabled — QuicLoc can now lock the device.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private val phoneHintLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == RESULT_OK && data != null) {
+            try {
+                val number = Identity.getSignInClient(this).getPhoneNumberFromIntent(data)
+                if (!number.isNullOrBlank()) {
+                    whitelistManager.setMyNumber(number)
+                    myNumberState.value = number
+                }
+            } catch (e: Exception) {
+                android.util.Log.d("QuicLoc", "No phone number returned from hint", e)
+            }
+        }
+    }
+
+    private fun requestPhoneNumberHint() {
+        AppSettings.markPhoneHintAutoPrompted(this)
+        val request = GetPhoneNumberHintIntentRequest.builder().build()
+        Identity.getSignInClient(this)
+            .getPhoneNumberHintIntent(request)
+            .addOnSuccessListener { pendingIntent ->
+                try {
+                    phoneHintLauncher.launch(
+                        IntentSenderRequest.Builder(pendingIntent).build()
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.e("QuicLoc", "Failed to launch phone number hint intent", e)
+                }
+            }
+            .addOnFailureListener { e ->
+                // Common: Play Services missing, no SIM, no Google account with phone, etc.
+                // Silently fall back to manual entry.
+                android.util.Log.d("QuicLoc", "Phone number hint unavailable", e)
+            }
+    }
+
+    // -------------------------------------------------------------------------
+    // Backup export / import (manual SAF flow)
+    // -------------------------------------------------------------------------
+
+    private val exportBackupLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument(BackupVault.MIME_TYPE)
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val result = BackupVault.exportToUri(this, uri)
+        val msg = result.fold(
+            onSuccess = { "Backup exported." },
+            onFailure = { "Export failed: ${it.message}" }
+        )
+        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+    }
+
+    private val importBackupLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        // Defer the actual restore until the user enters their PIN.
+        pendingImportUriState.value = uri
+    }
+
+    private fun requestExport() {
+        exportBackupLauncher.launch("quicloc-backup.qlb")
+    }
+
+    private fun requestImport() {
+        importBackupLauncher.launch(arrayOf("*/*"))
+    }
+
+    private fun refreshAllStateAfterRestore() {
+        numbersState.value = whitelistManager.getNumbers().toList()
+        starredState.value = whitelistManager.getStarredNumbers()
+        myNumberState.value = whitelistManager.getMyNumber()
+        enabledState.value = AppSettings.isEnabled(this)
+        reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
+        deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
+    }
 
     private val readContactsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -114,6 +261,21 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         numbersState.value = whitelistManager.getNumbers().toList()
         starredState.value = whitelistManager.getStarredNumbers()
         myNumberState.value = whitelistManager.getMyNumber()
+        enabledState.value = AppSettings.isEnabled(this)
+        reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
+        deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
+
+        // Show the launch-time restore prompt if the encrypted prefs are
+        // empty (fresh install) but a PIN-encrypted backup blob is present
+        // (shipped over by Auto Backup or device transfer).
+        val looksLikeFreshInstall =
+            whitelistManager.getNumbers().isEmpty() && whitelistManager.getPin() == null
+        showLaunchRestoreState.value =
+            looksLikeFreshInstall && BackupVault.isAvailable(this)
+
+        // No-op when the user hasn't opted into the reminder notification;
+        // otherwise refresh so the notification reflects current state.
+        ReminderNotification.refresh(this)
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
@@ -128,55 +290,173 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                     val numbersList by numbersState
                     val starredSet by starredState
                     val myNumber by myNumberState
+                    val enabled by enabledState
+                    val reminderEnabled by reminderNotifState
+                    val deviceAdminGranted by deviceAdminState
                     var currentPassphrase by remember { mutableStateOf(whitelistManager.getPassphrase() ?: "") }
                     var currentPin by remember { mutableStateOf(whitelistManager.getPin() ?: "") }
 
                     var notificationAccessGranted by remember {
                         mutableStateOf(isNotificationListenerEnabled())
                     }
-                    var showHistory by remember { mutableStateOf(false) }
-                    var showOnboarding by remember { mutableStateOf(!whitelistManager.isOnboardingCompleted()) }
+                    var view by remember {
+                        mutableStateOf<MainView>(
+                            if (!whitelistManager.isOnboardingCompleted())
+                                MainView.TutorialDetail(Tutorials.MAIN_ID, fromOnboarding = true)
+                            else
+                                MainView.Config
+                        )
+                    }
 
-                    if (showOnboarding) {
-                        OnboardingDialog(onDismiss = {
-                            whitelistManager.setOnboardingCompleted(true)
-                            showOnboarding = false
-                        })
+                    val showLaunchRestore by showLaunchRestoreState
+                    val pendingImportUri by pendingImportUriState
+
+                    if (showLaunchRestore) {
+                        RestoreFromBackupDialog(
+                            title = "Restore previous backup?",
+                            body = "QuicLoc found an encrypted backup from a previous install. Enter your previous PIN to restore your contacts and settings.",
+                            onRestore = { pin ->
+                                val result = BackupVault.restoreFromInternal(this@MainActivity, pin)
+                                if (result.isSuccess) {
+                                    refreshAllStateAfterRestore()
+                                    showLaunchRestoreState.value = false
+                                    // If the restored data marks onboarding
+                                    // complete, jump straight to Config so the
+                                    // user isn't pushed through the tutorial
+                                    // again on the new device.
+                                    if (whitelistManager.isOnboardingCompleted()) {
+                                        view = MainView.Config
+                                    }
+                                    Toast.makeText(
+                                        this@MainActivity,
+                                        "Restored ${result.getOrNull()?.whitelistCount ?: 0} contacts.",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                                result
+                            },
+                            onSkip = { showLaunchRestoreState.value = false }
+                        )
+                    }
+
+                    if (pendingImportUri != null) {
+                        val importUri = pendingImportUri!!
+                        RestoreFromBackupDialog(
+                            title = "Restore from imported file?",
+                            body = "Enter the PIN that was set when this backup was made.",
+                            onRestore = { pin ->
+                                val result = BackupVault.restoreFromUri(this@MainActivity, importUri, pin)
+                                if (result.isSuccess) {
+                                    refreshAllStateAfterRestore()
+                                    pendingImportUriState.value = null
+                                    Toast.makeText(
+                                        this@MainActivity,
+                                        "Restored ${result.getOrNull()?.whitelistCount ?: 0} contacts.",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                                result
+                            },
+                            onSkip = { pendingImportUriState.value = null }
+                        )
                     }
 
                     Scaffold(
                         topBar = {
+                            val (title, navBack) = when (val v = view) {
+                                MainView.Config -> "QuicLoc" to null
+                                MainView.History -> "Request History" to { view = MainView.Config }
+                                MainView.TutorialsHub -> "Tutorials" to { view = MainView.Config }
+                                is MainView.TutorialDetail -> {
+                                    val t = Tutorials.byId(v.tutorialId)
+                                    val onBack: () -> Unit = {
+                                        if (v.fromOnboarding) {
+                                            whitelistManager.setOnboardingCompleted(true)
+                                            view = MainView.Config
+                                        } else {
+                                            view = MainView.TutorialsHub
+                                        }
+                                    }
+                                    (t?.title ?: "Tutorial") to onBack
+                                }
+                            }
                             TopAppBar(
-                                title = { Text(if (showHistory) "Request History" else "QuicLoc") },
+                                title = { Text(title) },
                                 colors = TopAppBarDefaults.topAppBarColors(
                                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                                 ),
-                                actions = {
-                                    IconButton(onClick = { showOnboarding = true }) {
-                                        Icon(
-                                            imageVector = Icons.Default.Info,
-                                            contentDescription = "Show help",
-                                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                                        )
+                                navigationIcon = {
+                                    if (navBack != null) {
+                                        IconButton(onClick = navBack) {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                                contentDescription = "Back",
+                                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
                                     }
-                                    IconButton(onClick = { showHistory = !showHistory }) {
-                                        Icon(
-                                            imageVector = Icons.Default.List,
-                                            contentDescription = if (showHistory) "Back to config" else "View history",
-                                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                                        )
+                                },
+                                actions = {
+                                    if (view is MainView.Config) {
+                                        IconButton(onClick = { view = MainView.TutorialsHub }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Info,
+                                                contentDescription = "Tutorials",
+                                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
+                                        IconButton(onClick = { view = MainView.History }) {
+                                            Icon(
+                                                imageVector = Icons.Default.List,
+                                                contentDescription = "View history",
+                                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
                                     }
                                 }
                             )
                         }
                     ) { innerPadding ->
-                        if (showHistory) {
-                            HistoryScreen(
+                        when (val v = view) {
+                            MainView.History -> HistoryScreen(
                                 modifier = Modifier.padding(innerPadding),
                                 historyManager = RequestHistoryManager(this@MainActivity)
                             )
-                        } else {
+                            MainView.TutorialsHub -> TutorialsHubScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                tutorials = Tutorials.all,
+                                onTutorialClick = { t ->
+                                    view = MainView.TutorialDetail(t.id)
+                                }
+                            )
+                            is MainView.TutorialDetail -> {
+                                val tutorial = Tutorials.byId(v.tutorialId)
+                                if (tutorial == null) {
+                                    view = MainView.TutorialsHub
+                                } else {
+                                    TutorialDetailScreen(
+                                        modifier = Modifier.padding(innerPadding),
+                                        tutorial = tutorial,
+                                        confirmLabel = if (v.fromOnboarding) "Got it" else "Done",
+                                        onConfirm = {
+                                            if (v.fromOnboarding) {
+                                                whitelistManager.setOnboardingCompleted(true)
+                                                view = MainView.Config
+                                            } else {
+                                                view = MainView.TutorialsHub
+                                            }
+                                        },
+                                        onBrowseAll = if (v.fromOnboarding) {
+                                            {
+                                                whitelistManager.setOnboardingCompleted(true)
+                                                view = MainView.TutorialsHub
+                                            }
+                                        } else null
+                                    )
+                                }
+                            }
+                            MainView.Config -> {
                             QuicLocScreen(
                                 modifier = Modifier.padding(innerPadding),
                                 numbersList = numbersList,
@@ -184,6 +464,25 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 myNumber = myNumber,
                                 notificationAccessGranted = notificationAccessGranted,
                                 noLockScreenWarning = !BiometricHelper.canAuthenticate(this@MainActivity),
+                                enabled = enabled,
+                                reminderNotificationEnabled = reminderEnabled,
+                                deviceAdminGranted = deviceAdminGranted,
+                                onToggleEnabled = { newState ->
+                                    AppSettings.setEnabled(this@MainActivity, newState)
+                                    enabledState.value = newState
+                                    ReminderNotification.refresh(this@MainActivity)
+                                },
+                                onToggleReminderNotification = { newState ->
+                                    AppSettings.setReminderNotificationEnabled(this@MainActivity, newState)
+                                    reminderNotifState.value = newState
+                                    ReminderNotification.refresh(this@MainActivity)
+                                },
+                                onAutoDetectMyNumber = { requestPhoneNumberHint() },
+                                autoDetectMyNumberOnFirstShow = !AppSettings.wasPhoneHintAutoPrompted(this@MainActivity),
+                                onRequestDeviceAdmin = { requestDeviceAdmin() },
+                                backupAvailable = BackupVault.isAvailable(this@MainActivity),
+                                onRequestExportBackup = { requestExport() },
+                                onRequestImportBackup = { requestImport() },
                                 onRequestNotificationAccess = {
                                     startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                                 },
@@ -244,6 +543,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     }
                                 }
                             )
+                            }
                         }
                     }
                 }
@@ -257,6 +557,11 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         if (!isAuthenticated) {
             promptBiometric()
         }
+        // User may have toggled state from the reminder notification or
+        // granted/revoked device admin while we were paused.
+        enabledState.value = AppSettings.isEnabled(this)
+        reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
+        deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
     }
 
     override fun onPause() {
@@ -386,6 +691,29 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         }
     }
 
+    private fun requestDeviceAdmin() {
+        val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+            putExtra(
+                DevicePolicyManager.EXTRA_DEVICE_ADMIN,
+                QuicLocDeviceAdmin.componentName(this@MainActivity)
+            )
+            putExtra(
+                DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                getString(R.string.device_admin_description)
+            )
+        }
+        AppSettings.markDeviceAdminPrompted(this)
+        try {
+            deviceAdminLauncher.launch(intent)
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "Could not open Device Admin settings on this device.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
     private fun isNotificationListenerEnabled(): Boolean {
         val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
         if (!TextUtils.isEmpty(flat)) {
@@ -403,6 +731,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 // Lock screen shown before auth passes
 // -------------------------------------------------------------------------
 
+/**
+ * Placeholder screen shown after [MainActivity.onCreate] but before
+ * [BiometricHelper.authenticate] returns success. If the user cancels or
+ * the biometric callback fires `onAuthenticationError`, [onRetry] re-fires
+ * the prompt.
+ */
 @Composable
 fun BiometricGateScreen(onRetry: () -> Unit) {
     Box(
@@ -437,6 +771,26 @@ fun BiometricGateScreen(onRetry: () -> Unit) {
 // Main UI
 // -------------------------------------------------------------------------
 
+/**
+ * The settings / configuration screen — the bulk of the visible UI.
+ *
+ * Top-to-bottom layout (chosen deliberately for first-run flow):
+ *
+ *   1. Master enable/disable toggle (always at the very top).
+ *   2. "Show reminder notification" opt-in switch.
+ *   3. "Your Phone Number" card — set first; auto-detect via Phone Number
+ *      Hint on first show; locks itself once a number is saved.
+ *   4. "No lock screen" warning (only if the device has no PIN/pattern).
+ *   5. Notification access banner (red if not granted).
+ *   6. Passphrase + PIN section.
+ *   7. Device Admin card — "Grant" affordance with a pre-prompt dialog.
+ *   8. Backup & Restore card — manual export / import buttons.
+ *   9. Widget tap guide + add-contact / pick-contact controls.
+ *   10. Whitelisted contacts list with star and delete actions.
+ *
+ * The whole screen is in a [verticalScroll] so the user can reach every
+ * contact (no nested `LazyColumn` collapse).
+ */
 @Composable
 fun QuicLocScreen(
     modifier: Modifier = Modifier,
@@ -445,6 +799,17 @@ fun QuicLocScreen(
     myNumber: String,
     notificationAccessGranted: Boolean,
     noLockScreenWarning: Boolean,
+    enabled: Boolean,
+    reminderNotificationEnabled: Boolean,
+    deviceAdminGranted: Boolean,
+    autoDetectMyNumberOnFirstShow: Boolean,
+    backupAvailable: Boolean,
+    onToggleEnabled: (Boolean) -> Unit,
+    onToggleReminderNotification: (Boolean) -> Unit,
+    onAutoDetectMyNumber: () -> Unit,
+    onRequestDeviceAdmin: () -> Unit,
+    onRequestExportBackup: () -> Unit,
+    onRequestImportBackup: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
     onAddNumber: (String) -> Unit,
     onRemoveNumber: (String) -> Unit,
@@ -456,17 +821,137 @@ fun QuicLocScreen(
     onMyNumberChanged: (String) -> Unit = {}
 ) {
     var phoneNumberInput by remember { mutableStateOf("") }
+    val scrollState = rememberScrollState()
 
     Column(
         modifier = modifier
             .fillMaxSize()
+            .verticalScroll(scrollState)
             .padding(16.dp)
     ) {
+        // Top-of-settings master toggle. Mirrors the reminder notification.
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (enabled)
+                    MaterialTheme.colorScheme.primaryContainer
+                else
+                    MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (enabled) "QuicLoc is enabled" else "QuicLoc is disabled",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (enabled)
+                            "Listening for SMS and notification triggers."
+                        else
+                            "All triggers are paused. Widget and tracking are off.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = onToggleEnabled
+                )
+            }
+        }
+
+        // Opt-in: show a persistent notification that mirrors the master
+        // toggle and lets the user flip it without opening the app.
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Show reminder notification",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Text(
+                    text = "Persistent notification with a one-tap enable/disable button.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = reminderNotificationEnabled,
+                onCheckedChange = onToggleReminderNotification
+            )
+        }
+
         Text(
             text = "QuicLoc Configuration",
             style = MaterialTheme.typography.headlineSmall,
             modifier = Modifier.padding(bottom = 16.dp)
         )
+
+        // Your own phone number — used by the 2-tap widget #Parking shortcut.
+        // Lives high in the screen and locks once set so it can't be confused
+        // with the whitelist input field further down. On first show with an
+        // empty number, the Phone Number Hint sheet is auto-triggered so the
+        // user can pick it from the device with one tap.
+        var hasInteractedWithMyNumber by remember { mutableStateOf(false) }
+        val myNumberLocked = myNumber.isNotEmpty() && !hasInteractedWithMyNumber
+        LaunchedEffect(Unit) {
+            if (autoDetectMyNumberOnFirstShow && myNumber.isEmpty()) {
+                onAutoDetectMyNumber()
+            }
+        }
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Your Phone Number",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "Where the 2-tap widget sends your location as a parking reminder. This is YOUR own number — not a whitelisted contact.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = myNumber,
+                        onValueChange = {
+                            hasInteractedWithMyNumber = true
+                            onMyNumberChanged(it)
+                        },
+                        label = { Text("Your number") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        enabled = !myNumberLocked,
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (myNumberLocked) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(onClick = { hasInteractedWithMyNumber = true }) {
+                            Text("Change")
+                        }
+                    }
+                }
+                if (!myNumberLocked) {
+                    TextButton(
+                        onClick = onAutoDetectMyNumber,
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Text("Auto-detect from this device")
+                    }
+                }
+            }
+        }
 
         // Warn if device has no lock screen (biometrics were bypassed)
         if (noLockScreenWarning) {
@@ -560,6 +1045,129 @@ fun QuicLocScreen(
             Text("Save Passphrase & PIN")
         }
 
+        // Real-lockdown opt-in. Without Device Admin, the lock screen
+        // can only *cover* the display — the device isn't actually locked.
+        Spacer(modifier = Modifier.height(12.dp))
+        if (deviceAdminGranted) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Real lockdown enabled — QuicLoc can lock the device when the passphrase fires.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+        } else {
+            var showAdminExplanation by remember { mutableStateOf(false) }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = "⚠ Real lockdown not enabled",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Text(
+                        text = "Without Device Admin, the passphrase only covers the screen — it can't actually lock the device. Grant Device Admin to enable true lockdown.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                    )
+                    Button(
+                        onClick = { showAdminExplanation = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Grant Device Admin")
+                    }
+                }
+            }
+
+            if (showAdminExplanation) {
+                AlertDialog(
+                    onDismissRequest = { showAdminExplanation = false },
+                    title = { Text(stringResource(R.string.device_admin_explanation_title)) },
+                    text = {
+                        Text(
+                            text = stringResource(R.string.device_admin_explanation_body),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    confirmButton = {
+                        Button(onClick = {
+                            showAdminExplanation = false
+                            onRequestDeviceAdmin()
+                        }) {
+                            Text("Continue")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showAdminExplanation = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
+        }
+
+        // Backup & restore — PIN-encrypted blob. The Auto Backup path
+        // (cloud + device-transfer) is automatic when a PIN is set; these
+        // buttons cover the manual side: export anywhere via SAF, or
+        // import from any file picker location.
+        Spacer(modifier = Modifier.height(12.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Backup & Restore",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = if (backupAvailable)
+                        "Backup is active. Your settings are PIN-encrypted and automatically included in Android's cloud backup. You can also export a copy to any file location."
+                    else
+                        "Backup activates once you set a PIN. Your settings will then be PIN-encrypted and included in Android's cloud backup automatically.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                )
+                Row {
+                    OutlinedButton(
+                        onClick = onRequestExportBackup,
+                        enabled = backupAvailable,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Export")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    OutlinedButton(
+                        onClick = onRequestImportBackup,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Import")
+                    }
+                }
+            }
+        }
+
         // Whitelist a contact section
         Text(
             text = "Contacts & Widget",
@@ -586,15 +1194,6 @@ fun QuicLocScreen(
                 )
             }
         }
-
-        OutlinedTextField(
-            value = myNumber,
-            onValueChange = { onMyNumberChanged(it) },
-            label = { Text("Your Phone Number: Receives your location when the widget is tapped twice.") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-            singleLine = true
-        )
 
         Button(
             onClick = onPickContact,
@@ -632,13 +1231,24 @@ fun QuicLocScreen(
         }
 
         Text(
-            text = "Whitelisted:",
+            text = "Whitelisted (${numbersList.size}):",
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(top = 24.dp, bottom = 8.dp)
         )
 
-        LazyColumn(modifier = Modifier.fillMaxWidth()) {
-            items(numbersList) { number ->
+        if (numbersList.isEmpty()) {
+            Text(
+                text = "No contacts yet. Add a number above or pick from contacts.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+        } else {
+            // Rendered inline (not LazyColumn) so the parent verticalScroll
+            // can scroll the entire page and reveal every contact. The list
+            // is small (handfuls of trusted contacts), so non-virtualized
+            // rendering is fine.
+            numbersList.forEach { number ->
                 val isStarred = starredSet.contains(number)
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -669,33 +1279,221 @@ fun QuicLocScreen(
 }
 
 // -------------------------------------------------------------------------
-// Onboarding
+// Tutorials
 // -------------------------------------------------------------------------
 
+/**
+ * Browsable list of all tutorials. The "Why QuicLoc?" tutorial is rendered
+ * with the primary color so it stands out — it's the recommended starting
+ * point.
+ */
 @Composable
-fun OnboardingDialog(onDismiss: () -> Unit) {
+fun TutorialsHubScreen(
+    modifier: Modifier = Modifier,
+    tutorials: List<Tutorial>,
+    onTutorialClick: (Tutorial) -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "Pick a tutorial",
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+        Text(
+            text = "Start with \"Why QuicLoc?\" if you're new — it explains the on-demand model. The rest cover individual features.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
+
+        tutorials.forEach { tutorial ->
+            val isMain = tutorial.id == Tutorials.MAIN_ID
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .clickable { onTutorialClick(tutorial) },
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isMain)
+                        MaterialTheme.colorScheme.primaryContainer
+                    else
+                        MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = tutorial.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = if (isMain) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (isMain)
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        else
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = tutorial.summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isMain)
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        else
+                            MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Full text of a single tutorial in a scrollable column, with a sticky
+ * confirm button at the bottom.
+ *
+ * @param confirmLabel "Got it" during onboarding, "Done" otherwise.
+ * @param onBrowseAll Optional secondary action shown only on the
+ *   first-launch tutorial — taps mark onboarding complete *and* jump to
+ *   the tutorials hub so the user can read more if they want.
+ */
+@Composable
+fun TutorialDetailScreen(
+    modifier: Modifier = Modifier,
+    tutorial: Tutorial,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onBrowseAll: (() -> Unit)? = null,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text(
+                text = tutorial.title,
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            Text(
+                text = tutorial.body,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+
+        if (onBrowseAll != null) {
+            TextButton(
+                onClick = onBrowseAll,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Browse all tutorials")
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+        Button(
+            onClick = onConfirm,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(confirmLabel)
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// Backup restore dialog
+// -------------------------------------------------------------------------
+
+/**
+ * Modal dialog used for both the launch-time restore prompt and the
+ * post-import prompt. The supplied [onRestore] runs the actual decryption
+ * + apply on the caller's side and returns a Result.
+ *
+ * Error UX is category-aware: a wrong-PIN failure keeps the dialog ready
+ * for another attempt with a different PIN, while any file-level error
+ * (truncated, unsupported version, parse, apply, IO) disables the Restore
+ * button — retrying with another PIN can't fix those.
+ */
+@Composable
+fun RestoreFromBackupDialog(
+    title: String,
+    body: String,
+    onRestore: (String) -> Result<BackupVault.RestoreSummary>,
+    onSkip: () -> Unit,
+) {
+    var pin by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var errorCategory by remember { mutableStateOf<BackupVault.RestoreException.Category?>(null) }
+    var working by remember { mutableStateOf(false) }
+
+    val isUnrecoverable = errorCategory != null &&
+        errorCategory != BackupVault.RestoreException.Category.WRONG_PIN
+
     AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Welcome to QuicLoc") },
+        onDismissRequest = onSkip,
+        title = { Text(title) },
         text = {
             Column {
-                Text("QuicLoc lets you securely share your location with trusted contacts.\n")
-                Text("Ways to share:", style = MaterialTheme.typography.titleSmall)
-                Text("1. SMS / Message: Reply 'loc' from a whitelisted contact.")
-                Text("2. Remote Lock: Text your secret passphrase to lock your phone and start tracking.")
-                Text("3. Widget: Tap the home screen widget:")
-                Text("   • 2 Taps: Save Parking")
-                Text("   • 3 Taps: Safety Check")
-                Text("   • 4 Taps: Emergency\n")
-                Text("Getting Started:", style = MaterialTheme.typography.titleSmall)
-                Text("• Set a 10+ character passphrase and a 6-digit PIN.")
-                Text("• Whitelist contacts you trust.")
-                Text("• Star up to 3 'Emergency' contacts.")
+                Text(body, style = MaterialTheme.typography.bodyMedium)
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = {
+                        // 6-digit PIN, but allow longer for forward-compatibility.
+                        pin = it.filter(Char::isDigit).take(20)
+                        // Editing the PIN only clears recoverable (WRONG_PIN)
+                        // errors. File-level errors stay surfaced because they
+                        // aren't going to be fixed by a different PIN.
+                        if (errorCategory == BackupVault.RestoreException.Category.WRONG_PIN) {
+                            errorMessage = null
+                            errorCategory = null
+                        }
+                    },
+                    label = { Text("Previous PIN") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    visualTransformation = PasswordVisualTransformation(),
+                    isError = errorMessage != null,
+                    enabled = !isUnrecoverable,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                errorMessage?.let {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         },
         confirmButton = {
-            Button(onClick = onDismiss) {
-                Text("Got it!")
+            Button(
+                onClick = {
+                    working = true
+                    val result = onRestore(pin)
+                    working = false
+                    if (result.isFailure) {
+                        val ex = result.exceptionOrNull()
+                        errorMessage = ex?.message ?: "Restore failed."
+                        errorCategory = (ex as? BackupVault.RestoreException)?.category
+                    }
+                },
+                enabled = pin.length >= 4 && !working && !isUnrecoverable
+            ) {
+                Text(if (working) "Restoring…" else "Restore")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onSkip) {
+                Text(if (isUnrecoverable) "Close" else "Skip")
             }
         }
     )
@@ -705,6 +1503,15 @@ fun OnboardingDialog(onDismiss: () -> Unit) {
 // History screen
 // -------------------------------------------------------------------------
 
+/**
+ * Newest-first log of every location request the app has handled.
+ * Successful requests render on `surfaceVariant`; failures (location
+ * timeout, missing reply action, etc.) render on `errorContainer` with a
+ * `✗` marker so they stand out.
+ *
+ * Data source: [RequestHistoryManager.getHistory], read once on first
+ * composition. Capped at 100 entries (oldest evicted on insert).
+ */
 @Composable
 fun HistoryScreen(
     modifier: Modifier = Modifier,

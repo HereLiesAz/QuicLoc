@@ -11,17 +11,41 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * One row in the request history log.
+ *
+ * @property timestamp When the request was received (epoch millis).
+ * @property sender Phone number or display name of who asked.
+ * @property source Where the request came from — `"SMS"`, the chat-app
+ *   package name (e.g. `"com.whatsapp"`), or `"Widget (N taps)"`.
+ * @property succeeded `false` if the location fetch failed or the reply
+ *   couldn't be sent. Shown with ✓ / ✗ in the History tab.
+ */
 data class RequestEvent(
     val timestamp: Long,
     val sender: String,
-    val source: String,       // "SMS", "WhatsApp", "Telegram", etc.
-    val succeeded: Boolean,   // false if location fetch failed
+    val source: String,
+    val succeeded: Boolean,
 ) {
+    /** Human-readable timestamp for the History tab, in the device locale. */
     val formattedTime: String
         get() = SimpleDateFormat("MMM d, yyyy  h:mm a", Locale.getDefault())
             .format(Date(timestamp))
 }
 
+/**
+ * Append-only log (capped at 100 entries) of every location request the
+ * app has handled, surfaced in the History tab.
+ *
+ * Stored in `EncryptedSharedPreferences` (`quicloc_history`) because it's
+ * a record of *who has been asking for your location* — exactly the kind
+ * of metadata you don't want plain on disk. Falls back to a plain
+ * `quicloc_history_fallback` if Keystore is unavailable.
+ *
+ * **Not** included in [BackupVault] — restoring the request log to a new
+ * device would put it into the user's Google Drive backup chain, which is
+ * a privacy footgun we'd rather avoid. The history is per-device.
+ */
 class RequestHistoryManager(context: Context) {
 
     companion object {

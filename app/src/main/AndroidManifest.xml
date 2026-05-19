@@ -22,6 +22,8 @@
 
     <application
         android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
@@ -45,6 +47,43 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name=".ToggleReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.hereliesaz.quicloc.ACTION_TOGGLE_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            Device Admin — opt-in. Lets QuicLoc actually lock the device via
+            DevicePolicyManager.lockNow() instead of just covering the screen.
+            Without this grant, lockdown falls back to TrackingLockActivity.
+        -->
+        <receiver
+            android:name=".QuicLocDeviceAdmin"
+            android:label="@string/device_admin_label"
+            android:description="@string/device_admin_description"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
         <!--
             Foreground service that handles location fetch + reply.
             Uses foregroundServiceType="location" so Android 14+ allows
@@ -57,12 +96,7 @@
 
         <!--
             NotificationListenerService — triggers Google Play manual review.
-            You MUST submit a Declaration in Play Console:
-              App content > Sensitive app permissions > Notification access
-            Suggested text: "QuicLoc reads incoming message notifications solely
-            to detect the trigger word 'loc' from user-approved contacts and
-            reply with the device's location. No message content is stored,
-            logged, transmitted, or shared with any third party."
+            See DECLARATIONS.md for the Play Console submission text.
         -->
         <service
             android:name=".NotificationListener"

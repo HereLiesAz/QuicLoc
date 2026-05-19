@@ -6,6 +6,29 @@ import android.content.Intent
 import android.provider.Telephony
 import android.util.Log
 
+/**
+ * BroadcastReceiver for `SMS_RECEIVED`. The SMS trigger entry point.
+ *
+ * Responsibilities:
+ *
+ *   1. Master-toggle gate ([AppSettings.isEnabled]) — short-circuit if off.
+ *   2. Reassemble multipart SMS by sender (long messages arrive as multiple
+ *      `SmsMessage` parts).
+ *   3. Match against either:
+ *        - the single-use passphrase → hand off to [TrackingService]
+ *        - the trigger word `loc` / `quicloc` + whitelist match
+ *          → hand off to [LocationReplyService]
+ *   4. For passphrase matches, clear the passphrase synchronously
+ *      ([WhitelistManager.clearPassphraseSync]) so a crash between trigger
+ *      and reboot can't leave it reusable.
+ *
+ * No `goAsync()` — we don't need it. Everything heavy (GPS, SMS send) is
+ * delegated to a foreground service. The receiver itself returns in
+ * milliseconds.
+ *
+ * Calling `startForegroundService` from a `BroadcastReceiver` is exempt
+ * from the Android 12+ FGS background-start restrictions.
+ */
 class SmsReceiver : BroadcastReceiver() {
 
     companion object {
@@ -14,6 +37,11 @@ class SmsReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
+
+        if (!AppSettings.isEnabled(context)) {
+            Log.d(TAG, "Ignoring incoming SMS — QuicLoc disabled")
+            return
+        }
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
         if (messages.isNullOrEmpty()) return
@@ -38,10 +66,9 @@ class SmsReceiver : BroadcastReceiver() {
 
             if (isPassphraseTrigger) {
                 Log.d(TAG, "Passphrase trigger from $sender — starting TrackingService")
-                // Invalidate passphrase (single-use)
-                whitelistManager.setPassphrase(null)
-
-                // Start tracking service
+                // Commit synchronously so a crash between now and the next boot
+                // can't leave the single-use passphrase usable a second time.
+                whitelistManager.clearPassphraseSync()
                 TrackingService.startForSms(context, sender)
                 continue
             }
@@ -53,9 +80,8 @@ class SmsReceiver : BroadcastReceiver() {
 
             if (body == "loc" || body == "quicloc") {
                 Log.d(TAG, "Trigger from $sender — starting LocationReplyService")
-                // Hand off to the foreground service immediately.
-                // The receiver returns in milliseconds; the service does the
-                // actual GPS wait and reply with no time limit.
+                // Hand off to the foreground service. The receiver returns in
+                // milliseconds; the service does the GPS wait + reply.
                 LocationReplyService.startForSms(context, sender)
             }
         }
