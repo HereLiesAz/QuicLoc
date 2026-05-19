@@ -210,19 +210,39 @@ class TrackingService : Service() {
 
             saveState()
             Log.d(TAG, "Starting tracking for $sender via $source")
+            // Fire the first location fetch immediately, BEFORE we lock the
+            // device. fetchLocation is async — it just kicks off the
+            // FusedLocationProvider request and returns. Doing it here gives
+            // the GPS subsystem a head start while the screen is still on.
+            // The subsequent periodic ticks are scheduled by trackingRunnable
+            // re-posting itself.
+            sendLocationUpdate()
+            handler.postDelayed(trackingRunnable, if (isPanicMode) 60_000L else 300_000L)
             showForegroundNotification()
-            handler.post(trackingRunnable)
         }
 
         return START_STICKY
     }
 
+    /**
+     * Ordering matters here. We must:
+     *
+     *   1. Claim FGS status FIRST, so we have background-activity-start
+     *      privileges and so the location-typed FGS is registered with the
+     *      OS before anything else runs. If we lock first, the OS-level
+     *      "no background work" rules kick in before our FGS is recognised
+     *      and the immediate location fetch silently times out.
+     *   2. Launch the PIN-gate Activity SECOND, before the device actually
+     *      locks. Combined with the activity's manifest `showWhenLocked=true`,
+     *      it draws over the keyguard AND stays on top once the user unlocks
+     *      it — so the QuicLoc PIN is required even after a Device Admin
+     *      `lockNow`. Without this step a thief could just enter the system
+     *      PIN and walk away from the tracking.
+     *   3. Lock via Device Admin LAST. If admin isn't granted, the
+     *      `FullScreenIntent` + `startActivity` above are the only barrier,
+     *      but they're always wired up regardless of grant state.
+     */
     private fun showForegroundNotification() {
-        // Preferred path: actually lock the device via Device Admin. This
-        // requires the user to have granted admin rights in settings; if not
-        // granted, we fall back to covering the screen with our own Activity.
-        val realLockSucceeded = LockdownController.lockNow(this)
-
         val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         }
@@ -233,34 +253,17 @@ class TrackingService : Service() {
 
         val builder = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("QuicLoc Tracking Active")
-            .setContentText(
-                if (realLockSucceeded)
-                    "Device locked. Your PIN is required to resume tracking-disable."
-                else
-                    "Tracking the device's location. Enter your PIN in the QuicLoc lock screen to stop."
-            )
+            .setContentText("Enter your QuicLoc PIN to stop tracking.")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentIntent(pendingIntent)
+            // Always wired up — the PIN gate must surface regardless of
+            // whether Device Admin lockNow succeeds. On Android 14+ this
+            // requires USE_FULL_SCREEN_INTENT to be granted (the in-app
+            // permissions panel exposes it).
+            .setFullScreenIntent(pendingIntent, true)
             .setOngoing(true)
 
-        // Only use a full-screen intent when we couldn't real-lock — the
-        // cover-screen Activity needs to come to the foreground over the
-        // keyguard. On Android 14+ this requires USE_FULL_SCREEN_INTENT to
-        // be granted from settings; if it isn't, the activity won't appear,
-        // but the device is still being tracked via this service.
-        if (!realLockSucceeded) {
-            builder.setFullScreenIntent(pendingIntent, true)
-            // Best-effort: also try to launch directly. This is allowed when
-            // the service was started by a NotificationListenerService (which
-            // grants background-activity-launch privileges) but blocked from
-            // a vanilla SMS broadcast on Android 10+.
-            try {
-                startActivity(lockIntent)
-            } catch (e: SecurityException) {
-                Log.w(TAG, "Could not start lock activity from background", e)
-            }
-        }
-
+        // Step 1: claim FGS status.
         ServiceCompat.startForeground(
             this,
             NOTIF_ID,
@@ -269,6 +272,17 @@ class TrackingService : Service() {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
             } else 0
         )
+
+        // Step 2: bring the PIN-gate Activity up BEFORE locking.
+        try {
+            startActivity(lockIntent)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not start lock activity directly — relying on FullScreenIntent", e)
+        }
+
+        // Step 3: lock via Device Admin. Best-effort — no-op if admin not granted.
+        val realLockSucceeded = LockdownController.lockNow(this)
+        Log.d(TAG, "Lock attempt: realLockSucceeded=$realLockSucceeded")
     }
 
     @SuppressLint("MissingPermission")

@@ -75,12 +75,19 @@ class TrackingLockActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         failCount = savedInstanceState?.getInt("FAIL_COUNT", 0) ?: 0
 
-        // Window flags for lock screen behavior
+        // Show this activity over the keyguard and wake the screen, but DO
+        // NOT dismiss the keyguard itself — the user must satisfy BOTH the
+        // system unlock AND the QuicLoc PIN to stop tracking. A previous
+        // version included FLAG_DISMISS_KEYGUARD, which on a non-secure
+        // lockscreen actively bypassed the device lock; that's removed.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
         window.addFlags(
             android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-            android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-            android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-            android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
         )
 
         cameraExecutor = Executors.newSingleThreadExecutor()
