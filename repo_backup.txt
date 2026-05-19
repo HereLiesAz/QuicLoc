@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    a37217c53caa0a9b40e5088a37169e2dc8be19fc
-  Timestamp: 2026-05-19 14:29:39 UTC
+  Commit:    3115111f5f1e16ebdddfe8d3ea4cfa331b305dbb
+  Timestamp: 2026-05-19 14:41:27 UTC
 ======================================================
 
 
@@ -3599,6 +3599,7 @@ import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import androidx.core.app.NotificationCompat
 
 /**
  * Listens for notifications from any messaging app and replies via the
@@ -3725,8 +3726,10 @@ class NotificationListener : NotificationListenerService() {
         val notifTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
 
         // 1. MessagingStyle — the right shape for any modern chat app.
+        //    Use the AndroidX compat version so we don't depend on
+        //    platform-class API levels that vary by device SDK.
         try {
-            val style = Notification.MessagingStyle
+            val style = NotificationCompat.MessagingStyle
                 .extractMessagingStyleFromNotification(notification)
             if (style != null) {
                 val msgs = style.messages
