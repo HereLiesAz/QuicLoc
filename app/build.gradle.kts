@@ -12,7 +12,7 @@ plugins {
 
 android {
     namespace = "com.hereliesaz.quicloc"
-    compileSdk = 36
+    compileSdk = 37
 
     val versionPropsFile = file("version.properties")
     val versionProps = Properties()
