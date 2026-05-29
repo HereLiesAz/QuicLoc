@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    2b26ffdf742a426eff520dbae7885bd56e9cb070
-  Timestamp: 2026-05-19 20:47:19 UTC
+  Commit:    1d1e14cd6a183242c4f5a6b27187f62e681d678b
+  Timestamp: 2026-05-29 06:02:48 UTC
 ======================================================
 
 
@@ -28,7 +28,8 @@
       "Bash(git stash *)",
       "Bash(git pull *)",
       "Bash(./gradlew :app:compileDebugKotlin)",
-      "Bash(sh /run/media/az/0722-7C65/QuicLoc/gradlew -p /run/media/az/0722-7C65/QuicLoc :app:compileDebugKotlin)"
+      "Bash(sh /run/media/az/0722-7C65/QuicLoc/gradlew -p /run/media/az/0722-7C65/QuicLoc :app:compileDebugKotlin)",
+      "Bash(./gradlew testDebugUnitTest:*)"
     ]
   }
 }
@@ -6131,16 +6132,19 @@ class WhitelistManager(context: Context) {
     }
 
     /**
-     * Add a phone number to the whitelist. The input is normalized through
-     * [cleanPhoneNumber] (digits and `+` only); display-name entries should
-     * use [replaceAllNumbers] instead. Duplicates are silently ignored
-     * (`Set` semantics).
+     * Add a phone number **or display name** to the whitelist. If the input
+     * contains at least one digit, it is normalized through [cleanPhoneNumber]
+     * (digits and `+` only). If it contains no digits at all (i.e. it is a
+     * display name like "Mom"), the trimmed original string is stored as-is
+     * so notification-based matching via [isWhitelistedByName] works.
+     * Duplicates are silently ignored (`Set` semantics).
      */
     fun addNumber(number: String) {
         val clean = cleanPhoneNumber(number)
-        if (clean.isNotEmpty()) {
+        val toStore = if (clean.isEmpty()) number.trim() else clean
+        if (toStore.isNotEmpty()) {
             val numbers = getNumbers().toMutableSet()
-            numbers.add(clean)
+            numbers.add(toStore)
             saveNumbers(numbers)
             BackupVault.snapshotAsync(appContext)
         }
@@ -7515,18 +7519,16 @@ class ManifestRegistrationTest {
     // ---- backup rules ----------------------------------------------------
 
     @Test
-    fun `application declares fullBackupContent and dataExtractionRules`() {
-        val info = pm.getApplicationInfo(
-            context.packageName,
-            PackageManager.GET_META_DATA
-        )
-        // fullBackupContent resource ID is in `fullBackupContent` since
-        // API 23; for API 31+, dataExtractionRules is in
-        // `dataExtractionRulesRes`. Both should be non-zero (set).
-        assertTrue(
-            "fullBackupContent attribute must be set (pointer to backup_rules.xml)",
-            info.fullBackupContent != 0
-        )
+    fun `backup rules XML resources exist`() {
+        // The manifest declares both android:fullBackupContent and
+        // android:dataExtractionRules pointing to XML resources. Verify
+        // the resources are resolvable.  (The ApplicationInfo fields for
+        // these attributes were removed from the public SDK in API 35,
+        // so we verify the resource directly instead.)
+        val backupRes = context.resources.getIdentifier("backup_rules", "xml", context.packageName)
+        assertTrue("backup_rules.xml must exist", backupRes != 0)
+        val extractionRes = context.resources.getIdentifier("data_extraction_rules", "xml", context.packageName)
+        assertTrue("data_extraction_rules.xml must exist", extractionRes != 0)
     }
 }
 
@@ -7758,8 +7760,45 @@ class WhitelistManagerTest {
     }
 
     @Test
-    fun `add ignores empty input after normalization`() {
-        whitelist.addNumber("---")
+    fun `addNumber stores display name when input has no digits`() {
+        whitelist.addNumber("Mom")
+        assertTrue(whitelist.getNumbers().contains("Mom"))
+    }
+
+    @Test
+    fun `addNumber stores trimmed display name`() {
+        whitelist.addNumber("  Mom  ")
+        assertTrue(whitelist.getNumbers().contains("Mom"))
+        assertEquals(1, whitelist.getNumbers().size)
+    }
+
+    @Test
+    fun `addNumber with display name enables isWhitelistedByName matching`() {
+        whitelist.addNumber("Mom")
+        assertTrue(whitelist.isWhitelistedByName("Mom"))
+        assertTrue(whitelist.isWhitelistedByName("mom"))
+        assertTrue(whitelist.isWhitelistedByName("MOM"))
+    }
+
+    @Test
+    fun `addNumber with display name and phone number stores both`() {
+        whitelist.addNumber("Mom")
+        whitelist.addNumber("+15551234567")
+        assertEquals(2, whitelist.getNumbers().size)
+        assertTrue(whitelist.getNumbers().contains("Mom"))
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+        assertTrue(whitelist.isWhitelistedByName("Mom"))
+    }
+
+    @Test
+    fun `addNumber drops blank and whitespace-only input`() {
+        whitelist.addNumber("")
+        whitelist.addNumber("   ")
+        assertTrue(whitelist.getNumbers().isEmpty())
+    }
+
+    @Test
+    fun `add ignores empty input`() {
         whitelist.addNumber("")
         assertTrue(whitelist.getNumbers().isEmpty())
     }
