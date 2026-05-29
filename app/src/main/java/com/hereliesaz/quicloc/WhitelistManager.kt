@@ -86,16 +86,19 @@ class WhitelistManager(context: Context) {
     }
 
     /**
-     * Add a phone number to the whitelist. The input is normalized through
-     * [cleanPhoneNumber] (digits and `+` only); display-name entries should
-     * use [replaceAllNumbers] instead. Duplicates are silently ignored
-     * (`Set` semantics).
+     * Add a phone number **or display name** to the whitelist. If the input
+     * contains at least one digit, it is normalized through [cleanPhoneNumber]
+     * (digits and `+` only). If it contains no digits at all (i.e. it is a
+     * display name like "Mom"), the trimmed original string is stored as-is
+     * so notification-based matching via [isWhitelistedByName] works.
+     * Duplicates are silently ignored (`Set` semantics).
      */
     fun addNumber(number: String) {
         val clean = cleanPhoneNumber(number)
-        if (clean.isNotEmpty()) {
+        val toStore = if (clean.isEmpty()) number.trim() else clean
+        if (toStore.isNotEmpty()) {
             val numbers = getNumbers().toMutableSet()
-            numbers.add(clean)
+            numbers.add(toStore)
             saveNumbers(numbers)
             BackupVault.snapshotAsync(appContext)
         }

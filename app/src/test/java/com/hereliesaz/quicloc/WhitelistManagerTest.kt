@@ -54,8 +54,45 @@ class WhitelistManagerTest {
     }
 
     @Test
-    fun `add ignores empty input after normalization`() {
-        whitelist.addNumber("---")
+    fun `addNumber stores display name when input has no digits`() {
+        whitelist.addNumber("Mom")
+        assertTrue(whitelist.getNumbers().contains("Mom"))
+    }
+
+    @Test
+    fun `addNumber stores trimmed display name`() {
+        whitelist.addNumber("  Mom  ")
+        assertTrue(whitelist.getNumbers().contains("Mom"))
+        assertEquals(1, whitelist.getNumbers().size)
+    }
+
+    @Test
+    fun `addNumber with display name enables isWhitelistedByName matching`() {
+        whitelist.addNumber("Mom")
+        assertTrue(whitelist.isWhitelistedByName("Mom"))
+        assertTrue(whitelist.isWhitelistedByName("mom"))
+        assertTrue(whitelist.isWhitelistedByName("MOM"))
+    }
+
+    @Test
+    fun `addNumber with display name and phone number stores both`() {
+        whitelist.addNumber("Mom")
+        whitelist.addNumber("+15551234567")
+        assertEquals(2, whitelist.getNumbers().size)
+        assertTrue(whitelist.getNumbers().contains("Mom"))
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+        assertTrue(whitelist.isWhitelistedByName("Mom"))
+    }
+
+    @Test
+    fun `addNumber drops blank and whitespace-only input`() {
+        whitelist.addNumber("")
+        whitelist.addNumber("   ")
+        assertTrue(whitelist.getNumbers().isEmpty())
+    }
+
+    @Test
+    fun `add ignores empty input`() {
         whitelist.addNumber("")
         assertTrue(whitelist.getNumbers().isEmpty())
     }
