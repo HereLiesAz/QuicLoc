@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    claude/debug-loc-messaging-u0p51l
-  Commit:    fe43c1458d12d8db3f4db3d39395f289b4999fe6
-  Timestamp: 2026-06-17 21:36:42 UTC
+  Commit:    58f2b6ebe35e4f43ce7cc50e2d28bcfe61284ba7
+  Timestamp: 2026-06-17 21:43:30 UTC
 ======================================================
 
 
@@ -1433,8 +1433,9 @@ data class DiagnosticEvent(
     val reason: String,
 ) {
     /** Human-readable timestamp for the Diagnostics list, in the device locale. */
-    val formattedTime: String
-        get() = SimpleDateFormat("MMM d  h:mm:ss a", Locale.getDefault()).format(Date(timestamp))
+    val formattedTime: String by lazy {
+        SimpleDateFormat("MMM d  h:mm:ss a", Locale.getDefault()).format(Date(timestamp))
+    }
 }
 
 /**
@@ -1450,7 +1451,7 @@ data class DiagnosticEvent(
  * and, crucially, **not** added to [BackupVault] (per-device only).
  *
  * All writes run on a single background [executor]: [NotificationListener]
- * calls us from a binder thread, and under capture-all that can be every
+ * callbacks run on the app main thread, and under capture-all that can be every
  * notification on the device, so the AES + JSON re-serialize must stay off the
  * caller's thread. Serializing on one thread also makes [updateOutcome]'s
  * read-modify-write patch-by-id race-free against concurrent [record] calls.
@@ -1465,9 +1466,38 @@ class DiagnosticLogManager(context: Context) {
 
         // Shared so all instances serialize their writes onto one thread.
         private val executor = Executors.newSingleThreadExecutor()
+
+        // Cached process-wide so the expensive Keystore + EncryptedSharedPreferences
+        // init runs at most once, not on every instantiation (we build a fresh
+        // manager per intake event / reply).
+        @Volatile
+        private var cachedPrefs: SharedPreferences? = null
+
+        private fun getPrefs(context: Context): SharedPreferences =
+            cachedPrefs ?: synchronized(this) {
+                cachedPrefs ?: createEncryptedPrefs(context.applicationContext).also { cachedPrefs = it }
+            }
+
+        private fun createEncryptedPrefs(context: Context): SharedPreferences {
+            return try {
+                val masterKey = MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+                EncryptedSharedPreferences.create(
+                    context,
+                    PREFS_FILE,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Falling back to plaintext prefs for diagnostics", e)
+                context.getSharedPreferences("${PREFS_FILE}_fallback", Context.MODE_PRIVATE)
+            }
+        }
     }
 
-    private val prefs: SharedPreferences = createEncryptedPrefs(context)
+    private val prefs: SharedPreferences = getPrefs(context)
 
     // -------------------------------------------------------------------------
     // Public API
@@ -1571,24 +1601,6 @@ class DiagnosticLogManager(context: Context) {
             array.put(obj)
         }
         prefs.edit().putString(KEY_EVENTS, array.toString()).apply()
-    }
-
-    private fun createEncryptedPrefs(context: Context): SharedPreferences {
-        return try {
-            val masterKey = MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-            EncryptedSharedPreferences.create(
-                context,
-                PREFS_FILE,
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Falling back to plaintext prefs for diagnostics", e)
-            context.getSharedPreferences("${PREFS_FILE}_fallback", Context.MODE_PRIVATE)
-        }
     }
 }
 
@@ -2321,6 +2333,8 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest
 import com.google.android.gms.auth.api.identity.Identity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Top-level navigation state for the authenticated app. A 4-branch `when`
@@ -3143,7 +3157,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             )
                             MainView.Diagnostics -> DiagnosticsScreen(
                                 modifier = Modifier.padding(innerPadding),
-                                diagManager = DiagnosticLogManager(this@MainActivity),
                                 notificationAccessGranted = notificationAccessGranted,
                                 appEnabled = enabled,
                                 whitelistCount = numbersList.size,
@@ -4602,7 +4615,6 @@ fun RestoreFromBackupDialog(
 @Composable
 fun DiagnosticsScreen(
     modifier: Modifier = Modifier,
-    diagManager: DiagnosticLogManager,
     notificationAccessGranted: Boolean,
     appEnabled: Boolean,
     whitelistCount: Int,
@@ -4611,7 +4623,15 @@ fun DiagnosticsScreen(
     onRequestNotificationAccess: () -> Unit,
 ) {
     val context = LocalContext.current
-    var events by remember { mutableStateOf(diagManager.getEvents()) }
+    // Built once (Keystore init is expensive) and kept across recompositions.
+    val diagManager = remember { DiagnosticLogManager(context) }
+    // Load + decrypt off the composition thread so navigating here never janks.
+    var events by remember { mutableStateOf<List<DiagnosticEvent>>(emptyList()) }
+    var loaded by remember { mutableStateOf(false) }
+    LaunchedEffect(diagManager) {
+        events = withContext(Dispatchers.IO) { diagManager.getEvents() }
+        loaded = true
+    }
     var captureAll by remember { mutableStateOf(initialCaptureAll) }
 
     Column(
@@ -4708,12 +4728,14 @@ fun DiagnosticsScreen(
 
         // --- Event list ---
         if (events.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "No 'loc' messages logged yet.\nSend yourself 'loc' to test.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            if (loaded) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "No 'loc' messages logged yet.\nSend yourself 'loc' to test.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         } else {
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
@@ -5586,7 +5608,9 @@ class SmsReceiver : BroadcastReceiver() {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
 
         val captureAll = AppSettings.isDiagCaptureAll(context)
-        val diag = DiagnosticLogManager(context)
+        // Lazy so the EncryptedSharedPreferences / Keystore init only happens
+        // when we actually record a diagnostic — not for every passing SMS.
+        val diag by lazy { DiagnosticLogManager(context) }
 
         if (!AppSettings.isEnabled(context)) {
             Log.d(TAG, "Ignoring incoming SMS — QuicLoc disabled")
