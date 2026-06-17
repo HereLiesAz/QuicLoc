@@ -1,10 +1,15 @@
 package com.hereliesaz.quicloc
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.ContactsContract
 import android.telephony.PhoneNumberUtils
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
@@ -201,14 +206,77 @@ class WhitelistManager(context: Context) {
 
     /**
      * Used for notifications: matches by display name OR phone number.
-     * Notification senders may show a contact name rather than a raw number.
+     * Notification senders almost always show a contact *name* rather than a
+     * raw number, while the whitelist often holds *numbers* (e.g. added via the
+     * contact picker, or typed in). Matching strategy, cheapest first:
+     *
+     *   1. Direct string equality against a whitelist entry (covers whitelisting
+     *      a display name like "Mom" when the notification shows exactly "Mom").
+     *   2. Phone-number compare (covers apps that surface a raw number).
+     *   3. Contacts resolution: look up the incoming display name in the device
+     *      Contacts, and if any of that contact's phone numbers is whitelisted,
+     *      it's a match. This is what makes a *number-only* whitelist work for
+     *      WhatsApp / Messenger / Google Voice, where the sender is a name.
+     *
+     * Step 3 requires `READ_CONTACTS`; without it we degrade to steps 1–2 (the
+     * previous behavior).
      */
     fun isWhitelistedByName(displayName: String): Boolean {
         val nameLower = displayName.trim().lowercase()
-        return getNumbers().any { entry ->
+        val numbers = getNumbers()
+
+        val directMatch = numbers.any { entry ->
             val entryLower = entry.trim().lowercase()
             entryLower == nameLower ||
                 PhoneNumberUtils.compare(cleanPhoneNumber(displayName), cleanPhoneNumber(entry))
+        }
+        if (directMatch) return true
+
+        // Resolve the notification's display name to the contact's phone
+        // numbers, then check those against the whitelist.
+        val contactNumbers = resolveContactNumbers(displayName)
+        return contactNumbers.any { contactNumber ->
+            numbers.any { entry -> PhoneNumberUtils.compare(contactNumber, entry) }
+        }
+    }
+
+    /**
+     * Looks up [displayName] in the device Contacts and returns every phone
+     * number associated with the matching contact(s). Uses
+     * [ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI], which matches
+     * on name prefix — so "Mom ❤️" still resolves the contact named "Mom".
+     * Returns empty if `READ_CONTACTS` isn't granted or nothing matches.
+     */
+    private fun resolveContactNumbers(displayName: String): List<String> {
+        val name = displayName.trim()
+        if (name.isEmpty()) return emptyList()
+        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.READ_CONTACTS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            return emptyList()
+        }
+
+        val uri = Uri.withAppendedPath(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI,
+            Uri.encode(name)
+        )
+        val results = mutableListOf<String>()
+        return try {
+            appContext.contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                null, null, null
+            )?.use { cursor ->
+                val numberIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                if (numberIdx < 0) return@use
+                while (cursor.moveToNext()) {
+                    cursor.getString(numberIdx)?.takeIf { it.isNotBlank() }?.let { results.add(it) }
+                }
+            }
+            results
+        } catch (e: Exception) {
+            Log.e(TAG, "Contact lookup failed for '$name'", e)
+            emptyList()
         }
     }
 

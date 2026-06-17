@@ -15,6 +15,7 @@ object AppSettings {
     private const val KEY_DEVICE_ADMIN_PROMPTED = "device_admin_prompted"
     private const val KEY_FULL_SCREEN_PROMPTED = "full_screen_intent_prompted"
     private const val KEY_PHONE_HINT_PROMPTED = "phone_hint_prompted"
+    private const val KEY_DIAG_CAPTURE_ALL = "diag_capture_all"
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
@@ -61,5 +62,18 @@ object AppSettings {
 
     fun markPhoneHintAutoPrompted(context: Context) {
         prefs(context).edit().putBoolean(KEY_PHONE_HINT_PROMPTED, true).apply()
+    }
+
+    /**
+     * Debug switch for the diagnostic log. When on, [NotificationListener]
+     * records a diagnostic entry for *every* notification it evaluates — not
+     * just messages containing the trigger word — so apps whose body is
+     * extracted incorrectly become visible. Noisy; default off.
+     */
+    fun isDiagCaptureAll(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_DIAG_CAPTURE_ALL, false)
+
+    fun setDiagCaptureAll(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_DIAG_CAPTURE_ALL, enabled).apply()
     }
 }

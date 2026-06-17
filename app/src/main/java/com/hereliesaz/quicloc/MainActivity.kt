@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
@@ -37,6 +38,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -62,6 +64,7 @@ import com.google.android.gms.auth.api.identity.Identity
 sealed class MainView {
     data object Config : MainView()
     data object History : MainView()
+    data object Diagnostics : MainView()
     data object TutorialsHub : MainView()
     data class TutorialDetail(val tutorialId: String, val fromOnboarding: Boolean = false) : MainView()
 }
@@ -799,6 +802,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             val (title, navBack) = when (val v = view) {
                                 MainView.Config -> "QuicLoc" to null
                                 MainView.History -> "Request History" to { view = MainView.Config }
+                                MainView.Diagnostics -> "Diagnostics" to { view = MainView.Config }
                                 MainView.TutorialsHub -> "Tutorials" to { view = MainView.Config }
                                 is MainView.TutorialDetail -> {
                                     val t = Tutorials.byId(v.tutorialId)
@@ -846,6 +850,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                                 tint = MaterialTheme.colorScheme.onPrimaryContainer
                                             )
                                         }
+                                        IconButton(onClick = { view = MainView.Diagnostics }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Build,
+                                                contentDescription = "Diagnostics",
+                                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
                                     }
                                 }
                             )
@@ -855,6 +866,18 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             MainView.History -> HistoryScreen(
                                 modifier = Modifier.padding(innerPadding),
                                 historyManager = RequestHistoryManager(this@MainActivity)
+                            )
+                            MainView.Diagnostics -> DiagnosticsScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                diagManager = DiagnosticLogManager(this@MainActivity),
+                                notificationAccessGranted = notificationAccessGranted,
+                                appEnabled = enabled,
+                                whitelistCount = numbersList.size,
+                                initialCaptureAll = AppSettings.isDiagCaptureAll(this@MainActivity),
+                                onToggleCaptureAll = {
+                                    AppSettings.setDiagCaptureAll(this@MainActivity, it)
+                                },
+                                onRequestNotificationAccess = { checkNotificationListenerPermission() },
                             )
                             MainView.TutorialsHub -> TutorialsHubScreen(
                                 modifier = Modifier.padding(innerPadding),
@@ -2286,6 +2309,204 @@ fun RestoreFromBackupDialog(
             }
         }
     )
+}
+
+// -------------------------------------------------------------------------
+// Diagnostics screen
+// -------------------------------------------------------------------------
+
+/**
+ * Debugging screen that answers "I messaged 'loc' — what did the app do with
+ * it?". Shows the readiness checks first (Notification Access is the big one —
+ * without it the whole chat-app path is dead), then a newest-first log of every
+ * `loc` message and the exact decision QuicLoc reached, in plain English.
+ *
+ * Sourced from [DiagnosticLogManager]. The capture-all switch flips
+ * [AppSettings.setDiagCaptureAll] so the listener logs *every* notification —
+ * useful to catch an app whose message text is read out wrongly.
+ */
+@Composable
+fun DiagnosticsScreen(
+    modifier: Modifier = Modifier,
+    diagManager: DiagnosticLogManager,
+    notificationAccessGranted: Boolean,
+    appEnabled: Boolean,
+    whitelistCount: Int,
+    initialCaptureAll: Boolean,
+    onToggleCaptureAll: (Boolean) -> Unit,
+    onRequestNotificationAccess: () -> Unit,
+) {
+    val context = LocalContext.current
+    var events by remember { mutableStateOf(diagManager.getEvents()) }
+    var captureAll by remember { mutableStateOf(initialCaptureAll) }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        // --- Readiness status card ---
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer
+            )
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Status",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Spacer(Modifier.height(6.dp))
+                StatusRow("Notification Access", notificationAccessGranted)
+                if (!notificationAccessGranted) {
+                    Text(
+                        text = "Without this, QuicLoc can't see WhatsApp / Messenger / " +
+                            "Google Voice messages at all.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    TextButton(onClick = onRequestNotificationAccess) { Text("Grant access") }
+                }
+                StatusRow("QuicLoc enabled", appEnabled)
+                StatusRow("Whitelist contacts", whitelistCount > 0, "$whitelistCount")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Chat apps match the contact NAME shown in the notification, " +
+                        "not the phone number. If a sender shows as a name that isn't in " +
+                        "your whitelist, the request is ignored.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
+
+        // --- Capture-all toggle ---
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Capture all notifications", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = "Logs every notification QuicLoc sees (noisy). Turn on " +
+                            "briefly to debug one app, then off.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = captureAll,
+                    onCheckedChange = {
+                        captureAll = it
+                        onToggleCaptureAll(it)
+                    }
+                )
+            }
+        }
+
+        // --- Actions ---
+        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+            TextButton(
+                onClick = {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, diagManager.exportAsText())
+                    }
+                    context.startActivity(Intent.createChooser(send, "Share diagnostics"))
+                }
+            ) { Text("Copy / Share") }
+            Spacer(Modifier.weight(1f))
+            TextButton(
+                onClick = {
+                    diagManager.clear()
+                    events = emptyList()
+                }
+            ) { Text("Clear") }
+        }
+
+        // --- Event list ---
+        if (events.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "No 'loc' messages logged yet.\nSend yourself 'loc' to test.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                items(events) { event ->
+                    val container = when (event.outcome) {
+                        DiagOutcome.REPLY_SENT -> MaterialTheme.colorScheme.surfaceVariant
+                        DiagOutcome.PASSPHRASE_TRIGGER,
+                        DiagOutcome.DISPATCHED -> MaterialTheme.colorScheme.secondaryContainer
+                        DiagOutcome.EVALUATED_NO_ACTION,
+                        DiagOutcome.NOT_A_TRIGGER,
+                        DiagOutcome.DEDUPED -> MaterialTheme.colorScheme.surface
+                        else -> MaterialTheme.colorScheme.errorContainer
+                    }
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = CardDefaults.cardColors(containerColor = container)
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                            Text(
+                                text = if (event.rawSender.isBlank()) "(unknown sender)"
+                                    else event.rawSender,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Text(
+                                text = "${event.source} · ${event.formattedTime}" +
+                                    (event.extractionPath?.let { " · $it" } ?: ""),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (event.rawBody.isNotBlank()) {
+                                Text(
+                                    text = "\"${event.rawBody}\"",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "${event.outcome}: ${event.reason}",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** A label + ✓/✗ status line for the Diagnostics status card. */
+@Composable
+private fun StatusRow(label: String, ok: Boolean, value: String? = null) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = value ?: if (ok) "✓" else "✗",
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+        )
+    }
 }
 
 // -------------------------------------------------------------------------

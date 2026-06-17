@@ -44,16 +44,18 @@ class LocationReplyService : Service() {
         const val EXTRA_SOURCE = "source"           // "SMS", package name for notifs, "Widget"
         const val EXTRA_REPLY_MODE = "reply_mode"   // "sms" or "notification"
         const val EXTRA_ACTION_TOKEN = "action_token"
+        const val EXTRA_DIAG_ID = "diag_id"          // row to patch in DiagnosticLogManager
 
         // Keyed by per-trigger UUID so concurrent triggers don't clobber each
         // other (fixes the previous static-singleton race).
         private val pendingActions = ConcurrentHashMap<String, Notification.Action>()
 
-        fun startForSms(context: Context, sender: String) {
+        fun startForSms(context: Context, sender: String, diagId: String? = null) {
             val intent = Intent(context, LocationReplyService::class.java).apply {
                 putExtra(EXTRA_SENDER, sender)
                 putExtra(EXTRA_SOURCE, "SMS")
                 putExtra(EXTRA_REPLY_MODE, "sms")
+                putExtra(EXTRA_DIAG_ID, diagId)
             }
             context.startForegroundService(intent)
         }
@@ -62,7 +64,8 @@ class LocationReplyService : Service() {
             context: Context,
             sender: String,
             source: String,
-            action: Notification.Action
+            action: Notification.Action,
+            diagId: String? = null
         ) {
             val token = UUID.randomUUID().toString()
             pendingActions[token] = action
@@ -71,6 +74,7 @@ class LocationReplyService : Service() {
                 putExtra(EXTRA_SOURCE, source)
                 putExtra(EXTRA_REPLY_MODE, "notification")
                 putExtra(EXTRA_ACTION_TOKEN, token)
+                putExtra(EXTRA_DIAG_ID, diagId)
             }
             context.startForegroundService(intent)
         }
@@ -198,6 +202,10 @@ class LocationReplyService : Service() {
         // start, abort. Widget taps are user-initiated so they still fire.
         if (intent.action != ACTION_WIDGET_TAP && !AppSettings.isEnabled(applicationContext)) {
             Log.d(TAG, "QuicLoc disabled — aborting reply")
+            intent.getStringExtra(EXTRA_DIAG_ID)?.let {
+                DiagnosticLogManager(this).updateOutcome(it, DiagOutcome.APP_DISABLED,
+                    "QuicLoc was toggled off before the reply could be sent")
+            }
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -217,6 +225,7 @@ class LocationReplyService : Service() {
         }
         val source = intent.getStringExtra(EXTRA_SOURCE) ?: "Unknown"
         val replyMode = intent.getStringExtra(EXTRA_REPLY_MODE) ?: "sms"
+        val diagId = intent.getStringExtra(EXTRA_DIAG_ID)
 
         Log.d(TAG, "Starting location fetch for $sender via $source (mode=$replyMode)")
 
@@ -227,6 +236,7 @@ class LocationReplyService : Service() {
                     phoneNumber = sender,
                     onResult = { succeeded ->
                         RequestHistoryManager(this).record(sender, source, succeeded)
+                        patchDiag(diagId, succeeded, source)
                         stopSelf(startId)
                     }
                 )
@@ -237,6 +247,10 @@ class LocationReplyService : Service() {
                 if (action == null) {
                     Log.e(TAG, "No pending notification action for token $token")
                     RequestHistoryManager(this).record(sender, source, false)
+                    diagId?.let {
+                        DiagnosticLogManager(this).updateOutcome(it, DiagOutcome.NO_PENDING_ACTION,
+                            "The reply action expired before the service could use it")
+                    }
                     stopSelf(startId)
                     return START_NOT_STICKY
                 }
@@ -246,6 +260,7 @@ class LocationReplyService : Service() {
                     notificationKey = "",
                     onResult = { succeeded ->
                         RequestHistoryManager(this).record(sender, source, succeeded)
+                        patchDiag(diagId, succeeded, source)
                         stopSelf(startId)
                     }
                 )
@@ -254,6 +269,17 @@ class LocationReplyService : Service() {
         }
 
         return START_NOT_STICKY
+    }
+
+    /** Flips the interim DISPATCHED diagnostic row to its final state. */
+    private fun patchDiag(diagId: String?, succeeded: Boolean, source: String) {
+        diagId ?: return
+        DiagnosticLogManager(this).updateOutcome(
+            diagId,
+            if (succeeded) DiagOutcome.REPLY_SENT else DiagOutcome.REPLY_FAILED,
+            if (succeeded) "Location reply sent via $source"
+            else "Couldn't fetch location or send the reply via $source"
+        )
     }
 
     // -------------------------------------------------------------------------
