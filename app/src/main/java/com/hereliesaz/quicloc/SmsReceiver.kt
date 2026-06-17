@@ -39,7 +39,9 @@ class SmsReceiver : BroadcastReceiver() {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
 
         val captureAll = AppSettings.isDiagCaptureAll(context)
-        val diag = DiagnosticLogManager(context)
+        // Lazy so the EncryptedSharedPreferences / Keystore init only happens
+        // when we actually record a diagnostic — not for every passing SMS.
+        val diag by lazy { DiagnosticLogManager(context) }
 
         if (!AppSettings.isEnabled(context)) {
             Log.d(TAG, "Ignoring incoming SMS — QuicLoc disabled")

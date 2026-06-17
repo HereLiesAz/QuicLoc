@@ -70,8 +70,9 @@ data class DiagnosticEvent(
     val reason: String,
 ) {
     /** Human-readable timestamp for the Diagnostics list, in the device locale. */
-    val formattedTime: String
-        get() = SimpleDateFormat("MMM d  h:mm:ss a", Locale.getDefault()).format(Date(timestamp))
+    val formattedTime: String by lazy {
+        SimpleDateFormat("MMM d  h:mm:ss a", Locale.getDefault()).format(Date(timestamp))
+    }
 }
 
 /**
@@ -87,7 +88,7 @@ data class DiagnosticEvent(
  * and, crucially, **not** added to [BackupVault] (per-device only).
  *
  * All writes run on a single background [executor]: [NotificationListener]
- * calls us from a binder thread, and under capture-all that can be every
+ * callbacks run on the app main thread, and under capture-all that can be every
  * notification on the device, so the AES + JSON re-serialize must stay off the
  * caller's thread. Serializing on one thread also makes [updateOutcome]'s
  * read-modify-write patch-by-id race-free against concurrent [record] calls.
@@ -102,9 +103,38 @@ class DiagnosticLogManager(context: Context) {
 
         // Shared so all instances serialize their writes onto one thread.
         private val executor = Executors.newSingleThreadExecutor()
+
+        // Cached process-wide so the expensive Keystore + EncryptedSharedPreferences
+        // init runs at most once, not on every instantiation (we build a fresh
+        // manager per intake event / reply).
+        @Volatile
+        private var cachedPrefs: SharedPreferences? = null
+
+        private fun getPrefs(context: Context): SharedPreferences =
+            cachedPrefs ?: synchronized(this) {
+                cachedPrefs ?: createEncryptedPrefs(context.applicationContext).also { cachedPrefs = it }
+            }
+
+        private fun createEncryptedPrefs(context: Context): SharedPreferences {
+            return try {
+                val masterKey = MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+                EncryptedSharedPreferences.create(
+                    context,
+                    PREFS_FILE,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Falling back to plaintext prefs for diagnostics", e)
+                context.getSharedPreferences("${PREFS_FILE}_fallback", Context.MODE_PRIVATE)
+            }
+        }
     }
 
-    private val prefs: SharedPreferences = createEncryptedPrefs(context)
+    private val prefs: SharedPreferences = getPrefs(context)
 
     // -------------------------------------------------------------------------
     // Public API
@@ -208,23 +238,5 @@ class DiagnosticLogManager(context: Context) {
             array.put(obj)
         }
         prefs.edit().putString(KEY_EVENTS, array.toString()).apply()
-    }
-
-    private fun createEncryptedPrefs(context: Context): SharedPreferences {
-        return try {
-            val masterKey = MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-            EncryptedSharedPreferences.create(
-                context,
-                PREFS_FILE,
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Falling back to plaintext prefs for diagnostics", e)
-            context.getSharedPreferences("${PREFS_FILE}_fallback", Context.MODE_PRIVATE)
-        }
     }
 }

@@ -47,6 +47,8 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest
 import com.google.android.gms.auth.api.identity.Identity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Top-level navigation state for the authenticated app. A 4-branch `when`
@@ -869,7 +871,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             )
                             MainView.Diagnostics -> DiagnosticsScreen(
                                 modifier = Modifier.padding(innerPadding),
-                                diagManager = DiagnosticLogManager(this@MainActivity),
                                 notificationAccessGranted = notificationAccessGranted,
                                 appEnabled = enabled,
                                 whitelistCount = numbersList.size,
@@ -2328,7 +2329,6 @@ fun RestoreFromBackupDialog(
 @Composable
 fun DiagnosticsScreen(
     modifier: Modifier = Modifier,
-    diagManager: DiagnosticLogManager,
     notificationAccessGranted: Boolean,
     appEnabled: Boolean,
     whitelistCount: Int,
@@ -2337,7 +2337,15 @@ fun DiagnosticsScreen(
     onRequestNotificationAccess: () -> Unit,
 ) {
     val context = LocalContext.current
-    var events by remember { mutableStateOf(diagManager.getEvents()) }
+    // Built once (Keystore init is expensive) and kept across recompositions.
+    val diagManager = remember { DiagnosticLogManager(context) }
+    // Load + decrypt off the composition thread so navigating here never janks.
+    var events by remember { mutableStateOf<List<DiagnosticEvent>>(emptyList()) }
+    var loaded by remember { mutableStateOf(false) }
+    LaunchedEffect(diagManager) {
+        events = withContext(Dispatchers.IO) { diagManager.getEvents() }
+        loaded = true
+    }
     var captureAll by remember { mutableStateOf(initialCaptureAll) }
 
     Column(
@@ -2434,12 +2442,14 @@ fun DiagnosticsScreen(
 
         // --- Event list ---
         if (events.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "No 'loc' messages logged yet.\nSend yourself 'loc' to test.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            if (loaded) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "No 'loc' messages logged yet.\nSend yourself 'loc' to test.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         } else {
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
