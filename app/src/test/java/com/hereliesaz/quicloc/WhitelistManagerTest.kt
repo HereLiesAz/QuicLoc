@@ -3,7 +3,6 @@ package com.hereliesaz.quicloc
 import android.Manifest
 import android.app.Application
 import android.content.Context
-import android.database.MatrixCursor
 import android.net.Uri
 import android.provider.ContactsContract
 import androidx.test.core.app.ApplicationProvider
@@ -18,6 +17,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.fakes.RoboCursor
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -203,8 +203,10 @@ class WhitelistManagerTest {
             ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI,
             Uri.encode(displayName)
         )
-        val cursor = MatrixCursor(arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER))
-        numbers.forEach { cursor.addRow(arrayOf<Any>(it)) }
+        // ShadowContentResolver.setCursor requires Robolectric's BaseCursor.
+        val cursor = RoboCursor()
+        cursor.setColumnNames(listOf(ContactsContract.CommonDataKinds.Phone.NUMBER))
+        cursor.setResults(numbers.map { arrayOf<Any>(it) }.toTypedArray())
         shadowOf(context.contentResolver).setCursor(uri, cursor)
     }
 
