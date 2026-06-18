@@ -159,6 +159,26 @@ class NotificationListener : NotificationListenerService() {
             return
         }
 
+        // A carrier SMS is handled by SmsReceiver too. The default SMS app's
+        // notification is the duplicate of that SMS — dedupe against it. (RCS
+        // and chat apps never fire SmsReceiver, so they fall through and reply
+        // as normal; only the default SMS app's package is checked here.)
+        val defaultSms = android.provider.Telephony.Sms.getDefaultSmsPackage(applicationContext)
+        if (pkg == defaultSms) {
+            val candidates = buildList {
+                add(sender)
+                addAll(whitelist.numbersForName(sender))
+            }
+            if (TriggerDedupe.wasRecentlyHandled(candidates)) {
+                Log.d(TAG, "Duplicate of an SMS already handled — skipping notification from $pkg")
+                recordDiag(pkg, sender, body, DiagOutcome.DUPLICATE_SUPPRESSED,
+                    "Same request already handled via SMS — not replying twice",
+                    triggerMatched = true, whitelistMatched = true, extractionPath = extraction.path)
+                return
+            }
+            candidates.forEach { TriggerDedupe.markHandled(it) }
+        }
+
         val replyAction = findReplyAction(notification)
         if (replyAction == null) {
             Log.w(TAG, "No inline-reply action on notification from $pkg")

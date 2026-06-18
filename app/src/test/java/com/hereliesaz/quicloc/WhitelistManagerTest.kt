@@ -193,6 +193,23 @@ class WhitelistManagerTest {
         assertFalse(whitelist.isWhitelistedByName("Mom"))
     }
 
+    // ---- own number is implicitly whitelisted ---------------------------
+
+    @Test
+    fun `own number is whitelisted without being in the list`() {
+        whitelist.setMyNumber("+15551234567")
+        assertFalse(whitelist.getNumbers().contains("+15551234567"))
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+        assertTrue(whitelist.isWhitelisted("(555) 123-4567"))
+        assertTrue(whitelist.isWhitelistedByName("+15551234567"))
+    }
+
+    @Test
+    fun `unset own number does not match`() {
+        // myNumber defaults to empty — must not whitelist everyone.
+        assertFalse(whitelist.isWhitelisted("+15551234567"))
+    }
+
     private fun grantContacts() {
         shadowOf(context as Application).grantPermissions(Manifest.permission.READ_CONTACTS)
     }

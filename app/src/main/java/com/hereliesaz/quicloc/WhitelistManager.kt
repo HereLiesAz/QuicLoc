@@ -199,9 +199,20 @@ class WhitelistManager(context: Context) {
      */
     fun isWhitelisted(number: String): Boolean {
         val cleanIncoming = cleanPhoneNumber(number)
+        if (matchesMyNumber(cleanIncoming)) return true
         return getNumbers().any { whitelisted ->
             PhoneNumberUtils.compare(cleanIncoming, whitelisted)
         }
+    }
+
+    /**
+     * The user's own number is always implicitly whitelisted, so a `loc` they
+     * send from another device (or to themselves) is answered without having to
+     * add it to the list manually. [getMyNumber] is set during onboarding.
+     */
+    private fun matchesMyNumber(cleanIncoming: String): Boolean {
+        val myNumber = getMyNumber()
+        return myNumber.isNotEmpty() && PhoneNumberUtils.compare(cleanIncoming, myNumber)
     }
 
     /**
@@ -225,6 +236,10 @@ class WhitelistManager(context: Context) {
         val nameLower = displayName.trim().lowercase()
         val numbers = getNumbers()
 
+        // The user's own number is always allowed (covers a notification that
+        // surfaces the raw number).
+        if (matchesMyNumber(cleanPhoneNumber(displayName))) return true
+
         val directMatch = numbers.any { entry ->
             val entryLower = entry.trim().lowercase()
             entryLower == nameLower ||
@@ -233,12 +248,21 @@ class WhitelistManager(context: Context) {
         if (directMatch) return true
 
         // Resolve the notification's display name to the contact's phone
-        // numbers, then check those against the whitelist.
+        // numbers, then check those against the whitelist (and the user's own
+        // number, for a self-message that shows up as a contact name).
         val contactNumbers = resolveContactNumbers(displayName)
         return contactNumbers.any { contactNumber ->
-            numbers.any { entry -> PhoneNumberUtils.compare(contactNumber, entry) }
+            matchesMyNumber(cleanPhoneNumber(contactNumber)) ||
+                numbers.any { entry -> PhoneNumberUtils.compare(contactNumber, entry) }
         }
     }
+
+    /**
+     * Public wrapper over [resolveContactNumbers] so callers (e.g.
+     * [NotificationListener]'s cross-path dedupe) can map a notification's
+     * display name to the contact's phone numbers. Empty without `READ_CONTACTS`.
+     */
+    fun numbersForName(displayName: String): List<String> = resolveContactNumbers(displayName)
 
     /**
      * Looks up [displayName] in the device Contacts and returns every phone

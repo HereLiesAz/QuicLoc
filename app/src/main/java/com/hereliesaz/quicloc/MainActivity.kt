@@ -2460,6 +2460,7 @@ fun DiagnosticsScreen(
                         DiagOutcome.DISPATCHED -> MaterialTheme.colorScheme.secondaryContainer
                         DiagOutcome.EVALUATED_NO_ACTION,
                         DiagOutcome.NOT_A_TRIGGER,
+                        DiagOutcome.DUPLICATE_SUPPRESSED,
                         DiagOutcome.DEDUPED -> MaterialTheme.colorScheme.surface
                         else -> MaterialTheme.colorScheme.errorContainer
                     }
