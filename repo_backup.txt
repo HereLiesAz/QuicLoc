@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    0f0946bb40a83038c29f822623e2cd8e5d57ee62
-  Timestamp: 2026-06-18 00:53:33 UTC
+  Branch:    claude/debug-loc-messaging-u0p51l
+  Commit:    1c9ee0d0ca76b2a497ed7bb2fed8f8901ed6c167
+  Timestamp: 2026-06-18 01:18:32 UTC
 ======================================================
 
 
@@ -1400,6 +1400,7 @@ enum class DiagOutcome {
     WHITELIST_NO_MATCH_BY_NAME,   // notif: trigger OK but sender not whitelisted (the key one)
     WHITELIST_NO_MATCH_BY_NUMBER, // sms: trigger OK but sender not whitelisted
     NO_REPLY_ACTION,              // notif: whitelisted but no inline-reply affordance
+    DUPLICATE_SUPPRESSED,         // same request already handled by the other intake path
     DISPATCHED,                   // handed to LocationReplyService (interim state)
 
     // --- final outcomes, patched in by LocationReplyService ---
@@ -4746,6 +4747,7 @@ fun DiagnosticsScreen(
                         DiagOutcome.DISPATCHED -> MaterialTheme.colorScheme.secondaryContainer
                         DiagOutcome.EVALUATED_NO_ACTION,
                         DiagOutcome.NOT_A_TRIGGER,
+                        DiagOutcome.DUPLICATE_SUPPRESSED,
                         DiagOutcome.DEDUPED -> MaterialTheme.colorScheme.surface
                         else -> MaterialTheme.colorScheme.errorContainer
                     }
@@ -5067,6 +5069,26 @@ class NotificationListener : NotificationListenerService() {
                     "Whitelist: [${whitelist.getNumbers().joinToString(", ")}]",
                 triggerMatched = true, whitelistMatched = false, extractionPath = extraction.path)
             return
+        }
+
+        // A carrier SMS is handled by SmsReceiver too. The default SMS app's
+        // notification is the duplicate of that SMS — dedupe against it. (RCS
+        // and chat apps never fire SmsReceiver, so they fall through and reply
+        // as normal; only the default SMS app's package is checked here.)
+        val defaultSms = android.provider.Telephony.Sms.getDefaultSmsPackage(applicationContext)
+        if (pkg == defaultSms) {
+            val candidates = buildList {
+                add(sender)
+                addAll(whitelist.numbersForName(sender))
+            }
+            if (TriggerDedupe.wasRecentlyHandled(candidates)) {
+                Log.d(TAG, "Duplicate of an SMS already handled — skipping notification from $pkg")
+                recordDiag(pkg, sender, body, DiagOutcome.DUPLICATE_SUPPRESSED,
+                    "Same request already handled via SMS — not replying twice",
+                    triggerMatched = true, whitelistMatched = true, extractionPath = extraction.path)
+                return
+            }
+            candidates.forEach { TriggerDedupe.markHandled(it) }
         }
 
         val replyAction = findReplyAction(notification)
@@ -5667,6 +5689,16 @@ class SmsReceiver : BroadcastReceiver() {
             }
 
             if (body == "loc" || body == "quicloc") {
+                // The same carrier SMS also reaches NotificationListener via the
+                // default SMS app's notification; dedupe so we only reply once.
+                if (TriggerDedupe.wasRecentlyHandled(listOf(sender))) {
+                    Log.d(TAG, "Duplicate trigger from $sender — already handled, skipping")
+                    diag.record(buildEvent(sender, body, DiagOutcome.DUPLICATE_SUPPRESSED,
+                        "Already handled this request via the notification path — not replying twice",
+                        triggerMatched = true, whitelistMatched = true))
+                    continue
+                }
+                TriggerDedupe.markHandled(sender)
                 Log.d(TAG, "Trigger from $sender — starting LocationReplyService")
                 val diagId = java.util.UUID.randomUUID().toString()
                 diag.record(buildEvent(sender, body, DiagOutcome.DISPATCHED,
@@ -6354,6 +6386,65 @@ class TrackingService : Service() {
 
 
 ######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/TriggerDedupe.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.telephony.PhoneNumberUtils
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Process-wide guard against replying twice to the same `loc` request.
+ *
+ * A single carrier SMS is delivered to QuicLoc through *both* intake paths:
+ * [SmsReceiver] (the `SMS_RECEIVED` broadcast) and [NotificationListener] (the
+ * default SMS app posts a notification for that same message). Without
+ * coordination each path fetches GPS and replies independently, so the sender
+ * gets two location texts.
+ *
+ * Both paths live in the same process, so a shared in-memory map is enough —
+ * the duplicate always arrives within a second or two, never across a process
+ * restart. Whichever path handles a sender first calls [markHandled]; the other
+ * sees [wasRecentlyHandled] and defers. Matching is by phone number with
+ * [PhoneNumberUtils.compare] so formatting differences (`(504) 326-9451` vs
+ * `5043269451`) still collapse to one.
+ */
+object TriggerDedupe {
+
+    private const val WINDOW_MS = 15_000L
+
+    // Normalized-ish number string -> last-handled timestamp.
+    private val handled = ConcurrentHashMap<String, Long>()
+
+    /** Records that a `loc` reply was just dispatched for [number]. */
+    fun markHandled(number: String) {
+        val now = System.currentTimeMillis()
+        handled[number] = now
+        cleanUp(now)
+    }
+
+    /**
+     * True if any of [candidates] matches a number handled within the window.
+     * Numbers are compared with [PhoneNumberUtils.compare] so differing formats
+     * still match.
+     */
+    fun wasRecentlyHandled(candidates: Collection<String>): Boolean {
+        val now = System.currentTimeMillis()
+        return handled.any { (stored, ts) ->
+            now - ts < WINDOW_MS && candidates.any { PhoneNumberUtils.compare(it, stored) }
+        }
+    }
+
+    private fun cleanUp(now: Long) {
+        if (handled.size > 50) {
+            handled.entries.removeAll { now - it.value > WINDOW_MS }
+        }
+    }
+}
+
+
+######################################################
 # FILE: app/src/main/java/com/hereliesaz/quicloc/Tutorial.kt
 ######################################################
 
@@ -6929,9 +7020,20 @@ class WhitelistManager(context: Context) {
      */
     fun isWhitelisted(number: String): Boolean {
         val cleanIncoming = cleanPhoneNumber(number)
+        if (matchesMyNumber(cleanIncoming)) return true
         return getNumbers().any { whitelisted ->
             PhoneNumberUtils.compare(cleanIncoming, whitelisted)
         }
+    }
+
+    /**
+     * The user's own number is always implicitly whitelisted, so a `loc` they
+     * send from another device (or to themselves) is answered without having to
+     * add it to the list manually. [getMyNumber] is set during onboarding.
+     */
+    private fun matchesMyNumber(cleanIncoming: String): Boolean {
+        val myNumber = getMyNumber()
+        return myNumber.isNotEmpty() && PhoneNumberUtils.compare(cleanIncoming, myNumber)
     }
 
     /**
@@ -6955,6 +7057,10 @@ class WhitelistManager(context: Context) {
         val nameLower = displayName.trim().lowercase()
         val numbers = getNumbers()
 
+        // The user's own number is always allowed (covers a notification that
+        // surfaces the raw number).
+        if (matchesMyNumber(cleanPhoneNumber(displayName))) return true
+
         val directMatch = numbers.any { entry ->
             val entryLower = entry.trim().lowercase()
             entryLower == nameLower ||
@@ -6963,12 +7069,21 @@ class WhitelistManager(context: Context) {
         if (directMatch) return true
 
         // Resolve the notification's display name to the contact's phone
-        // numbers, then check those against the whitelist.
+        // numbers, then check those against the whitelist (and the user's own
+        // number, for a self-message that shows up as a contact name).
         val contactNumbers = resolveContactNumbers(displayName)
         return contactNumbers.any { contactNumber ->
-            numbers.any { entry -> PhoneNumberUtils.compare(contactNumber, entry) }
+            matchesMyNumber(cleanPhoneNumber(contactNumber)) ||
+                numbers.any { entry -> PhoneNumberUtils.compare(contactNumber, entry) }
         }
     }
+
+    /**
+     * Public wrapper over [resolveContactNumbers] so callers (e.g.
+     * [NotificationListener]'s cross-path dedupe) can map a notification's
+     * display name to the contact's phone numbers. Empty without `READ_CONTACTS`.
+     */
+    fun numbersForName(displayName: String): List<String> = resolveContactNumbers(displayName)
 
     /**
      * Looks up [displayName] in the device Contacts and returns every phone
@@ -8377,6 +8492,51 @@ class RequestHistoryManagerTest {
 
 
 ######################################################
+# FILE: app/src/test/java/com/hereliesaz/quicloc/TriggerDedupeTest.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class TriggerDedupeTest {
+
+    @Test
+    fun `a just-handled number is reported as recent`() {
+        TriggerDedupe.markHandled("+15551112222")
+        assertTrue(TriggerDedupe.wasRecentlyHandled(listOf("+15551112222")))
+    }
+
+    @Test
+    fun `matching tolerates number formatting differences`() {
+        TriggerDedupe.markHandled("+15553334444")
+        assertTrue(TriggerDedupe.wasRecentlyHandled(listOf("(555) 333-4444")))
+    }
+
+    @Test
+    fun `an un-handled number is not reported as recent`() {
+        // A number never marked must not be considered a duplicate.
+        assertFalse(TriggerDedupe.wasRecentlyHandled(listOf("+15557776666")))
+    }
+
+    @Test
+    fun `any matching candidate counts`() {
+        TriggerDedupe.markHandled("+15558889999")
+        assertTrue(
+            TriggerDedupe.wasRecentlyHandled(listOf("Mom", "+15558889999"))
+        )
+    }
+}
+
+
+######################################################
 # FILE: app/src/test/java/com/hereliesaz/quicloc/TutorialsTest.kt
 ######################################################
 
@@ -8649,6 +8809,23 @@ class WhitelistManagerTest {
         whitelist.addNumber("+15551234567")
 
         assertFalse(whitelist.isWhitelistedByName("Mom"))
+    }
+
+    // ---- own number is implicitly whitelisted ---------------------------
+
+    @Test
+    fun `own number is whitelisted without being in the list`() {
+        whitelist.setMyNumber("+15551234567")
+        assertFalse(whitelist.getNumbers().contains("+15551234567"))
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+        assertTrue(whitelist.isWhitelisted("(555) 123-4567"))
+        assertTrue(whitelist.isWhitelistedByName("+15551234567"))
+    }
+
+    @Test
+    fun `unset own number does not match`() {
+        // myNumber defaults to empty — must not whitelist everyone.
+        assertFalse(whitelist.isWhitelisted("+15551234567"))
     }
 
     private fun grantContacts() {
