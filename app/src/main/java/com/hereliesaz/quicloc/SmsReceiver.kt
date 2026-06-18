@@ -38,13 +38,24 @@ class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
 
+        val captureAll = AppSettings.isDiagCaptureAll(context)
+        // Lazy so the EncryptedSharedPreferences / Keystore init only happens
+        // when we actually record a diagnostic — not for every passing SMS.
+        val diag by lazy { DiagnosticLogManager(context) }
+
         if (!AppSettings.isEnabled(context)) {
             Log.d(TAG, "Ignoring incoming SMS — QuicLoc disabled")
+            if (captureAll) diag.record(buildEvent("", "", DiagOutcome.APP_DISABLED,
+                "QuicLoc master toggle is off"))
             return
         }
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
-        if (messages.isNullOrEmpty()) return
+        if (messages.isNullOrEmpty()) {
+            if (captureAll) diag.record(buildEvent("", "", DiagOutcome.NO_MESSAGES_EXTRACTED,
+                "No SMS messages in intent"))
+            return
+        }
 
         // Reassemble multi-part SMS by sender
         val messagesBySender = mutableMapOf<String, StringBuilder>()
@@ -59,6 +70,7 @@ class SmsReceiver : BroadcastReceiver() {
         for ((sender, bodyBuilder) in messagesBySender) {
             val body = bodyBuilder.toString().trim().lowercase()
             Log.d(TAG, "SMS from $sender: '$body'")
+            val looksLikeTrigger = body.contains("loc")
 
             val passphrase = whitelistManager.getPassphrase()
             val isPassphraseTrigger = passphrase != null && passphrase.isNotEmpty() &&
@@ -66,6 +78,8 @@ class SmsReceiver : BroadcastReceiver() {
 
             if (isPassphraseTrigger) {
                 Log.d(TAG, "Passphrase trigger from $sender — starting TrackingService")
+                diag.record(buildEvent(sender, body, DiagOutcome.PASSPHRASE_TRIGGER,
+                    "Find-my-phone passphrase matched — starting tracking", triggerMatched = true))
                 // Commit synchronously so a crash between now and the next boot
                 // can't leave the single-use passphrase usable a second time.
                 whitelistManager.clearPassphraseSync()
@@ -75,15 +89,50 @@ class SmsReceiver : BroadcastReceiver() {
 
             if (!whitelistManager.isWhitelisted(sender)) {
                 Log.d(TAG, "Sender $sender not whitelisted, ignoring.")
+                if (looksLikeTrigger) diag.record(buildEvent(sender, body,
+                    DiagOutcome.WHITELIST_NO_MATCH_BY_NUMBER,
+                    "Trigger '$body' from $sender, but number not in whitelist. " +
+                        "Whitelist: [${whitelistManager.getNumbers().joinToString(", ")}]",
+                    triggerMatched = true, whitelistMatched = false))
                 continue
             }
 
             if (body == "loc" || body == "quicloc") {
                 Log.d(TAG, "Trigger from $sender — starting LocationReplyService")
+                val diagId = java.util.UUID.randomUUID().toString()
+                diag.record(buildEvent(sender, body, DiagOutcome.DISPATCHED,
+                    "Trigger matched, sender whitelisted — fetching location to reply",
+                    id = diagId, triggerMatched = true, whitelistMatched = true))
                 // Hand off to the foreground service. The receiver returns in
                 // milliseconds; the service does the GPS wait + reply.
-                LocationReplyService.startForSms(context, sender)
+                LocationReplyService.startForSms(context, sender, diagId = diagId)
+            } else if (captureAll) {
+                diag.record(buildEvent(sender, body, DiagOutcome.NOT_A_TRIGGER,
+                    "Whitelisted sender, but message isn't a trigger word"))
             }
         }
     }
+
+    /** Builds an SMS-channel diagnostic event with the common fields filled. */
+    private fun buildEvent(
+        sender: String,
+        body: String,
+        outcome: DiagOutcome,
+        reason: String,
+        id: String = java.util.UUID.randomUUID().toString(),
+        triggerMatched: Boolean = false,
+        whitelistMatched: Boolean? = null,
+    ): DiagnosticEvent = DiagnosticEvent(
+        id = id,
+        timestamp = System.currentTimeMillis(),
+        channel = DiagChannel.SMS,
+        source = "SMS",
+        rawSender = sender,
+        rawBody = body.take(80),
+        triggerMatched = triggerMatched,
+        whitelistMatched = whitelistMatched,
+        extractionPath = null,
+        outcome = outcome,
+        reason = reason,
+    )
 }

@@ -1,6 +1,10 @@
 package com.hereliesaz.quicloc
 
+import android.Manifest
+import android.app.Application
 import android.content.Context
+import android.net.Uri
+import android.provider.ContactsContract
 import androidx.test.core.app.ApplicationProvider
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -11,7 +15,9 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.fakes.RoboCursor
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -151,6 +157,57 @@ class WhitelistManagerTest {
         whitelist.addNumber("+15551234567")
         assertTrue(whitelist.isWhitelistedByName("+15551234567"))
         assertTrue(whitelist.isWhitelistedByName("(555) 123-4567"))
+    }
+
+    /**
+     * The chat-app fix: the whitelist holds only a phone *number*, but the
+     * notification surfaces a contact *name*. With READ_CONTACTS granted, the
+     * name resolves through Contacts to the number, which is whitelisted.
+     */
+    @Test
+    fun `isWhitelistedByName resolves a contact name to a whitelisted number`() {
+        grantContacts()
+        // Notification shows "Mom ❤️"; the contact's number is +15551234567.
+        stubContactNumbers("Mom ❤️", "+15551234567")
+        whitelist.addNumber("+15551234567")
+
+        assertTrue(whitelist.isWhitelistedByName("Mom ❤️"))
+    }
+
+    @Test
+    fun `isWhitelistedByName rejects a contact whose number isn't whitelisted`() {
+        grantContacts()
+        stubContactNumbers("Stranger", "+15559999999")
+        whitelist.addNumber("+15551234567")
+
+        assertFalse(whitelist.isWhitelistedByName("Stranger"))
+    }
+
+    @Test
+    fun `isWhitelistedByName without READ_CONTACTS falls back to direct matching`() {
+        // No permission granted: contact resolution is skipped, so a
+        // number-only whitelist can't match a name.
+        stubContactNumbers("Mom", "+15551234567")
+        whitelist.addNumber("+15551234567")
+
+        assertFalse(whitelist.isWhitelistedByName("Mom"))
+    }
+
+    private fun grantContacts() {
+        shadowOf(context as Application).grantPermissions(Manifest.permission.READ_CONTACTS)
+    }
+
+    /** Registers a contacts lookup result for [displayName] → [numbers]. */
+    private fun stubContactNumbers(displayName: String, vararg numbers: String) {
+        val uri = Uri.withAppendedPath(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI,
+            Uri.encode(displayName)
+        )
+        // ShadowContentResolver.setCursor requires Robolectric's BaseCursor.
+        val cursor = RoboCursor()
+        cursor.setColumnNames(listOf(ContactsContract.CommonDataKinds.Phone.NUMBER))
+        cursor.setResults(numbers.map { arrayOf<Any>(it) }.toTypedArray())
+        shadowOf(context.contentResolver).setCursor(uri, cursor)
     }
 
     // ---- bulk replace (used by BackupVault restore) ---------------------

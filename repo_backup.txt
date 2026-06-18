@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    1d1e14cd6a183242c4f5a6b27187f62e681d678b
-  Timestamp: 2026-05-29 06:02:48 UTC
+  Branch:    claude/debug-loc-messaging-u0p51l
+  Commit:    7d63e6c7bf22dbf3ea97fbc83163e1bc4c8bd60b
+  Timestamp: 2026-06-17 21:48:38 UTC
 ======================================================
 
 
@@ -814,6 +814,7 @@ object AppSettings {
     private const val KEY_DEVICE_ADMIN_PROMPTED = "device_admin_prompted"
     private const val KEY_FULL_SCREEN_PROMPTED = "full_screen_intent_prompted"
     private const val KEY_PHONE_HINT_PROMPTED = "phone_hint_prompted"
+    private const val KEY_DIAG_CAPTURE_ALL = "diag_capture_all"
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
@@ -860,6 +861,19 @@ object AppSettings {
 
     fun markPhoneHintAutoPrompted(context: Context) {
         prefs(context).edit().putBoolean(KEY_PHONE_HINT_PROMPTED, true).apply()
+    }
+
+    /**
+     * Debug switch for the diagnostic log. When on, [NotificationListener]
+     * records a diagnostic entry for *every* notification it evaluates — not
+     * just messages containing the trigger word — so apps whose body is
+     * extracted incorrectly become visible. Noisy; default off.
+     */
+    fun isDiagCaptureAll(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_DIAG_CAPTURE_ALL, false)
+
+    fun setDiagCaptureAll(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_DIAG_CAPTURE_ALL, enabled).apply()
     }
 }
 
@@ -1344,6 +1358,254 @@ class BootReceiver : BroadcastReceiver() {
 
 
 ######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/DiagnosticLogManager.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import org.json.JSONArray
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.Executors
+
+/** Which intake path observed the message. */
+enum class DiagChannel { SMS, NOTIFICATION, WIDGET }
+
+/**
+ * The exact decision QuicLoc made about an incoming message. Surfaced in the
+ * Diagnostics screen so the user can see *why* a `loc` request did or didn't
+ * produce a location reply — without needing a computer / adb.
+ */
+enum class DiagOutcome {
+    // --- pre-trigger filters (only recorded under capture-all) ---
+    OWN_NOTIFICATION,        // our own notification — ignored
+    ONGOING_IGNORED,         // ongoing/system notification — ignored
+    APP_DISABLED,            // QuicLoc master toggle is off
+    NO_NOTIFICATION_OBJECT,  // StatusBarNotification had no Notification
+    NO_MESSAGES_EXTRACTED,   // couldn't pull any sender/body out of the notification
+    EMPTY_SENDER_OR_BODY,    // extracted sender or body was blank
+    DEDUPED,                 // duplicate re-post within the dedupe window
+    NOT_A_TRIGGER,           // message wasn't "loc"/"quicloc"
+    EVALUATED_NO_ACTION,     // capture-all: notification seen, nothing to do
+
+    // --- trigger word matched, then… ---
+    PASSPHRASE_TRIGGER,           // find-my-phone passphrase → TrackingService
+    WHITELIST_NO_MATCH_BY_NAME,   // notif: trigger OK but sender not whitelisted (the key one)
+    WHITELIST_NO_MATCH_BY_NUMBER, // sms: trigger OK but sender not whitelisted
+    NO_REPLY_ACTION,              // notif: whitelisted but no inline-reply affordance
+    DISPATCHED,                   // handed to LocationReplyService (interim state)
+
+    // --- final outcomes, patched in by LocationReplyService ---
+    REPLY_SENT,
+    REPLY_FAILED,
+    NO_PENDING_ACTION,            // service couldn't find the reply action
+}
+
+/**
+ * One row in the diagnostic log.
+ *
+ * @property id Stable UUID so [LocationReplyService] can patch this row's
+ *   final outcome (DISPATCHED → REPLY_SENT/REPLY_FAILED) after the async send.
+ * @property rawBody Truncated copy of the message body — enough to see what
+ *   the app actually received from each messaging app.
+ * @property extractionPath For notifications, which extraction branch matched
+ *   ("MessagingStyle" / "TextLines" / "PlainText" / "None"). `null` for SMS.
+ * @property whitelistMatched `null` until the whitelist check runs.
+ */
+data class DiagnosticEvent(
+    val id: String,
+    val timestamp: Long,
+    val channel: DiagChannel,
+    val source: String,
+    val rawSender: String,
+    val rawBody: String,
+    val triggerMatched: Boolean,
+    val whitelistMatched: Boolean?,
+    val extractionPath: String?,
+    val outcome: DiagOutcome,
+    val reason: String,
+) {
+    /** Human-readable timestamp for the Diagnostics list, in the device locale. */
+    val formattedTime: String by lazy {
+        SimpleDateFormat("MMM d  h:mm:ss a", Locale.getDefault()).format(Date(timestamp))
+    }
+}
+
+/**
+ * Append-only diagnostic log (capped at [MAX_ENTRIES]) recording every `loc`
+ * message the app evaluates and the decision it reached. The companion to the
+ * user-facing [RequestHistoryManager], but far more verbose — it captures the
+ * silent drops (not whitelisted, wrong body, no reply action, …) that
+ * `RequestHistoryManager` never sees, so the user can diagnose why chat apps
+ * (WhatsApp, Messenger, Google Voice) aren't triggering replies.
+ *
+ * Stored in `EncryptedSharedPreferences` (`quicloc_diagnostics`) — like the
+ * history, it's a record of who's been messaging the user, so it's encrypted
+ * and, crucially, **not** added to [BackupVault] (per-device only).
+ *
+ * All writes run on a single background [executor]: [NotificationListener]
+ * callbacks run on the app main thread, and under capture-all that can be every
+ * notification on the device, so the AES + JSON re-serialize must stay off the
+ * caller's thread. Serializing on one thread also makes [updateOutcome]'s
+ * read-modify-write patch-by-id race-free against concurrent [record] calls.
+ */
+class DiagnosticLogManager(context: Context) {
+
+    companion object {
+        private const val TAG = "QuicLoc.Diag"
+        private const val PREFS_FILE = "quicloc_diagnostics"
+        private const val KEY_EVENTS = "events"
+        private const val MAX_ENTRIES = 200
+
+        // Shared so all instances serialize their writes onto one thread.
+        private val executor = Executors.newSingleThreadExecutor()
+
+        // Cached process-wide so the expensive Keystore + EncryptedSharedPreferences
+        // init runs at most once, not on every instantiation (we build a fresh
+        // manager per intake event / reply).
+        @Volatile
+        private var cachedPrefs: SharedPreferences? = null
+
+        private fun getPrefs(context: Context): SharedPreferences =
+            cachedPrefs ?: synchronized(this) {
+                cachedPrefs ?: createEncryptedPrefs(context.applicationContext).also { cachedPrefs = it }
+            }
+
+        private fun createEncryptedPrefs(context: Context): SharedPreferences {
+            return try {
+                val masterKey = MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+                EncryptedSharedPreferences.create(
+                    context,
+                    PREFS_FILE,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Falling back to plaintext prefs for diagnostics", e)
+                context.getSharedPreferences("${PREFS_FILE}_fallback", Context.MODE_PRIVATE)
+            }
+        }
+    }
+
+    private val prefs: SharedPreferences = getPrefs(context)
+
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
+    fun record(event: DiagnosticEvent) {
+        executor.execute {
+            val events = readEvents().toMutableList()
+            events.add(0, event)
+            val trimmed = if (events.size > MAX_ENTRIES) events.take(MAX_ENTRIES) else events
+            writeEvents(trimmed)
+        }
+    }
+
+    /**
+     * Patches the outcome + reason of an existing row by [id]. Used by
+     * [LocationReplyService] to flip an interim `DISPATCHED` row to its final
+     * `REPLY_SENT` / `REPLY_FAILED` state once the async location fetch and
+     * reply complete. No-op if the row has already aged out of the buffer.
+     */
+    fun updateOutcome(id: String, outcome: DiagOutcome, reason: String) {
+        executor.execute {
+            val events = readEvents()
+            var changed = false
+            val patched = events.map { e ->
+                if (e.id == id) {
+                    changed = true
+                    e.copy(outcome = outcome, reason = reason)
+                } else e
+            }
+            if (changed) writeEvents(patched)
+        }
+    }
+
+    fun getEvents(): List<DiagnosticEvent> = readEvents()
+
+    fun clear() {
+        prefs.edit().remove(KEY_EVENTS).apply()
+    }
+
+    /** Flattens the log to shareable plain text for the Copy/Share button. */
+    fun exportAsText(): String {
+        val events = readEvents()
+        if (events.isEmpty()) return "QuicLoc diagnostics: (empty)"
+        val sb = StringBuilder("QuicLoc diagnostics (${events.size} entries)\n")
+        for (e in events) {
+            sb.append("\n[${e.formattedTime}] ${e.channel} · ${e.source}\n")
+            sb.append("  from: ${e.rawSender}\n")
+            sb.append("  body: ${e.rawBody}\n")
+            e.extractionPath?.let { sb.append("  via:  $it\n") }
+            sb.append("  → ${e.outcome}: ${e.reason}\n")
+        }
+        return sb.toString()
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal — JSON (de)serialization
+    // -------------------------------------------------------------------------
+
+    private fun readEvents(): List<DiagnosticEvent> {
+        val json = prefs.getString(KEY_EVENTS, null) ?: return emptyList()
+        return try {
+            val array = JSONArray(json)
+            (0 until array.length()).map { i ->
+                val obj = array.getJSONObject(i)
+                DiagnosticEvent(
+                    id = obj.getString("id"),
+                    timestamp = obj.getLong("timestamp"),
+                    channel = DiagChannel.valueOf(obj.getString("channel")),
+                    source = obj.getString("source"),
+                    rawSender = obj.getString("rawSender"),
+                    rawBody = obj.getString("rawBody"),
+                    triggerMatched = obj.getBoolean("triggerMatched"),
+                    whitelistMatched = if (obj.isNull("whitelistMatched")) null else obj.getBoolean("whitelistMatched"),
+                    extractionPath = if (obj.isNull("extractionPath")) null else obj.getString("extractionPath"),
+                    outcome = DiagOutcome.valueOf(obj.getString("outcome")),
+                    reason = obj.getString("reason"),
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse diagnostics", e)
+            emptyList()
+        }
+    }
+
+    private fun writeEvents(events: List<DiagnosticEvent>) {
+        val array = JSONArray()
+        for (e in events) {
+            val obj = JSONObject()
+            obj.put("id", e.id)
+            obj.put("timestamp", e.timestamp)
+            obj.put("channel", e.channel.name)
+            obj.put("source", e.source)
+            obj.put("rawSender", e.rawSender)
+            obj.put("rawBody", e.rawBody)
+            obj.put("triggerMatched", e.triggerMatched)
+            obj.put("whitelistMatched", e.whitelistMatched ?: JSONObject.NULL)
+            obj.put("extractionPath", e.extractionPath ?: JSONObject.NULL)
+            obj.put("outcome", e.outcome.name)
+            obj.put("reason", e.reason)
+            array.put(obj)
+        }
+        prefs.edit().putString(KEY_EVENTS, array.toString()).apply()
+    }
+}
+
+
+######################################################
 # FILE: app/src/main/java/com/hereliesaz/quicloc/LocationHelper.kt
 ######################################################
 
@@ -1703,16 +1965,18 @@ class LocationReplyService : Service() {
         const val EXTRA_SOURCE = "source"           // "SMS", package name for notifs, "Widget"
         const val EXTRA_REPLY_MODE = "reply_mode"   // "sms" or "notification"
         const val EXTRA_ACTION_TOKEN = "action_token"
+        const val EXTRA_DIAG_ID = "diag_id"          // row to patch in DiagnosticLogManager
 
         // Keyed by per-trigger UUID so concurrent triggers don't clobber each
         // other (fixes the previous static-singleton race).
         private val pendingActions = ConcurrentHashMap<String, Notification.Action>()
 
-        fun startForSms(context: Context, sender: String) {
+        fun startForSms(context: Context, sender: String, diagId: String? = null) {
             val intent = Intent(context, LocationReplyService::class.java).apply {
                 putExtra(EXTRA_SENDER, sender)
                 putExtra(EXTRA_SOURCE, "SMS")
                 putExtra(EXTRA_REPLY_MODE, "sms")
+                putExtra(EXTRA_DIAG_ID, diagId)
             }
             context.startForegroundService(intent)
         }
@@ -1721,7 +1985,8 @@ class LocationReplyService : Service() {
             context: Context,
             sender: String,
             source: String,
-            action: Notification.Action
+            action: Notification.Action,
+            diagId: String? = null
         ) {
             val token = UUID.randomUUID().toString()
             pendingActions[token] = action
@@ -1730,6 +1995,7 @@ class LocationReplyService : Service() {
                 putExtra(EXTRA_SOURCE, source)
                 putExtra(EXTRA_REPLY_MODE, "notification")
                 putExtra(EXTRA_ACTION_TOKEN, token)
+                putExtra(EXTRA_DIAG_ID, diagId)
             }
             context.startForegroundService(intent)
         }
@@ -1857,6 +2123,10 @@ class LocationReplyService : Service() {
         // start, abort. Widget taps are user-initiated so they still fire.
         if (intent.action != ACTION_WIDGET_TAP && !AppSettings.isEnabled(applicationContext)) {
             Log.d(TAG, "QuicLoc disabled — aborting reply")
+            intent.getStringExtra(EXTRA_DIAG_ID)?.let {
+                DiagnosticLogManager(this).updateOutcome(it, DiagOutcome.APP_DISABLED,
+                    "QuicLoc was toggled off before the reply could be sent")
+            }
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -1876,6 +2146,7 @@ class LocationReplyService : Service() {
         }
         val source = intent.getStringExtra(EXTRA_SOURCE) ?: "Unknown"
         val replyMode = intent.getStringExtra(EXTRA_REPLY_MODE) ?: "sms"
+        val diagId = intent.getStringExtra(EXTRA_DIAG_ID)
 
         Log.d(TAG, "Starting location fetch for $sender via $source (mode=$replyMode)")
 
@@ -1886,6 +2157,7 @@ class LocationReplyService : Service() {
                     phoneNumber = sender,
                     onResult = { succeeded ->
                         RequestHistoryManager(this).record(sender, source, succeeded)
+                        patchDiag(diagId, succeeded, source)
                         stopSelf(startId)
                     }
                 )
@@ -1896,6 +2168,10 @@ class LocationReplyService : Service() {
                 if (action == null) {
                     Log.e(TAG, "No pending notification action for token $token")
                     RequestHistoryManager(this).record(sender, source, false)
+                    diagId?.let {
+                        DiagnosticLogManager(this).updateOutcome(it, DiagOutcome.NO_PENDING_ACTION,
+                            "The reply action expired before the service could use it")
+                    }
                     stopSelf(startId)
                     return START_NOT_STICKY
                 }
@@ -1905,6 +2181,7 @@ class LocationReplyService : Service() {
                     notificationKey = "",
                     onResult = { succeeded ->
                         RequestHistoryManager(this).record(sender, source, succeeded)
+                        patchDiag(diagId, succeeded, source)
                         stopSelf(startId)
                     }
                 )
@@ -1913,6 +2190,17 @@ class LocationReplyService : Service() {
         }
 
         return START_NOT_STICKY
+    }
+
+    /** Flips the interim DISPATCHED diagnostic row to its final state. */
+    private fun patchDiag(diagId: String?, succeeded: Boolean, source: String) {
+        diagId ?: return
+        DiagnosticLogManager(this).updateOutcome(
+            diagId,
+            if (succeeded) DiagOutcome.REPLY_SENT else DiagOutcome.REPLY_FAILED,
+            if (succeeded) "Location reply sent via $source"
+            else "Couldn't fetch location or send the reply via $source"
+        )
     }
 
     // -------------------------------------------------------------------------
@@ -2025,6 +2313,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
@@ -2035,6 +2324,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -2043,6 +2333,8 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest
 import com.google.android.gms.auth.api.identity.Identity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Top-level navigation state for the authenticated app. A 4-branch `when`
@@ -2060,6 +2352,7 @@ import com.google.android.gms.auth.api.identity.Identity
 sealed class MainView {
     data object Config : MainView()
     data object History : MainView()
+    data object Diagnostics : MainView()
     data object TutorialsHub : MainView()
     data class TutorialDetail(val tutorialId: String, val fromOnboarding: Boolean = false) : MainView()
 }
@@ -2797,6 +3090,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             val (title, navBack) = when (val v = view) {
                                 MainView.Config -> "QuicLoc" to null
                                 MainView.History -> "Request History" to { view = MainView.Config }
+                                MainView.Diagnostics -> "Diagnostics" to { view = MainView.Config }
                                 MainView.TutorialsHub -> "Tutorials" to { view = MainView.Config }
                                 is MainView.TutorialDetail -> {
                                     val t = Tutorials.byId(v.tutorialId)
@@ -2844,6 +3138,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                                 tint = MaterialTheme.colorScheme.onPrimaryContainer
                                             )
                                         }
+                                        IconButton(onClick = { view = MainView.Diagnostics }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Build,
+                                                contentDescription = "Diagnostics",
+                                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
                                     }
                                 }
                             )
@@ -2853,6 +3154,17 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             MainView.History -> HistoryScreen(
                                 modifier = Modifier.padding(innerPadding),
                                 historyManager = RequestHistoryManager(this@MainActivity)
+                            )
+                            MainView.Diagnostics -> DiagnosticsScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                notificationAccessGranted = notificationAccessGranted,
+                                appEnabled = enabled,
+                                whitelistCount = numbersList.size,
+                                initialCaptureAll = AppSettings.isDiagCaptureAll(this@MainActivity),
+                                onToggleCaptureAll = {
+                                    AppSettings.setDiagCaptureAll(this@MainActivity, it)
+                                },
+                                onRequestNotificationAccess = { checkNotificationListenerPermission() },
                             )
                             MainView.TutorialsHub -> TutorialsHubScreen(
                                 modifier = Modifier.padding(innerPadding),
@@ -4287,6 +4599,213 @@ fun RestoreFromBackupDialog(
 }
 
 // -------------------------------------------------------------------------
+// Diagnostics screen
+// -------------------------------------------------------------------------
+
+/**
+ * Debugging screen that answers "I messaged 'loc' — what did the app do with
+ * it?". Shows the readiness checks first (Notification Access is the big one —
+ * without it the whole chat-app path is dead), then a newest-first log of every
+ * `loc` message and the exact decision QuicLoc reached, in plain English.
+ *
+ * Sourced from [DiagnosticLogManager]. The capture-all switch flips
+ * [AppSettings.setDiagCaptureAll] so the listener logs *every* notification —
+ * useful to catch an app whose message text is read out wrongly.
+ */
+@Composable
+fun DiagnosticsScreen(
+    modifier: Modifier = Modifier,
+    notificationAccessGranted: Boolean,
+    appEnabled: Boolean,
+    whitelistCount: Int,
+    initialCaptureAll: Boolean,
+    onToggleCaptureAll: (Boolean) -> Unit,
+    onRequestNotificationAccess: () -> Unit,
+) {
+    val context = LocalContext.current
+    // Built once (Keystore init is expensive) and kept across recompositions.
+    val diagManager = remember { DiagnosticLogManager(context) }
+    // Load + decrypt off the composition thread so navigating here never janks.
+    var events by remember { mutableStateOf<List<DiagnosticEvent>>(emptyList()) }
+    var loaded by remember { mutableStateOf(false) }
+    LaunchedEffect(diagManager) {
+        events = withContext(Dispatchers.IO) { diagManager.getEvents() }
+        loaded = true
+    }
+    var captureAll by remember { mutableStateOf(initialCaptureAll) }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        // --- Readiness status card ---
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer
+            )
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Status",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Spacer(Modifier.height(6.dp))
+                StatusRow("Notification Access", notificationAccessGranted)
+                if (!notificationAccessGranted) {
+                    Text(
+                        text = "Without this, QuicLoc can't see WhatsApp / Messenger / " +
+                            "Google Voice messages at all.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    TextButton(onClick = onRequestNotificationAccess) { Text("Grant access") }
+                }
+                StatusRow("QuicLoc enabled", appEnabled)
+                StatusRow("Whitelist contacts", whitelistCount > 0, "$whitelistCount")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Chat apps match the contact NAME shown in the notification, " +
+                        "not the phone number. If a sender shows as a name that isn't in " +
+                        "your whitelist, the request is ignored.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
+
+        // --- Capture-all toggle ---
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Capture all notifications", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = "Logs every notification QuicLoc sees (noisy). Turn on " +
+                            "briefly to debug one app, then off.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = captureAll,
+                    onCheckedChange = {
+                        captureAll = it
+                        onToggleCaptureAll(it)
+                    }
+                )
+            }
+        }
+
+        // --- Actions ---
+        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+            TextButton(
+                onClick = {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, diagManager.exportAsText())
+                    }
+                    context.startActivity(Intent.createChooser(send, "Share diagnostics"))
+                }
+            ) { Text("Copy / Share") }
+            Spacer(Modifier.weight(1f))
+            TextButton(
+                onClick = {
+                    diagManager.clear()
+                    events = emptyList()
+                }
+            ) { Text("Clear") }
+        }
+
+        // --- Event list ---
+        if (events.isEmpty()) {
+            if (loaded) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "No 'loc' messages logged yet.\nSend yourself 'loc' to test.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                items(events) { event ->
+                    val container = when (event.outcome) {
+                        DiagOutcome.REPLY_SENT -> MaterialTheme.colorScheme.surfaceVariant
+                        DiagOutcome.PASSPHRASE_TRIGGER,
+                        DiagOutcome.DISPATCHED -> MaterialTheme.colorScheme.secondaryContainer
+                        DiagOutcome.EVALUATED_NO_ACTION,
+                        DiagOutcome.NOT_A_TRIGGER,
+                        DiagOutcome.DEDUPED -> MaterialTheme.colorScheme.surface
+                        else -> MaterialTheme.colorScheme.errorContainer
+                    }
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = CardDefaults.cardColors(containerColor = container)
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                            Text(
+                                text = if (event.rawSender.isBlank()) "(unknown sender)"
+                                    else event.rawSender,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Text(
+                                text = "${event.source} · ${event.formattedTime}" +
+                                    (event.extractionPath?.let { " · $it" } ?: ""),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (event.rawBody.isNotBlank()) {
+                                Text(
+                                    text = "\"${event.rawBody}\"",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "${event.outcome}: ${event.reason}",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** A label + ✓/✗ status line for the Diagnostics status card. */
+@Composable
+private fun StatusRow(label: String, ok: Boolean, value: String? = null) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = value ?: if (ok) "✓" else "✗",
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+        )
+    }
+}
+
+// -------------------------------------------------------------------------
 // History screen
 // -------------------------------------------------------------------------
 
@@ -4427,28 +4946,58 @@ class NotificationListener : NotificationListenerService() {
         // Notifications get re-posted constantly. Drop anything we've already
         // processed for the same key+content within this window.
         private const val DEDUPE_WINDOW_MS = 60_000L
+
+        /**
+         * Whether a (lowercased) body is worth logging by default — i.e. it
+         * contains the trigger word. Broader than the exact `== "loc"` match so
+         * near-misses ("loca", "loc " with stray characters, "John: loc") still
+         * get a diagnostic row. Note "quicloc" contains "loc", so one check
+         * covers both triggers.
+         */
+        private fun bodyLooksLikeTrigger(body: String): Boolean =
+            body.contains(TRIGGER_PLAIN)
     }
 
     private val whitelist by lazy { WhitelistManager(applicationContext) }
     private val history by lazy { RequestHistoryManager(applicationContext) }
+    private val diag by lazy { DiagnosticLogManager(applicationContext) }
     private val recentlyProcessed = mutableMapOf<String, Long>()
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        val captureAll = AppSettings.isDiagCaptureAll(applicationContext)
+        val pkg = sbn.packageName
+
         // Never react to our own notifications (reminder, foreground services).
-        if (sbn.packageName == packageName) return
+        if (pkg == packageName) return
 
         // System / app-management noise — ignore.
-        if (sbn.isOngoing) return
-
-        if (!AppSettings.isEnabled(applicationContext)) {
-            Log.d(TAG, "Ignoring notification from ${sbn.packageName} — QuicLoc disabled")
+        if (sbn.isOngoing) {
+            if (captureAll) recordDiag(pkg, "", "", DiagOutcome.ONGOING_IGNORED,
+                "Ongoing/system notification — ignored")
             return
         }
 
-        val notification = sbn.notification ?: return
+        if (!AppSettings.isEnabled(applicationContext)) {
+            Log.d(TAG, "Ignoring notification from $pkg — QuicLoc disabled")
+            if (captureAll) recordDiag(pkg, "", "", DiagOutcome.APP_DISABLED,
+                "QuicLoc master toggle is off")
+            return
+        }
 
-        val candidates = extractMessages(notification)
-        if (candidates.isEmpty()) return
+        val notification = sbn.notification ?: run {
+            if (captureAll) recordDiag(pkg, "", "", DiagOutcome.NO_NOTIFICATION_OBJECT,
+                "Notification object was null")
+            return
+        }
+
+        val extraction = extractMessages(notification)
+        val candidates = extraction.messages
+        if (candidates.isEmpty()) {
+            if (captureAll) recordDiag(pkg, "", "", DiagOutcome.NO_MESSAGES_EXTRACTED,
+                "Couldn't extract any message. Extras present: ${extrasSummary(notification)}",
+                extractionPath = extraction.path)
+            return
+        }
 
         // Use only the most recent message — older messages in the bundle were
         // already handled when their own notification was posted.
@@ -4456,19 +5005,31 @@ class NotificationListener : NotificationListenerService() {
         val sender = latest.sender.trim()
         val body = latest.body.trim().lowercase()
 
-        if (sender.isEmpty() || body.isEmpty()) return
+        if (sender.isEmpty() || body.isEmpty()) {
+            if (captureAll) recordDiag(pkg, sender, body, DiagOutcome.EMPTY_SENDER_OR_BODY,
+                "Sender or body was blank after extraction. Extras: ${extrasSummary(notification)}",
+                extractionPath = extraction.path)
+            return
+        }
+
+        val looksLikeTrigger = bodyLooksLikeTrigger(body)
 
         val dedupeKey = "${sbn.key}|$sender|$body"
         val now = System.currentTimeMillis()
         val lastSeen = recentlyProcessed[dedupeKey]
-        if (lastSeen != null && now - lastSeen < DEDUPE_WINDOW_MS) return
+        if (lastSeen != null && now - lastSeen < DEDUPE_WINDOW_MS) {
+            if (looksLikeTrigger) recordDiag(pkg, sender, body, DiagOutcome.DEDUPED,
+                "Duplicate re-post within ${DEDUPE_WINDOW_MS / 1000}s — already handled",
+                extractionPath = extraction.path)
+            return
+        }
         recentlyProcessed[dedupeKey] = now
         // Opportunistic cleanup so the map doesn't grow unboundedly.
         if (recentlyProcessed.size > 200) {
             recentlyProcessed.entries.removeAll { now - it.value > DEDUPE_WINDOW_MS }
         }
 
-        Log.d(TAG, "msg from $sender via ${sbn.packageName}: '$body'")
+        Log.d(TAG, "msg from $sender via $pkg: '$body'")
 
         val passphrase = whitelist.getPassphrase()
         val isPassphraseTrigger = !passphrase.isNullOrEmpty() &&
@@ -4476,36 +5037,102 @@ class NotificationListener : NotificationListenerService() {
              body == "$TRIGGER_PREFIXED ${passphrase.lowercase()}")
 
         if (isPassphraseTrigger) {
-            Log.d(TAG, "Passphrase trigger from '$sender' via ${sbn.packageName}")
+            Log.d(TAG, "Passphrase trigger from '$sender' via $pkg")
+            recordDiag(pkg, sender, body, DiagOutcome.PASSPHRASE_TRIGGER,
+                "Find-my-phone passphrase matched — starting tracking",
+                triggerMatched = true, extractionPath = extraction.path)
             whitelist.clearPassphraseSync()
             TrackingService.startForNotification(
                 applicationContext,
                 sender = sender,
-                source = sbn.packageName
+                source = pkg
             )
             return
         }
 
-        if (body != TRIGGER_PLAIN && body != TRIGGER_PREFIXED) return
+        if (body != TRIGGER_PLAIN && body != TRIGGER_PREFIXED) {
+            if (looksLikeTrigger || captureAll) recordDiag(pkg, sender, body,
+                if (looksLikeTrigger) DiagOutcome.NOT_A_TRIGGER else DiagOutcome.EVALUATED_NO_ACTION,
+                if (looksLikeTrigger)
+                    "Body resembles but isn't exactly 'loc'/'quicloc' — no reply"
+                else "Notification seen; not a trigger word",
+                extractionPath = extraction.path)
+            return
+        }
 
         if (!whitelist.isWhitelistedByName(sender)) {
             Log.d(TAG, "Sender '$sender' not whitelisted, ignoring.")
+            recordDiag(pkg, sender, body, DiagOutcome.WHITELIST_NO_MATCH_BY_NAME,
+                "Trigger '$body' from \"$sender\" via $pkg, but sender not in whitelist. " +
+                    "Whitelist: [${whitelist.getNumbers().joinToString(", ")}]",
+                triggerMatched = true, whitelistMatched = false, extractionPath = extraction.path)
             return
         }
 
         val replyAction = findReplyAction(notification)
         if (replyAction == null) {
-            Log.w(TAG, "No inline-reply action on notification from ${sbn.packageName}")
-            history.record(sender, sbn.packageName, succeeded = false)
+            Log.w(TAG, "No inline-reply action on notification from $pkg")
+            recordDiag(pkg, sender, body, DiagOutcome.NO_REPLY_ACTION,
+                "Whitelisted sender, but this notification from $pkg has no inline-reply " +
+                    "action to send the location through",
+                triggerMatched = true, whitelistMatched = true, extractionPath = extraction.path)
+            history.record(sender, pkg, succeeded = false)
             return
         }
 
+        val diagId = java.util.UUID.randomUUID().toString()
+        recordDiag(pkg, sender, body, DiagOutcome.DISPATCHED,
+            "Trigger matched, sender whitelisted — fetching location to reply",
+            id = diagId, triggerMatched = true, whitelistMatched = true,
+            extractionPath = extraction.path)
         LocationReplyService.startForNotification(
             applicationContext,
             sender = sender,
-            source = sbn.packageName,
-            action = replyAction
+            source = pkg,
+            action = replyAction,
+            diagId = diagId
         )
+    }
+
+    /** Constructs and records a NOTIFICATION-channel diagnostic event. */
+    private fun recordDiag(
+        pkg: String,
+        sender: String,
+        body: String,
+        outcome: DiagOutcome,
+        reason: String,
+        id: String = java.util.UUID.randomUUID().toString(),
+        triggerMatched: Boolean = false,
+        whitelistMatched: Boolean? = null,
+        extractionPath: String? = null,
+    ) {
+        diag.record(
+            DiagnosticEvent(
+                id = id,
+                timestamp = System.currentTimeMillis(),
+                channel = DiagChannel.NOTIFICATION,
+                source = pkg,
+                rawSender = sender,
+                rawBody = body.take(80),
+                triggerMatched = triggerMatched,
+                whitelistMatched = whitelistMatched,
+                extractionPath = extractionPath,
+                outcome = outcome,
+                reason = reason,
+            )
+        )
+    }
+
+    /** Lists which message-bearing extras were present — a debugging clue. */
+    private fun extrasSummary(notification: Notification): String {
+        val extras = notification.extras ?: return "(none)"
+        val present = buildList {
+            if (extras.getCharSequence(Notification.EXTRA_TITLE) != null) add("title")
+            if (extras.getCharSequence(Notification.EXTRA_TEXT) != null) add("text")
+            if (extras.getCharSequence(Notification.EXTRA_BIG_TEXT) != null) add("bigText")
+            if (extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES) != null) add("textLines")
+        }
+        return if (present.isEmpty()) "(none)" else present.joinToString(", ")
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
@@ -4518,8 +5145,16 @@ class NotificationListener : NotificationListenerService() {
      */
     private data class IncomingMessage(val sender: String, val body: String)
 
-    private fun extractMessages(notification: Notification): List<IncomingMessage> {
-        val extras: Bundle = notification.extras ?: return emptyList()
+    /**
+     * The result of [extractMessages] plus which branch produced it, so the
+     * diagnostic log can show *how* a message was (or wasn't) read out of each
+     * app's notification. [path] is one of "MessagingStyle", "TextLines",
+     * "PlainText", or "None".
+     */
+    private data class Extraction(val path: String, val messages: List<IncomingMessage>)
+
+    private fun extractMessages(notification: Notification): Extraction {
+        val extras: Bundle = notification.extras ?: return Extraction("None", emptyList())
         val notifTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
 
         // 1. MessagingStyle — the right shape for any modern chat app.
@@ -4531,7 +5166,7 @@ class NotificationListener : NotificationListenerService() {
             if (style != null) {
                 val msgs = style.messages
                 if (msgs.isNotEmpty()) {
-                    return msgs.map { m ->
+                    return Extraction("MessagingStyle", msgs.map { m ->
                         // Person is null for messages the user sent themselves.
                         // For incoming, person.name is the sender. In 1:1 chats
                         // some apps leave person null and put the sender in the
@@ -4540,7 +5175,7 @@ class NotificationListener : NotificationListenerService() {
                             .ifEmpty { style.conversationTitle?.toString().orEmpty() }
                             .ifEmpty { notifTitle }
                         IncomingMessage(sender = sender, body = m.text?.toString().orEmpty())
-                    }
+                    })
                 }
             }
         } catch (e: Exception) {
@@ -4550,23 +5185,23 @@ class NotificationListener : NotificationListenerService() {
         // 2. EXTRA_TEXT_LINES — used by some apps for bundled inbox-style.
         val lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
         if (lines != null && lines.isNotEmpty()) {
-            return lines.mapNotNull { line ->
+            return Extraction("TextLines", lines.mapNotNull { line ->
                 val parsed = parseSenderColonBody(line.toString(), notifTitle)
                 if (parsed.body.isEmpty()) null else parsed
-            }
+            })
         }
 
         // 3. Plain title + text fallback.
         var text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
             ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
-            ?: return emptyList()
+            ?: return Extraction("None", emptyList())
 
         // Google Voice puts "<sender>: <body>" in EXTRA_TEXT.
         if (text.startsWith("$notifTitle: ")) {
             text = text.substringAfter("$notifTitle: ")
         }
 
-        return listOf(IncomingMessage(sender = notifTitle, body = text))
+        return Extraction("PlainText", listOf(IncomingMessage(sender = notifTitle, body = text)))
     }
 
     /**
@@ -4972,13 +5607,24 @@ class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
 
+        val captureAll = AppSettings.isDiagCaptureAll(context)
+        // Lazy so the EncryptedSharedPreferences / Keystore init only happens
+        // when we actually record a diagnostic — not for every passing SMS.
+        val diag by lazy { DiagnosticLogManager(context) }
+
         if (!AppSettings.isEnabled(context)) {
             Log.d(TAG, "Ignoring incoming SMS — QuicLoc disabled")
+            if (captureAll) diag.record(buildEvent("", "", DiagOutcome.APP_DISABLED,
+                "QuicLoc master toggle is off"))
             return
         }
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
-        if (messages.isNullOrEmpty()) return
+        if (messages.isNullOrEmpty()) {
+            if (captureAll) diag.record(buildEvent("", "", DiagOutcome.NO_MESSAGES_EXTRACTED,
+                "No SMS messages in intent"))
+            return
+        }
 
         // Reassemble multi-part SMS by sender
         val messagesBySender = mutableMapOf<String, StringBuilder>()
@@ -4993,6 +5639,7 @@ class SmsReceiver : BroadcastReceiver() {
         for ((sender, bodyBuilder) in messagesBySender) {
             val body = bodyBuilder.toString().trim().lowercase()
             Log.d(TAG, "SMS from $sender: '$body'")
+            val looksLikeTrigger = body.contains("loc")
 
             val passphrase = whitelistManager.getPassphrase()
             val isPassphraseTrigger = passphrase != null && passphrase.isNotEmpty() &&
@@ -5000,6 +5647,8 @@ class SmsReceiver : BroadcastReceiver() {
 
             if (isPassphraseTrigger) {
                 Log.d(TAG, "Passphrase trigger from $sender — starting TrackingService")
+                diag.record(buildEvent(sender, body, DiagOutcome.PASSPHRASE_TRIGGER,
+                    "Find-my-phone passphrase matched — starting tracking", triggerMatched = true))
                 // Commit synchronously so a crash between now and the next boot
                 // can't leave the single-use passphrase usable a second time.
                 whitelistManager.clearPassphraseSync()
@@ -5009,17 +5658,52 @@ class SmsReceiver : BroadcastReceiver() {
 
             if (!whitelistManager.isWhitelisted(sender)) {
                 Log.d(TAG, "Sender $sender not whitelisted, ignoring.")
+                if (looksLikeTrigger) diag.record(buildEvent(sender, body,
+                    DiagOutcome.WHITELIST_NO_MATCH_BY_NUMBER,
+                    "Trigger '$body' from $sender, but number not in whitelist. " +
+                        "Whitelist: [${whitelistManager.getNumbers().joinToString(", ")}]",
+                    triggerMatched = true, whitelistMatched = false))
                 continue
             }
 
             if (body == "loc" || body == "quicloc") {
                 Log.d(TAG, "Trigger from $sender — starting LocationReplyService")
+                val diagId = java.util.UUID.randomUUID().toString()
+                diag.record(buildEvent(sender, body, DiagOutcome.DISPATCHED,
+                    "Trigger matched, sender whitelisted — fetching location to reply",
+                    id = diagId, triggerMatched = true, whitelistMatched = true))
                 // Hand off to the foreground service. The receiver returns in
                 // milliseconds; the service does the GPS wait + reply.
-                LocationReplyService.startForSms(context, sender)
+                LocationReplyService.startForSms(context, sender, diagId = diagId)
+            } else if (captureAll) {
+                diag.record(buildEvent(sender, body, DiagOutcome.NOT_A_TRIGGER,
+                    "Whitelisted sender, but message isn't a trigger word"))
             }
         }
     }
+
+    /** Builds an SMS-channel diagnostic event with the common fields filled. */
+    private fun buildEvent(
+        sender: String,
+        body: String,
+        outcome: DiagOutcome,
+        reason: String,
+        id: String = java.util.UUID.randomUUID().toString(),
+        triggerMatched: Boolean = false,
+        whitelistMatched: Boolean? = null,
+    ): DiagnosticEvent = DiagnosticEvent(
+        id = id,
+        timestamp = System.currentTimeMillis(),
+        channel = DiagChannel.SMS,
+        source = "SMS",
+        rawSender = sender,
+        rawBody = body.take(80),
+        triggerMatched = triggerMatched,
+        whitelistMatched = whitelistMatched,
+        extractionPath = null,
+        outcome = outcome,
+        reason = reason,
+    )
 }
 
 
@@ -6046,11 +6730,16 @@ class WhitelistAdapter(
 
 package com.hereliesaz.quicloc
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.ContactsContract
 import android.telephony.PhoneNumberUtils
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
@@ -6247,14 +6936,77 @@ class WhitelistManager(context: Context) {
 
     /**
      * Used for notifications: matches by display name OR phone number.
-     * Notification senders may show a contact name rather than a raw number.
+     * Notification senders almost always show a contact *name* rather than a
+     * raw number, while the whitelist often holds *numbers* (e.g. added via the
+     * contact picker, or typed in). Matching strategy, cheapest first:
+     *
+     *   1. Direct string equality against a whitelist entry (covers whitelisting
+     *      a display name like "Mom" when the notification shows exactly "Mom").
+     *   2. Phone-number compare (covers apps that surface a raw number).
+     *   3. Contacts resolution: look up the incoming display name in the device
+     *      Contacts, and if any of that contact's phone numbers is whitelisted,
+     *      it's a match. This is what makes a *number-only* whitelist work for
+     *      WhatsApp / Messenger / Google Voice, where the sender is a name.
+     *
+     * Step 3 requires `READ_CONTACTS`; without it we degrade to steps 1–2 (the
+     * previous behavior).
      */
     fun isWhitelistedByName(displayName: String): Boolean {
         val nameLower = displayName.trim().lowercase()
-        return getNumbers().any { entry ->
+        val numbers = getNumbers()
+
+        val directMatch = numbers.any { entry ->
             val entryLower = entry.trim().lowercase()
             entryLower == nameLower ||
                 PhoneNumberUtils.compare(cleanPhoneNumber(displayName), cleanPhoneNumber(entry))
+        }
+        if (directMatch) return true
+
+        // Resolve the notification's display name to the contact's phone
+        // numbers, then check those against the whitelist.
+        val contactNumbers = resolveContactNumbers(displayName)
+        return contactNumbers.any { contactNumber ->
+            numbers.any { entry -> PhoneNumberUtils.compare(contactNumber, entry) }
+        }
+    }
+
+    /**
+     * Looks up [displayName] in the device Contacts and returns every phone
+     * number associated with the matching contact(s). Uses
+     * [ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI], which matches
+     * on name prefix — so "Mom ❤️" still resolves the contact named "Mom".
+     * Returns empty if `READ_CONTACTS` isn't granted or nothing matches.
+     */
+    private fun resolveContactNumbers(displayName: String): List<String> {
+        val name = displayName.trim()
+        if (name.isEmpty()) return emptyList()
+        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.READ_CONTACTS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            return emptyList()
+        }
+
+        val uri = Uri.withAppendedPath(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI,
+            Uri.encode(name)
+        )
+        val results = mutableListOf<String>()
+        return try {
+            appContext.contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                null, null, null
+            )?.use { cursor ->
+                val numberIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                if (numberIdx < 0) return@use
+                while (cursor.moveToNext()) {
+                    cursor.getString(numberIdx)?.takeIf { it.isNotBlank() }?.let { results.add(it) }
+                }
+            }
+            results
+        } catch (e: Exception) {
+            Log.e(TAG, "Contact lookup failed for '$name'", e)
+            emptyList()
         }
     }
 
@@ -7706,7 +8458,11 @@ class TutorialsTest {
 
 package com.hereliesaz.quicloc
 
+import android.Manifest
+import android.app.Application
 import android.content.Context
+import android.net.Uri
+import android.provider.ContactsContract
 import androidx.test.core.app.ApplicationProvider
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -7717,7 +8473,9 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.fakes.RoboCursor
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -7857,6 +8615,57 @@ class WhitelistManagerTest {
         whitelist.addNumber("+15551234567")
         assertTrue(whitelist.isWhitelistedByName("+15551234567"))
         assertTrue(whitelist.isWhitelistedByName("(555) 123-4567"))
+    }
+
+    /**
+     * The chat-app fix: the whitelist holds only a phone *number*, but the
+     * notification surfaces a contact *name*. With READ_CONTACTS granted, the
+     * name resolves through Contacts to the number, which is whitelisted.
+     */
+    @Test
+    fun `isWhitelistedByName resolves a contact name to a whitelisted number`() {
+        grantContacts()
+        // Notification shows "Mom ❤️"; the contact's number is +15551234567.
+        stubContactNumbers("Mom ❤️", "+15551234567")
+        whitelist.addNumber("+15551234567")
+
+        assertTrue(whitelist.isWhitelistedByName("Mom ❤️"))
+    }
+
+    @Test
+    fun `isWhitelistedByName rejects a contact whose number isn't whitelisted`() {
+        grantContacts()
+        stubContactNumbers("Stranger", "+15559999999")
+        whitelist.addNumber("+15551234567")
+
+        assertFalse(whitelist.isWhitelistedByName("Stranger"))
+    }
+
+    @Test
+    fun `isWhitelistedByName without READ_CONTACTS falls back to direct matching`() {
+        // No permission granted: contact resolution is skipped, so a
+        // number-only whitelist can't match a name.
+        stubContactNumbers("Mom", "+15551234567")
+        whitelist.addNumber("+15551234567")
+
+        assertFalse(whitelist.isWhitelistedByName("Mom"))
+    }
+
+    private fun grantContacts() {
+        shadowOf(context as Application).grantPermissions(Manifest.permission.READ_CONTACTS)
+    }
+
+    /** Registers a contacts lookup result for [displayName] → [numbers]. */
+    private fun stubContactNumbers(displayName: String, vararg numbers: String) {
+        val uri = Uri.withAppendedPath(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI,
+            Uri.encode(displayName)
+        )
+        // ShadowContentResolver.setCursor requires Robolectric's BaseCursor.
+        val cursor = RoboCursor()
+        cursor.setColumnNames(listOf(ContactsContract.CommonDataKinds.Phone.NUMBER))
+        cursor.setResults(numbers.map { arrayOf<Any>(it) }.toTypedArray())
+        shadowOf(context.contentResolver).setCursor(uri, cursor)
     }
 
     // ---- bulk replace (used by BackupVault restore) ---------------------
