@@ -37,6 +37,7 @@ enum class DiagOutcome {
     WHITELIST_NO_MATCH_BY_NAME,   // notif: trigger OK but sender not whitelisted (the key one)
     WHITELIST_NO_MATCH_BY_NUMBER, // sms: trigger OK but sender not whitelisted
     NO_REPLY_ACTION,              // notif: whitelisted but no inline-reply affordance
+    DUPLICATE_SUPPRESSED,         // same request already handled by the other intake path
     DISPATCHED,                   // handed to LocationReplyService (interim state)
 
     // --- final outcomes, patched in by LocationReplyService ---

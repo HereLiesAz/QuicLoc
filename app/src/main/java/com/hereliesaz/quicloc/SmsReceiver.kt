@@ -98,6 +98,16 @@ class SmsReceiver : BroadcastReceiver() {
             }
 
             if (body == "loc" || body == "quicloc") {
+                // The same carrier SMS also reaches NotificationListener via the
+                // default SMS app's notification; dedupe so we only reply once.
+                if (TriggerDedupe.wasRecentlyHandled(listOf(sender))) {
+                    Log.d(TAG, "Duplicate trigger from $sender — already handled, skipping")
+                    diag.record(buildEvent(sender, body, DiagOutcome.DUPLICATE_SUPPRESSED,
+                        "Already handled this request via the notification path — not replying twice",
+                        triggerMatched = true, whitelistMatched = true))
+                    continue
+                }
+                TriggerDedupe.markHandled(sender)
                 Log.d(TAG, "Trigger from $sender — starting LocationReplyService")
                 val diagId = java.util.UUID.randomUUID().toString()
                 diag.record(buildEvent(sender, body, DiagOutcome.DISPATCHED,
