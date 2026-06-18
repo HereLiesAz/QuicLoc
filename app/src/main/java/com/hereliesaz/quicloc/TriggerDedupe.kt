@@ -26,24 +26,34 @@ object TriggerDedupe {
     // Normalized-ish number string -> last-handled timestamp.
     private val handled = ConcurrentHashMap<String, Long>()
 
-    /** Records that a `loc` reply was just dispatched for [number]. */
+    /**
+     * Records that a `loc` reply was just dispatched for [number]. Non-numeric
+     * inputs (e.g. a contact display name that a caller passes through) are
+     * ignored — only phone numbers are meaningful keys, and
+     * [PhoneNumberUtils.compare] is undefined on non-numeric strings.
+     */
     fun markHandled(number: String) {
+        if (!hasDigits(number)) return
         val now = System.currentTimeMillis()
         handled[number] = now
         cleanUp(now)
     }
 
     /**
-     * True if any of [candidates] matches a number handled within the window.
-     * Numbers are compared with [PhoneNumberUtils.compare] so differing formats
-     * still match.
+     * True if any (numeric) candidate in [candidates] matches a number handled
+     * within the window. Numbers are compared with [PhoneNumberUtils.compare] so
+     * differing formats still match; non-numeric candidates are skipped.
      */
     fun wasRecentlyHandled(candidates: Collection<String>): Boolean {
         val now = System.currentTimeMillis()
+        val numbers = candidates.filter { hasDigits(it) }
+        if (numbers.isEmpty()) return false
         return handled.any { (stored, ts) ->
-            now - ts < WINDOW_MS && candidates.any { PhoneNumberUtils.compare(it, stored) }
+            now - ts < WINDOW_MS && numbers.any { PhoneNumberUtils.compare(it, stored) }
         }
     }
+
+    private fun hasDigits(s: String): Boolean = s.any { it.isDigit() }
 
     private fun cleanUp(now: Long) {
         if (handled.size > 50) {
