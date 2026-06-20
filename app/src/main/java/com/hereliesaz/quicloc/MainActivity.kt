@@ -169,7 +169,9 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         Manifest.permission.SEND_SMS,
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.ACCESS_COARSE_LOCATION,
-        Manifest.permission.CAMERA,
+        // CAMERA is intentionally NOT here — it lives in the on-demand
+        // :feature_camera module and is requested only after that module is
+        // downloaded during find-my-phone setup (see onSavePassphrase).
     ).let {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             it + "android.permission.POST_NOTIFICATIONS"
@@ -328,7 +330,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             list += runtime(Manifest.permission.ACCESS_BACKGROUND_LOCATION, "Background Location")
         }
-        list += runtime(Manifest.permission.CAMERA, "Camera")
+        // CAMERA lives in the on-demand :feature_camera module — only show its
+        // status once that module is installed (otherwise it'd always read as
+        // "not granted" because it isn't in the base manifest).
+        if (IntruderCameraLoader.isInstalled(this)) {
+            list += runtime(Manifest.permission.CAMERA, "Camera")
+        }
         list += runtime(Manifest.permission.READ_CONTACTS, "Read Contacts")
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             list += runtime("android.permission.POST_NOTIFICATIONS", "Show Notifications")
@@ -985,16 +992,37 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     // Find-my-phone is now armed — make sure every
                                     // permission its trigger flow needs is granted.
                                     // Each one is preceded by its own rationale dialog.
+                                    // CAMERA is intentionally omitted here: it lives in
+                                    // the on-demand :feature_camera module and isn't
+                                    // requestable until that module is installed.
                                     val needed = listOf(
                                         Manifest.permission.RECEIVE_SMS,
                                         Manifest.permission.SEND_SMS,
                                         Manifest.permission.ACCESS_FINE_LOCATION,
                                         Manifest.permission.ACCESS_COARSE_LOCATION,
-                                        Manifest.permission.CAMERA,
                                     ).filter {
                                         ContextCompat.checkSelfPermission(this@MainActivity, it) != PackageManager.PERMISSION_GRANTED
                                     }
-                                    runPermissionChain(needed) {}
+                                    runPermissionChain(needed) {
+                                        // Download the panic-photo module now (foreground),
+                                        // then request CAMERA once it's installed — the
+                                        // photo needs it granted before any lock event, and
+                                        // CAMERA can't be requested over the keyguard.
+                                        IntruderCameraLoader.requestInstall(applicationContext) {
+                                            runOnUiThread {
+                                                // The download is async — the activity may be gone
+                                                // by now; showing a rationale dialog on a dead
+                                                // window would crash (BadTokenException).
+                                                if (!isFinishing && !isDestroyed &&
+                                                    ContextCompat.checkSelfPermission(
+                                                        this@MainActivity, Manifest.permission.CAMERA
+                                                    ) != PackageManager.PERMISSION_GRANTED
+                                                ) {
+                                                    runPermissionChain(listOf(Manifest.permission.CAMERA)) {}
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             )
                             }

@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    1476c4320a38822774a2122bbf44302aa1d127ba
-  Timestamp: 2026-06-20 02:18:15 UTC
+  Branch:    claude/camera-feature-module
+  Commit:    b6b6d64c97dc6ad2e4b03d8603301338c1eea432
+  Timestamp: 2026-06-20 07:07:11 UTC
 ======================================================
 
 
@@ -682,6 +682,11 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // On-demand dynamic feature modules. The panic-mode intruder photo lives in
+    // :feature_camera so the base install doesn't declare the CAMERA permission
+    // until the user sets up find-my-phone (see IntruderCameraLoader).
+    dynamicFeatures += setOf(":feature_camera")
+
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
@@ -747,16 +752,10 @@ dependencies {
     // MMS Sending
     implementation(libs.android.smsmms)
 
-    // CameraX
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.view)
-
-    // Guava ListenableFuture needed for CameraX
-    implementation(libs.androidx.concurrent.futures)
-    implementation(libs.androidx.concurrent.futures.ktx)
-    implementation(libs.guava.listenablefuture)
+    // Play Feature Delivery — SplitInstall (download the on-demand camera
+    // module) + SplitCompat (load it in-process). CameraX itself now lives in
+    // :feature_camera, not the base.
+    implementation(libs.play.feature.delivery)
 
     // Material Icons
     implementation(libs.androidx.compose.material.icons.core)
@@ -805,8 +804,13 @@ dependencies {
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!--
+        CAMERA (and FOREGROUND_SERVICE_CAMERA) intentionally NOT declared here.
+        The panic-mode intruder photo lives in the on-demand :feature_camera
+        dynamic feature module, which declares CAMERA in its own manifest. The
+        base install therefore never carries the camera permission until the
+        user sets up find-my-phone and the module is downloaded.
+    -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -816,6 +820,7 @@ dependencies {
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
+        android:name=".QuicLocApp"
         android:allowBackup="true"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -921,7 +926,7 @@ dependencies {
         <service
             android:name=".TrackingService"
             android:exported="false"
-            android:foregroundServiceType="location|camera" />
+            android:foregroundServiceType="location" />
 
         <receiver
             android:name=".QuicLocWidgetProvider"
@@ -1754,6 +1759,116 @@ class DiagnosticLogManager(context: Context) {
             array.put(obj)
         }
         prefs.edit().putString(KEY_EVENTS, array.toString()).apply()
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/IntruderCamera.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import android.util.Log
+import androidx.activity.ComponentActivity
+import com.google.android.play.core.splitinstall.SplitInstallManagerFactory
+import com.google.android.play.core.splitinstall.SplitInstallRequest
+import com.google.android.play.core.splitinstall.SplitInstallSessionState
+import com.google.android.play.core.splitinstall.SplitInstallStateUpdatedListener
+import com.google.android.play.core.splitinstall.model.SplitInstallSessionStatus
+
+/**
+ * Contract for the panic-mode front-camera capture. The implementation lives
+ * in the on-demand `:feature_camera` dynamic feature module so the base install
+ * never declares the `CAMERA` permission until the user opts into find-my-phone.
+ *
+ * Only base types cross this boundary (no CameraX), so the base compiles and
+ * runs without the module. The module's [IntruderCameraLoader.MODULE] impl is
+ * resolved by reflection once the split is installed.
+ */
+interface IntruderCamera {
+    /** Bind the front camera to [activity]'s lifecycle so a capture is ready. */
+    fun start(activity: ComponentActivity)
+
+    /**
+     * Take a photo. [onResult] gets the saved file's absolute path, or `null`
+     * if capture wasn't possible — callers must treat `null` as "no photo" and
+     * carry on (the lock still works).
+     */
+    fun capture(activity: ComponentActivity, onResult: (String?) -> Unit)
+}
+
+/**
+ * Bridges the base to the on-demand `:feature_camera` module via Play Feature
+ * Delivery. All calls degrade gracefully (return `false`/`null`/no-op) when the
+ * module isn't installed or Play Core isn't available — so a device that never
+ * downloaded the module simply locks without an intruder photo.
+ */
+object IntruderCameraLoader {
+
+    const val MODULE = "feature_camera"
+    private const val IMPL = "com.hereliesaz.quicloc.camera.IntruderCameraImpl"
+    private const val TAG = "QuicLoc.IntruderCamera"
+
+    /** Whether the camera split is installed and its code is available. */
+    fun isInstalled(context: Context): Boolean = try {
+        SplitInstallManagerFactory.create(context.applicationContext)
+            .installedModules.contains(MODULE)
+    } catch (e: Throwable) {
+        false
+    }
+
+    /** Reflectively instantiate the module's [IntruderCamera]; `null` if absent. */
+    fun load(): IntruderCamera? = try {
+        Class.forName(IMPL).getDeclaredConstructor().newInstance() as IntruderCamera
+    } catch (e: Throwable) {
+        Log.w(TAG, "Camera module not loadable (not installed yet?)", e)
+        null
+    }
+
+    /**
+     * Best-effort request to download the camera module. Called from the
+     * find-my-phone setup flow (foreground) so the photo is available before a
+     * panic event — you can't reliably download it at panic time. [onInstalled]
+     * runs (on a Play Core thread) when the module is already/becomes installed;
+     * the caller is responsible for marshalling to the main thread. It's used to
+     * prompt for the CAMERA permission, which only becomes requestable once the
+     * split — and thus its manifest permission — is part of the app.
+     */
+    fun requestInstall(context: Context, onInstalled: () -> Unit = {}) {
+        try {
+            val manager = SplitInstallManagerFactory.create(context.applicationContext)
+            if (manager.installedModules.contains(MODULE)) {
+                onInstalled()
+                return
+            }
+            val listener = object : SplitInstallStateUpdatedListener {
+                override fun onStateUpdate(state: SplitInstallSessionState) {
+                    when (state.status()) {
+                        SplitInstallSessionStatus.INSTALLED -> {
+                            manager.unregisterListener(this)
+                            onInstalled()
+                        }
+                        // Terminal failures: unregister so we don't leak the
+                        // listener when the download fails or is canceled.
+                        SplitInstallSessionStatus.FAILED,
+                        SplitInstallSessionStatus.CANCELED -> {
+                            manager.unregisterListener(this)
+                        }
+                        else -> { /* PENDING / DOWNLOADING / INSTALLING — keep waiting */ }
+                    }
+                }
+            }
+            manager.registerListener(listener)
+            val request = SplitInstallRequest.newBuilder().addModule(MODULE).build()
+            manager.startInstall(request).addOnFailureListener {
+                Log.w(TAG, "Camera module install request failed", it)
+                manager.unregisterListener(listener)
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Could not request camera module install", e)
+        }
     }
 }
 
@@ -2608,7 +2723,9 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         Manifest.permission.SEND_SMS,
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.ACCESS_COARSE_LOCATION,
-        Manifest.permission.CAMERA,
+        // CAMERA is intentionally NOT here — it lives in the on-demand
+        // :feature_camera module and is requested only after that module is
+        // downloaded during find-my-phone setup (see onSavePassphrase).
     ).let {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             it + "android.permission.POST_NOTIFICATIONS"
@@ -2767,7 +2884,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             list += runtime(Manifest.permission.ACCESS_BACKGROUND_LOCATION, "Background Location")
         }
-        list += runtime(Manifest.permission.CAMERA, "Camera")
+        // CAMERA lives in the on-demand :feature_camera module — only show its
+        // status once that module is installed (otherwise it'd always read as
+        // "not granted" because it isn't in the base manifest).
+        if (IntruderCameraLoader.isInstalled(this)) {
+            list += runtime(Manifest.permission.CAMERA, "Camera")
+        }
         list += runtime(Manifest.permission.READ_CONTACTS, "Read Contacts")
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             list += runtime("android.permission.POST_NOTIFICATIONS", "Show Notifications")
@@ -3424,16 +3546,37 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     // Find-my-phone is now armed — make sure every
                                     // permission its trigger flow needs is granted.
                                     // Each one is preceded by its own rationale dialog.
+                                    // CAMERA is intentionally omitted here: it lives in
+                                    // the on-demand :feature_camera module and isn't
+                                    // requestable until that module is installed.
                                     val needed = listOf(
                                         Manifest.permission.RECEIVE_SMS,
                                         Manifest.permission.SEND_SMS,
                                         Manifest.permission.ACCESS_FINE_LOCATION,
                                         Manifest.permission.ACCESS_COARSE_LOCATION,
-                                        Manifest.permission.CAMERA,
                                     ).filter {
                                         ContextCompat.checkSelfPermission(this@MainActivity, it) != PackageManager.PERMISSION_GRANTED
                                     }
-                                    runPermissionChain(needed) {}
+                                    runPermissionChain(needed) {
+                                        // Download the panic-photo module now (foreground),
+                                        // then request CAMERA once it's installed — the
+                                        // photo needs it granted before any lock event, and
+                                        // CAMERA can't be requested over the keyguard.
+                                        IntruderCameraLoader.requestInstall(applicationContext) {
+                                            runOnUiThread {
+                                                // The download is async — the activity may be gone
+                                                // by now; showing a rationale dialog on a dead
+                                                // window would crash (BadTokenException).
+                                                if (!isFinishing && !isDestroyed &&
+                                                    ContextCompat.checkSelfPermission(
+                                                        this@MainActivity, Manifest.permission.CAMERA
+                                                    ) != PackageManager.PERMISSION_GRANTED
+                                                ) {
+                                                    runPermissionChain(listOf(Manifest.permission.CAMERA)) {}
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             )
                             }
@@ -5405,6 +5548,24 @@ class NotificationListener : NotificationListenerService() {
 
 
 ######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/QuicLocApp.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+/**
+ * Application subclass extending [com.google.android.play.core.splitcompat.SplitCompatApplication]
+ * so code and resources from on-demand dynamic feature modules (currently
+ * `:feature_camera`) can be loaded in-process after they're installed via
+ * `SplitInstall`, without requiring a fresh process start.
+ *
+ * SplitCompatApplication already calls `SplitCompat.install(...)` in its
+ * `attachBaseContext`, so no override is needed here.
+ */
+class QuicLocApp : com.google.android.play.core.splitcompat.SplitCompatApplication()
+
+
+######################################################
 # FILE: app/src/main/java/com/hereliesaz/quicloc/QuicLocDeviceAdmin.kt
 ######################################################
 
@@ -5928,6 +6089,7 @@ class ToggleReceiver : BroadcastReceiver() {
 package com.hereliesaz.quicloc
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
@@ -5935,10 +6097,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.addCallback
 import androidx.activity.compose.setContent
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -5947,9 +6105,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import java.io.File
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import com.google.android.play.core.splitcompat.SplitCompat
 
 /**
  * Cover-screen lock activity shown by [TrackingService] when the passphrase
@@ -5964,7 +6120,8 @@ import java.util.concurrent.Executors
  *
  * 3 wrong PIN entries → panic mode:
  *
- *   1. Capture front-camera photo via CameraX.
+ *   1. Capture a front-camera photo via the on-demand `:feature_camera` module
+ *      (skipped if it isn't installed).
  *   2. Hand the photo path to [TrackingService.enterPanicMode] which
  *      shortens the tracking interval to 1 min and sends the photo via MMS
  *      on the next tick.
@@ -5978,9 +6135,11 @@ import java.util.concurrent.Executors
  *     there, or use Recents.
  *   - PIN comparison uses `==` (not constant-time). The 3-strikes rule is
  *     the practical defense.
- *   - Requesting CAMERA at lock time (line 65) doesn't work over the
- *     keyguard — the dialog can't appear. We rely on CAMERA being granted
- *     up front from [MainActivity.checkPermissions].
+ *   - The intruder-photo capture lives in the on-demand `:feature_camera`
+ *     module ([IntruderCamera]). It's resolved here only if that split is
+ *     installed; otherwise panic mode proceeds without a photo. The module is
+ *     pre-downloaded during find-my-phone setup, and CAMERA can't be requested
+ *     over the keyguard anyway, so we rely on it being granted up front.
  */
 class TrackingLockActivity : ComponentActivity() {
 
@@ -5989,9 +6148,15 @@ class TrackingLockActivity : ComponentActivity() {
     }
 
     private var failCount = 0
-    private var imageCapture: ImageCapture? = null
-    private lateinit var cameraExecutor: ExecutorService
+    // Non-null only when the :feature_camera split is installed and loadable.
+    private var intruderCamera: IntruderCamera? = null
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(newBase)
+        // Make freshly-installed dynamic-feature code/resources available to
+        // this Activity's classloader (no-op if already present).
+        SplitCompat.installActivity(this)
+    }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
@@ -6017,17 +6182,21 @@ class TrackingLockActivity : ComponentActivity() {
                 android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
         )
 
-        cameraExecutor = Executors.newSingleThreadExecutor()
-
         // Handle back button to prevent exiting the lock screen
         onBackPressedDispatcher.addCallback(this) {
             // Do nothing to prevent back button
         }
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            startCamera()
-        } else {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
+        // Resolve the intruder camera only if its on-demand module is present.
+        if (IntruderCameraLoader.isInstalled(this)) {
+            intruderCamera = IntruderCameraLoader.load()
+        }
+        if (intruderCamera != null) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                intruderCamera?.start(this)
+            } else {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
+            }
         }
 
         setContent {
@@ -6058,7 +6227,7 @@ class TrackingLockActivity : ComponentActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 10 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            startCamera()
+            intruderCamera?.start(this)
         }
     }
 
@@ -6074,62 +6243,24 @@ class TrackingLockActivity : ComponentActivity() {
     }
 
 
-    private fun startCamera() {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-        cameraProviderFuture.addListener({
-            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
-            imageCapture = ImageCapture.Builder().build()
-            val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
-            try {
-                cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(this, cameraSelector, imageCapture)
-            } catch(exc: Exception) {
-                Log.e(TAG, "Use case binding failed", exc)
-            }
-        }, ContextCompat.getMainExecutor(this))
-    }
-
-
     /**
-     * Fires after 3 wrong PIN entries. Captures a front-camera photo (if
-     * possible) and escalates [TrackingService] into panic mode. The photo
-     * lives in [externalMediaDirs] — excluded from Auto Backup via
-     * `data_extraction_rules.xml`.
+     * Fires after 3 wrong PIN entries. Captures a front-camera photo via the
+     * on-demand camera module (if installed) and escalates [TrackingService]
+     * into panic mode. The photo lives in [externalMediaDirs] — excluded from
+     * Auto Backup via `data_extraction_rules.xml`. If the module isn't present,
+     * panic mode still proceeds, just without a photo.
      */
     private fun triggerPanicMode() {
         Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
-        val currentCapture = imageCapture
-        if (currentCapture == null) {
-            Log.e(TAG, "Image capture is null, entering panic mode without photo")
+        val cam = intruderCamera
+        if (cam == null) {
+            Log.w(TAG, "Camera module unavailable, entering panic mode without photo")
             TrackingService.enterPanicMode(this@TrackingLockActivity, null)
             return
         }
-
-        val outputDirectory = externalMediaDirs.firstOrNull()
-        if (outputDirectory == null) {
-            Log.e(TAG, "No external media directory found, entering panic mode without photo")
-            TrackingService.enterPanicMode(this@TrackingLockActivity, null)
-            return
+        cam.capture(this) { path ->
+            TrackingService.enterPanicMode(this@TrackingLockActivity, path)
         }
-        val photoFile = File(outputDirectory, "${System.currentTimeMillis()}_lock.jpg")
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-
-        currentCapture.takePicture(
-            outputOptions, ContextCompat.getMainExecutor(this), object : ImageCapture.OnImageSavedCallback {
-                override fun onError(exc: ImageCaptureException) {
-                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
-                    TrackingService.enterPanicMode(this@TrackingLockActivity, null)
-                }
-
-                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    Log.d(TAG, "Photo capture succeeded: ${photoFile.absolutePath}")
-                    TrackingService.enterPanicMode(this@TrackingLockActivity, photoFile.absolutePath)
-                }
-            })
-    }
-override fun onDestroy() {
-        super.onDestroy()
-        cameraExecutor.shutdown()
     }
 }
 
@@ -6201,10 +6332,10 @@ import androidx.core.app.ServiceCompat
  *   - `START_STICKY` + state persisted in `quicloc_tracking_state` prefs so
  *     the service can resume on its own after an OS kill. The null-intent
  *     restart path in [onStartCommand] handles this.
- *   - `foregroundServiceType="location|camera"` — Android 14+ FGS type
- *     requirement. Note camera-typed FGS background-start is restricted on
- *     14+; trigger from `NotificationListenerService` works, trigger from
- *     `SmsReceiver` may not. See [docs/LOCKDOWN.md] for details.
+ *   - `foregroundServiceType="location"` — Android 14+ FGS type requirement.
+ *     The intruder photo is captured by the visible [TrackingLockActivity]
+ *     (CAMERA only, no camera-typed FGS) via the on-demand `:feature_camera`
+ *     module, so the service itself needs only the location type.
  *   - Falls back to the cover-screen [TrackingLockActivity] if Device Admin
  *     isn't granted (see [LockdownController]).
  *
@@ -6431,13 +6562,16 @@ class TrackingService : Service() {
             .setFullScreenIntent(pendingIntent, true)
             .setOngoing(true)
 
-        // Step 1: claim FGS status.
+        // Step 1: claim FGS status. Location only — the intruder photo is
+        // captured by the visible TrackingLockActivity (CAMERA permission, no
+        // camera-typed FGS needed), and that capture now lives in the on-demand
+        // :feature_camera module.
         ServiceCompat.startForeground(
             this,
             NOTIF_ID,
             builder.build(),
             if (android.os.Build.VERSION.SDK_INT >= 34) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
             } else 0
         )
 
@@ -6852,7 +6986,7 @@ Location
 
 Camera
 
-• Camera: in find-my-phone (passphrase) mode, after 3 failed PIN attempts the front camera silently captures one frame of whoever is holding your phone and sends it to the requester via MMS. Asked up front because the lock screen can't show a permission dialog at the moment it's needed.
+• Camera: in find-my-phone (passphrase) mode, after 3 failed PIN attempts the front camera silently captures one frame of whoever is holding your phone and sends it to the requester via MMS. This is delivered as an optional add-on module that downloads only when you set up find-my-phone — so QuicLoc doesn't ask for camera access at all unless you use that feature. Granted right after the download (before the lock screen can ever need it).
 
 Authentication
 
@@ -6863,7 +6997,6 @@ Foreground services (keep work alive when the screen is off)
 
 • Foreground Service: required by Android to start any service that needs to run while the app isn't visible. Both the location-reply service and the tracking service rely on this.
 • Foreground Service – Location (Android 14+): the type-specific grant that tells Android "this foreground service is allowed to use location." Without it, Android 14+ would kill the reply mid-fetch.
-• Foreground Service – Camera (Android 14+): same idea for the panic-mode photo. Required because the tracking service is declared with foregroundServiceType="location|camera".
 
 Notifications
 
@@ -7841,6 +7974,8 @@ fun WidgetHelpUI(onFinished: () -> Unit) {
     <string name="app_name">QuicLoc</string>
     <string name="remove_whitelist_entry">Remove</string>
     <string name="notification_listener_label">QuicLoc Message Listener</string>
+    <!-- Title shown by Play for the on-demand panic-photo feature module. -->
+    <string name="feature_camera_title">QuicLoc Intruder Photo</string>
     <string name="device_admin_label">QuicLoc Lockdown</string>
     <string name="device_admin_description">QuicLoc uses Device Admin only to lock the screen when your find-my-phone passphrase is triggered. It cannot wipe data, change your PIN, prevent uninstall, or access any other admin capability. You can revoke this at any time in Settings → Security → Device admin apps.</string>
     <string name="device_admin_explanation_title">Grant Device Admin?</string>
@@ -9170,14 +9305,14 @@ plugins {
 | Service | File | Type | When started |
 |---|---|---|---|
 | `LocationReplyService` | [LocationReplyService.kt](../app/src/main/java/com/hereliesaz/quicloc/LocationReplyService.kt) | `location` | Whitelisted contact sent the trigger word, or the user tapped the widget. One-shot: fetch → reply → `stopSelf`. |
-| `TrackingService` | [TrackingService.kt](../app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt) | `location\|camera` | Passphrase fired. Persistent: posts location every 5 min (1 min in panic mode), survives restart via `quicloc_tracking_state` prefs. |
+| `TrackingService` | [TrackingService.kt](../app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt) | `location` | Passphrase fired. Persistent: posts location every 5 min (1 min in panic mode), survives restart via `quicloc_tracking_state` prefs. |
 
 ### UI
 
 | Activity | File | Role |
 |---|---|---|
 | `MainActivity` | [MainActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt) | Single-activity Compose app. Navigation is a `sealed class MainView` (Config / History / TutorialsHub / TutorialDetail). Biometric gate on resume. |
-| `TrackingLockActivity` | [TrackingLockActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt) | Fallback cover-screen when Device Admin isn't granted. Captures intruder photo after 3 wrong PINs via CameraX. |
+| `TrackingLockActivity` | [TrackingLockActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt) | Fallback cover-screen when Device Admin isn't granted. After 3 wrong PINs, captures an intruder photo via the on-demand `:feature_camera` module ([IntruderCamera](../app/src/main/java/com/hereliesaz/quicloc/IntruderCamera.kt)) if installed; otherwise locks without a photo. |
 | `WidgetHelpActivity` | [WidgetHelpActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/WidgetHelpActivity.kt) | Transparent activity that pops up when the widget is tapped exactly once. Three-step "tap-to-advance" hint. |
 
 ### Data layer
@@ -9844,7 +9979,6 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 |---|---|---|
 | `FOREGROUND_SERVICE` | Required to start any FGS on Android 9+ | Always granted, just needed in the manifest |
 | `FOREGROUND_SERVICE_LOCATION` | Type-specific FGS permission, Android 14+ | Required for `LocationReplyService` and `TrackingService` |
-| `FOREGROUND_SERVICE_CAMERA` | Type-specific FGS permission, Android 14+ | Required because `TrackingService` declares `foregroundServiceType="location\|camera"` |
 | `USE_BIOMETRIC`, `USE_FINGERPRINT` | `BiometricPrompt` UI auth gate | `USE_FINGERPRINT` is the pre-API-28 name; we keep both for breadth |
 | `INTERNET` | Required by Play Services (`play-services-location`, `play-services-auth`) | QuicLoc itself makes no HTTP calls — no backend |
 | `ACCESS_NETWORK_STATE` | Required by Play Services | Same as above |
@@ -9862,10 +9996,17 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 | `SEND_SMS` | `LocationHelper.sendSms` replies via `SmsManager` | Same |
 | `ACCESS_FINE_LOCATION` | `LocationHelper.fetchLocation` GPS fix | Same |
 | `ACCESS_COARSE_LOCATION` | Fallback when fine location unavailable | Same |
-| `CAMERA` | `TrackingLockActivity` photo capture after 3 wrong PINs (panic mode) | Same — requested up front, not at panic time, because the lock activity can't show a permission dialog over the keyguard |
 | `POST_NOTIFICATIONS` (API 33+) | All our notifications: FGS, tracking, reminder | Same |
 
 These are all batched in a single `requestPermissions` call from `MainActivity.checkPermissions` after biometric auth passes.
+
+### On-demand (dynamic feature module)
+
+| Permission | Why | When |
+|---|---|---|
+| `CAMERA` | Panic-mode intruder photo (`IntruderCameraImpl` in the `:feature_camera` module) after 3 wrong PINs | **Not in the base install.** Declared only in the on-demand `:feature_camera` module, downloaded via `SplitInstall` when the user sets up find-my-phone (`IntruderCameraLoader.requestInstall`). CAMERA is then requested right after the module installs (foreground), because the lock activity can't show a permission dialog over the keyguard. If the module is never installed, panic mode still locks — just without a photo. |
+
+This is how the base install avoids declaring `CAMERA` (and `FOREGROUND_SERVICE_CAMERA`, no longer needed) until the user opts into find-my-phone.
 
 ### Background location
 
@@ -9975,15 +10116,27 @@ debug APKs for sideloading.
 - **App Bundle auto-splits.** Play generates per-device APKs split by **screen density** and
   **language** automatically from the single `.aab` — no extra artifacts or config. (There are
   no native libraries in this app, so there's no ABI split to worry about.)
-- **Dynamic feature modules: intentionally not used (for now).** The only large, isolatable
-  code is the tracking / panic-mode / CameraX / MMS cluster — but that's triggered in the
-  **background** by an SMS/passphrase with no user interaction, so it can't be reliably
-  on-demand-downloaded at the moment it's needed; a safety feature that might not be installed
-  is worse than a slightly larger install. The optional UI (Tutorials, Diagnostics) is small
-  and wired into `MainActivity`'s `sealed MainView` navigation, so extracting it would need an
-  intent/`SplitInstall` entry-point indirection for little real size gain. If install size
-  ever becomes a problem, the cleanest first candidate is **Tutorials as an on-demand module**
-  reached via an intent entry point.
+- **Dynamic feature module: `:feature_camera` (on-demand).** The panic-mode intruder photo
+  (CameraX) is delivered as an on-demand module so the **base install never declares the
+  `CAMERA` permission** until the user sets up find-my-phone. Flow:
+  - `app/build.gradle.kts` lists `dynamicFeatures += setOf(":feature_camera")`; the module
+    (`com.android.dynamic-feature`) holds the CameraX deps + `CAMERA` permission +
+    `dist:on-demand` delivery.
+  - The base talks to it only through the `IntruderCamera` interface; `IntruderCameraLoader`
+    downloads it via `SplitInstall` (Play Feature Delivery) and loads `IntruderCameraImpl`
+    reflectively. `QuicLocApp : SplitCompatApplication` + `SplitCompat.installActivity` make the
+    freshly-installed code loadable in-process.
+  - Requires the app to be **bundle-delivered** (Play internal track or `bundletool`) for
+    `SplitInstall` to actually fetch the module — it won't download from a bare `assembleRelease`
+    APK. Needs **device testing**: confirm the module downloads at find-my-phone setup, that the
+    intruder photo is captured, and that a build *without* the module still locks (no photo).
+  - **Note for R8:** if `isMinifyEnabled` is ever turned on, add
+    `-keep class com.hereliesaz.quicloc.camera.IntruderCameraImpl { *; }` — it's loaded by
+    reflection and would otherwise be stripped/renamed.
+  - The core SMS + location permissions stay in the base on purpose: they're driven by a
+    manifest `SmsReceiver` the system delivers broadcasts to, and the app must answer `loc` the
+    moment it's installed. Other optional perms (`READ_CONTACTS`, the `BIND_*` signature
+    permissions) were intentionally left in the base — see the PR discussion.
 - **R8 / resource shrinking: deferred.** `isMinifyEnabled` is still `false`. Enabling R8 +
   `shrinkResources` is the realistic size win, but this is a safety app that uses
   `android-smsmms` (third-party, may use reflection) and Tink-backed `EncryptedSharedPreferences`,
@@ -10680,6 +10833,175 @@ Let's verify `LocationHelper.kt` just to be absolutely sure.
 
 
 ######################################################
+# FILE: feature_camera/build.gradle.kts
+######################################################
+
+plugins {
+    id("com.android.dynamic-feature")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "com.hereliesaz.quicloc.camera"
+    compileSdk = 37
+
+    defaultConfig {
+        minSdk = 26
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
+    }
+}
+
+dependencies {
+    // The base app — provides the IntruderCamera contract this module implements.
+    implementation(project(":app"))
+
+    implementation(libs.androidx.core.ktx)
+    // ComponentActivity (the type crossing the IntruderCamera boundary).
+    implementation(libs.androidx.activity.compose)
+
+    // CameraX — lives here, not in the base, so CAMERA stays out of the base
+    // install until this module is downloaded.
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
+    // Guava ListenableFuture needed for CameraX.
+    implementation(libs.androidx.concurrent.futures)
+    implementation(libs.androidx.concurrent.futures.ktx)
+    implementation(libs.guava.listenablefuture)
+}
+
+
+######################################################
+# FILE: feature_camera/src/main/AndroidManifest.xml
+######################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:dist="http://schemas.android.com/apk/distribution">
+
+    <!--
+        On-demand delivery: this split is NOT part of the base install. The app
+        requests it via SplitInstall when the user sets up find-my-phone
+        (IntruderCameraLoader.requestInstall). Until then the device carries
+        neither this code nor the CAMERA permission below.
+    -->
+    <dist:module
+        dist:instant="false"
+        dist:title="@string/feature_camera_title">
+        <dist:delivery>
+            <dist:on-demand />
+        </dist:delivery>
+        <!-- minSdk 26, so no need to fuse into a base multi-APK for pre-Lollipop. -->
+        <dist:fusing dist:include="false" />
+    </dist:module>
+
+    <!-- Lives here so the base install doesn't declare it. Merged into the app
+         only once this module is downloaded. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- CAMERA implies android.hardware.camera (rear) is required on Play; we
+         only use the FRONT camera and degrade gracefully, so mark all camera
+         hardware optional to avoid filtering out devices with no rear/any camera. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+</manifest>
+
+
+######################################################
+# FILE: feature_camera/src/main/java/com/hereliesaz/quicloc/camera/IntruderCameraImpl.kt
+######################################################
+
+package com.hereliesaz.quicloc.camera
+
+import android.util.Log
+import androidx.activity.ComponentActivity
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.content.ContextCompat
+import com.hereliesaz.quicloc.IntruderCamera
+import java.io.File
+
+/**
+ * CameraX implementation of [IntruderCamera], delivered in the on-demand
+ * `:feature_camera` module. Instantiated reflectively by
+ * `IntruderCameraLoader.load()` in the base once the split is installed.
+ *
+ * Lifted from the former in-base capture in `TrackingLockActivity`: bind the
+ * front camera to the activity lifecycle, then write a JPEG to the activity's
+ * external media dir on capture.
+ */
+class IntruderCameraImpl : IntruderCamera {
+
+    private var imageCapture: ImageCapture? = null
+
+    override fun start(activity: ComponentActivity) {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(activity)
+        cameraProviderFuture.addListener({
+            val cameraProvider = cameraProviderFuture.get()
+            val capture = ImageCapture.Builder().build()
+            imageCapture = capture
+            try {
+                cameraProvider.unbindAll()
+                cameraProvider.bindToLifecycle(
+                    activity, CameraSelector.DEFAULT_FRONT_CAMERA, capture
+                )
+            } catch (exc: Exception) {
+                Log.e(TAG, "Use case binding failed", exc)
+            }
+        }, ContextCompat.getMainExecutor(activity))
+    }
+
+    override fun capture(activity: ComponentActivity, onResult: (String?) -> Unit) {
+        val capture = imageCapture
+        if (capture == null) {
+            Log.e(TAG, "Image capture not ready")
+            onResult(null)
+            return
+        }
+        val outputDirectory = activity.externalMediaDirs.firstOrNull()
+        if (outputDirectory == null) {
+            Log.e(TAG, "No external media directory")
+            onResult(null)
+            return
+        }
+        val photoFile = File(outputDirectory, "${System.currentTimeMillis()}_lock.jpg")
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
+        capture.takePicture(
+            outputOptions, ContextCompat.getMainExecutor(activity),
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onError(exc: ImageCaptureException) {
+                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
+                    onResult(null)
+                }
+
+                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    Log.d(TAG, "Photo capture succeeded: ${photoFile.absolutePath}")
+                    onResult(photoFile.absolutePath)
+                }
+            }
+        )
+    }
+
+    companion object {
+        private const val TAG = "QuicLoc.IntruderCamera"
+    }
+}
+
+
+######################################################
 # FILE: gradle.properties
 ######################################################
 
@@ -10725,6 +11047,7 @@ security-crypto = "1.1.0"
 concurrent-futures = "1.3.0"
 guava-listenablefuture = "9999.0-empty-to-avoid-conflict-with-guava"
 playServicesAuth = "21.5.1"
+playFeatureDelivery = "2.1.0"
 
 [libraries]
 android-smsmms = { group = "com.klinkerapps", name = "android-smsmms", version.ref = "androidSmsmms" }
@@ -10754,6 +11077,7 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
+play-feature-delivery = { group = "com.google.android.play", name = "feature-delivery", version.ref = "playFeatureDelivery" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 
 [plugins]
@@ -10899,6 +11223,7 @@ dependencyResolutionManagement {
 }
 rootProject.name = "QuicLoc"
 include(":app")
+include(":feature_camera")
 
 
 ======================================================

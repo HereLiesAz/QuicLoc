@@ -240,7 +240,7 @@ Location
 
 Camera
 
-• Camera: in find-my-phone (passphrase) mode, after 3 failed PIN attempts the front camera silently captures one frame of whoever is holding your phone and sends it to the requester via MMS. Asked up front because the lock screen can't show a permission dialog at the moment it's needed.
+• Camera: in find-my-phone (passphrase) mode, after 3 failed PIN attempts the front camera silently captures one frame of whoever is holding your phone and sends it to the requester via MMS. This is delivered as an optional add-on module that downloads only when you set up find-my-phone — so QuicLoc doesn't ask for camera access at all unless you use that feature. Granted right after the download (before the lock screen can ever need it).
 
 Authentication
 
@@ -251,7 +251,6 @@ Foreground services (keep work alive when the screen is off)
 
 • Foreground Service: required by Android to start any service that needs to run while the app isn't visible. Both the location-reply service and the tracking service rely on this.
 • Foreground Service – Location (Android 14+): the type-specific grant that tells Android "this foreground service is allowed to use location." Without it, Android 14+ would kill the reply mid-fetch.
-• Foreground Service – Camera (Android 14+): same idea for the panic-mode photo. Required because the tracking service is declared with foregroundServiceType="location|camera".
 
 Notifications
 

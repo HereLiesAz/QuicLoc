@@ -1,6 +1,7 @@
 package com.hereliesaz.quicloc
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
@@ -8,10 +9,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.addCallback
 import androidx.activity.compose.setContent
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,9 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import java.io.File
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import com.google.android.play.core.splitcompat.SplitCompat
 
 /**
  * Cover-screen lock activity shown by [TrackingService] when the passphrase
@@ -37,7 +32,8 @@ import java.util.concurrent.Executors
  *
  * 3 wrong PIN entries → panic mode:
  *
- *   1. Capture front-camera photo via CameraX.
+ *   1. Capture a front-camera photo via the on-demand `:feature_camera` module
+ *      (skipped if it isn't installed).
  *   2. Hand the photo path to [TrackingService.enterPanicMode] which
  *      shortens the tracking interval to 1 min and sends the photo via MMS
  *      on the next tick.
@@ -51,9 +47,11 @@ import java.util.concurrent.Executors
  *     there, or use Recents.
  *   - PIN comparison uses `==` (not constant-time). The 3-strikes rule is
  *     the practical defense.
- *   - Requesting CAMERA at lock time (line 65) doesn't work over the
- *     keyguard — the dialog can't appear. We rely on CAMERA being granted
- *     up front from [MainActivity.checkPermissions].
+ *   - The intruder-photo capture lives in the on-demand `:feature_camera`
+ *     module ([IntruderCamera]). It's resolved here only if that split is
+ *     installed; otherwise panic mode proceeds without a photo. The module is
+ *     pre-downloaded during find-my-phone setup, and CAMERA can't be requested
+ *     over the keyguard anyway, so we rely on it being granted up front.
  */
 class TrackingLockActivity : ComponentActivity() {
 
@@ -62,9 +60,15 @@ class TrackingLockActivity : ComponentActivity() {
     }
 
     private var failCount = 0
-    private var imageCapture: ImageCapture? = null
-    private lateinit var cameraExecutor: ExecutorService
+    // Non-null only when the :feature_camera split is installed and loadable.
+    private var intruderCamera: IntruderCamera? = null
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(newBase)
+        // Make freshly-installed dynamic-feature code/resources available to
+        // this Activity's classloader (no-op if already present).
+        SplitCompat.installActivity(this)
+    }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
@@ -90,17 +94,21 @@ class TrackingLockActivity : ComponentActivity() {
                 android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
         )
 
-        cameraExecutor = Executors.newSingleThreadExecutor()
-
         // Handle back button to prevent exiting the lock screen
         onBackPressedDispatcher.addCallback(this) {
             // Do nothing to prevent back button
         }
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            startCamera()
-        } else {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
+        // Resolve the intruder camera only if its on-demand module is present.
+        if (IntruderCameraLoader.isInstalled(this)) {
+            intruderCamera = IntruderCameraLoader.load()
+        }
+        if (intruderCamera != null) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                intruderCamera?.start(this)
+            } else {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
+            }
         }
 
         setContent {
@@ -131,7 +139,7 @@ class TrackingLockActivity : ComponentActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 10 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            startCamera()
+            intruderCamera?.start(this)
         }
     }
 
@@ -147,62 +155,24 @@ class TrackingLockActivity : ComponentActivity() {
     }
 
 
-    private fun startCamera() {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-        cameraProviderFuture.addListener({
-            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
-            imageCapture = ImageCapture.Builder().build()
-            val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
-            try {
-                cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(this, cameraSelector, imageCapture)
-            } catch(exc: Exception) {
-                Log.e(TAG, "Use case binding failed", exc)
-            }
-        }, ContextCompat.getMainExecutor(this))
-    }
-
-
     /**
-     * Fires after 3 wrong PIN entries. Captures a front-camera photo (if
-     * possible) and escalates [TrackingService] into panic mode. The photo
-     * lives in [externalMediaDirs] — excluded from Auto Backup via
-     * `data_extraction_rules.xml`.
+     * Fires after 3 wrong PIN entries. Captures a front-camera photo via the
+     * on-demand camera module (if installed) and escalates [TrackingService]
+     * into panic mode. The photo lives in [externalMediaDirs] — excluded from
+     * Auto Backup via `data_extraction_rules.xml`. If the module isn't present,
+     * panic mode still proceeds, just without a photo.
      */
     private fun triggerPanicMode() {
         Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
-        val currentCapture = imageCapture
-        if (currentCapture == null) {
-            Log.e(TAG, "Image capture is null, entering panic mode without photo")
+        val cam = intruderCamera
+        if (cam == null) {
+            Log.w(TAG, "Camera module unavailable, entering panic mode without photo")
             TrackingService.enterPanicMode(this@TrackingLockActivity, null)
             return
         }
-
-        val outputDirectory = externalMediaDirs.firstOrNull()
-        if (outputDirectory == null) {
-            Log.e(TAG, "No external media directory found, entering panic mode without photo")
-            TrackingService.enterPanicMode(this@TrackingLockActivity, null)
-            return
+        cam.capture(this) { path ->
+            TrackingService.enterPanicMode(this@TrackingLockActivity, path)
         }
-        val photoFile = File(outputDirectory, "${System.currentTimeMillis()}_lock.jpg")
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-
-        currentCapture.takePicture(
-            outputOptions, ContextCompat.getMainExecutor(this), object : ImageCapture.OnImageSavedCallback {
-                override fun onError(exc: ImageCaptureException) {
-                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
-                    TrackingService.enterPanicMode(this@TrackingLockActivity, null)
-                }
-
-                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    Log.d(TAG, "Photo capture succeeded: ${photoFile.absolutePath}")
-                    TrackingService.enterPanicMode(this@TrackingLockActivity, photoFile.absolutePath)
-                }
-            })
-    }
-override fun onDestroy() {
-        super.onDestroy()
-        cameraExecutor.shutdown()
     }
 }
 
