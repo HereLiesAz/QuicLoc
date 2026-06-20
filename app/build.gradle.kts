@@ -69,7 +69,13 @@ android {
     fun signingProp(key: String, env: String): String? =
         (keystoreProps.getProperty(key) ?: System.getenv(env))?.takeIf { it.isNotBlank() }
     val releaseStoreFile = signingProp("storeFile", "QUICLOC_KEYSTORE_FILE")
-    val hasReleaseSigning = releaseStoreFile != null
+    val releaseStorePassword = signingProp("storePassword", "QUICLOC_KEYSTORE_PASSWORD")
+    val releaseKeyAlias = signingProp("keyAlias", "QUICLOC_KEY_ALIAS")
+    val releaseKeyPassword = signingProp("keyPassword", "QUICLOC_KEY_PASSWORD")
+    // Only sign when every credential is present; otherwise fall back to an
+    // unsigned release build rather than failing with a half-configured config.
+    val hasReleaseSigning = releaseStoreFile != null && releaseStorePassword != null &&
+        releaseKeyAlias != null && releaseKeyPassword != null
 
     defaultConfig {
         applicationId = "com.hereliesaz.quicloc"
@@ -84,10 +90,12 @@ android {
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
-                storeFile = file(releaseStoreFile!!)
-                storePassword = signingProp("storePassword", "QUICLOC_KEYSTORE_PASSWORD")
-                keyAlias = signingProp("keyAlias", "QUICLOC_KEY_ALIAS")
-                keyPassword = signingProp("keyPassword", "QUICLOC_KEY_PASSWORD")
+                // Resolve relative paths against the repo root, where
+                // keystore.properties lives (CI passes an absolute path).
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
             }
         }
     }
