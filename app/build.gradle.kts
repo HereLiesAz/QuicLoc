@@ -172,7 +172,7 @@ dependencies {
     // Biometric authentication
     implementation(libs.androidx.biometric)
 
-    val composeBom = platform("androidx.compose:compose-bom:2025.01.00")
+    val composeBom = platform(libs.androidx.compose.bom)
     implementation(composeBom)
     androidTestImplementation(composeBom)
 

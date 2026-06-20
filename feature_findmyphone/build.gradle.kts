@@ -37,9 +37,9 @@ dependencies {
     implementation(libs.androidx.activity.compose)
 
     // Compose — the lock screen (TrackingLockActivity / LockScreenUI) moved
-    // here out of the base. Mirror the base's BOM + artifacts (same catalog
-    // refs, no new versions pinned).
-    val composeBom = platform("androidx.compose:compose-bom:2025.01.00")
+    // here out of the base. Share the base's BOM via the version catalog so the
+    // two modules can't drift to different Compose versions.
+    val composeBom = platform(libs.androidx.compose.bom)
     implementation(composeBom)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
