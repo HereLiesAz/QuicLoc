@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    370fd22fde6836d113841c55d4ac343f6f9b5a66
-  Timestamp: 2026-06-20 07:12:01 UTC
+  Branch:    claude/debug-loc-messaging-u0p51l
+  Commit:    45e896b2739f2f609daee30b566f07b331798154
+  Timestamp: 2026-06-20 13:38:48 UTC
 ======================================================
 
 
@@ -682,10 +682,12 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // On-demand dynamic feature modules. The panic-mode intruder photo lives in
-    // :feature_camera so the base install doesn't declare the CAMERA permission
-    // until the user sets up find-my-phone (see IntruderCameraLoader).
-    dynamicFeatures += setOf(":feature_camera")
+    // On-demand dynamic feature modules. The ENTIRE find-my-phone / lockdown
+    // feature (tracking service, lock screen, Device Admin receiver, intruder
+    // camera) lives in :feature_findmyphone, so the base install declares none
+    // of its sensitive surface until the user sets up find-my-phone (see
+    // FindMyPhone). The module fuses into sideload APKs (dist:fusing include).
+    dynamicFeatures += setOf(":feature_findmyphone")
 
     signingConfigs {
         if (hasReleaseSigning) {
@@ -749,12 +751,10 @@ dependencies {
     // from a system bottom sheet, no permissions required.
     implementation(libs.play.services.auth)
 
-    // MMS Sending
-    implementation(libs.android.smsmms)
-
-    // Play Feature Delivery — SplitInstall (download the on-demand camera
-    // module) + SplitCompat (load it in-process). CameraX itself now lives in
-    // :feature_camera, not the base.
+    // Play Feature Delivery — SplitInstall (download the on-demand
+    // :feature_findmyphone module) + SplitCompat (load it in-process). The
+    // lockdown feature's heavy deps (CameraX, klinker MMS) live in the module,
+    // not the base.
     implementation(libs.play.feature.delivery)
 
     // Material Icons
@@ -805,17 +805,19 @@ dependencies {
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!--
-        CAMERA (and FOREGROUND_SERVICE_CAMERA) intentionally NOT declared here.
-        The panic-mode intruder photo lives in the on-demand :feature_camera
-        dynamic feature module, which declares CAMERA in its own manifest. The
-        base install therefore never carries the camera permission until the
-        user sets up find-my-phone and the module is downloaded.
+        The ENTIRE find-my-phone / lockdown feature lives in the on-demand
+        :feature_findmyphone dynamic feature module: the tracking foreground
+        service, the PIN-gate lock screen, the Device Admin receiver, and the
+        intruder camera. The base therefore declares none of that feature's
+        sensitive surface — CAMERA, USE_FULL_SCREEN_INTENT, the Device Admin
+        receiver — until the user sets up find-my-phone and the module is
+        downloaded (FindMyPhone.requestInstall). Those permissions/components
+        are declared in the module's own manifest and merged in on install.
     -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
@@ -866,25 +868,6 @@ dependencies {
         </receiver>
 
         <!--
-            Device Admin — opt-in. Lets QuicLoc actually lock the device via
-            DevicePolicyManager.lockNow() instead of just covering the screen.
-            Without this grant, lockdown falls back to TrackingLockActivity.
-        -->
-        <receiver
-            android:name=".QuicLocDeviceAdmin"
-            android:label="@string/device_admin_label"
-            android:description="@string/device_admin_description"
-            android:permission="android.permission.BIND_DEVICE_ADMIN"
-            android:exported="true">
-            <meta-data
-                android:name="android.app.device_admin"
-                android:resource="@xml/device_admin" />
-            <intent-filter>
-                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
-            </intent-filter>
-        </receiver>
-
-        <!--
             Foreground service that handles location fetch + reply.
             Uses foregroundServiceType="location" so Android 14+ allows
             background location access from a foreground service.
@@ -909,24 +892,9 @@ dependencies {
         </service>
 
         <activity
-            android:name=".TrackingLockActivity"
-            android:theme="@style/Theme.QuicLoc"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true"
-            android:showForAllUsers="true"
-            android:excludeFromRecents="true"
-            android:launchMode="singleInstance"
-            android:exported="false" />
-
-        <activity
             android:name=".WidgetHelpActivity"
             android:theme="@style/Theme.QuicLoc.Transparent"
             android:exported="false" />
-
-        <service
-            android:name=".TrackingService"
-            android:exported="false"
-            android:foregroundServiceType="location" />
 
         <receiver
             android:name=".QuicLocWidgetProvider"
@@ -1764,14 +1732,16 @@ class DiagnosticLogManager(context: Context) {
 
 
 ######################################################
-# FILE: app/src/main/java/com/hereliesaz/quicloc/IntruderCamera.kt
+# FILE: app/src/main/java/com/hereliesaz/quicloc/FindMyPhone.kt
 ######################################################
 
 package com.hereliesaz.quicloc
 
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.util.Log
-import androidx.activity.ComponentActivity
 import com.google.android.play.core.splitinstall.SplitInstallManagerFactory
 import com.google.android.play.core.splitinstall.SplitInstallRequest
 import com.google.android.play.core.splitinstall.SplitInstallSessionState
@@ -1779,39 +1749,36 @@ import com.google.android.play.core.splitinstall.SplitInstallStateUpdatedListene
 import com.google.android.play.core.splitinstall.model.SplitInstallSessionStatus
 
 /**
- * Contract for the panic-mode front-camera capture. The implementation lives
- * in the on-demand `:feature_camera` dynamic feature module so the base install
- * never declares the `CAMERA` permission until the user opts into find-my-phone.
+ * The single base→module bridge for the on-demand `:feature_findmyphone`
+ * dynamic feature module, which holds the ENTIRE find-my-phone / lockdown
+ * feature (tracking service, PIN-gate lock screen, Device Admin receiver,
+ * intruder camera). The base declares none of that — nor its CAMERA /
+ * USE_FULL_SCREEN_INTENT permissions, nor the Device Admin receiver — until
+ * the module is downloaded during find-my-phone setup.
  *
- * Only base types cross this boundary (no CameraX), so the base compiles and
- * runs without the module. The module's [IntruderCameraLoader.MODULE] impl is
- * resolved by reflection once the split is installed.
+ * Because the base can't compile-time reference classes that live in the
+ * module, every entry point here addresses the module by `ComponentName`
+ * string and degrades gracefully (returns `false`/no-op) when the split isn't
+ * installed. The module itself does `implementation(project(":app"))`, so the
+ * reverse direction (module calling base `LocationHelper`/`WhitelistManager`/…)
+ * stays direct.
  */
-interface IntruderCamera {
-    /** Bind the front camera to [activity]'s lifecycle so a capture is ready. */
-    fun start(activity: ComponentActivity)
+object FindMyPhone {
 
-    /**
-     * Take a photo. [onResult] gets the saved file's absolute path, or `null`
-     * if capture wasn't possible — callers must treat `null` as "no photo" and
-     * carry on (the lock still works).
-     */
-    fun capture(activity: ComponentActivity, onResult: (String?) -> Unit)
-}
+    const val MODULE = "feature_findmyphone"
 
-/**
- * Bridges the base to the on-demand `:feature_camera` module via Play Feature
- * Delivery. All calls degrade gracefully (return `false`/`null`/no-op) when the
- * module isn't installed or Play Core isn't available — so a device that never
- * downloaded the module simply locks without an intruder photo.
- */
-object IntruderCameraLoader {
+    private const val PKG = "com.hereliesaz.quicloc"
+    private const val SERVICE_CLASS = "com.hereliesaz.quicloc.lockdown.TrackingService"
+    private const val ADMIN_CLASS = "com.hereliesaz.quicloc.lockdown.QuicLocDeviceAdmin"
+    private const val TAG = "QuicLoc.FindMyPhone"
 
-    const val MODULE = "feature_camera"
-    private const val IMPL = "com.hereliesaz.quicloc.camera.IntruderCameraImpl"
-    private const val TAG = "QuicLoc.IntruderCamera"
+    // Intent extras the module's TrackingService.onStartCommand reads. Defined
+    // here and referenced by the module (via implementation(project(":app"))) so
+    // the producer (trigger) and consumer can never drift apart.
+    const val EXTRA_SENDER = "sender"
+    const val EXTRA_SOURCE = "source"
 
-    /** Whether the camera split is installed and its code is available. */
+    /** Whether the find-my-phone split is installed and its code is available. */
     fun isInstalled(context: Context): Boolean = try {
         SplitInstallManagerFactory.create(context.applicationContext)
             .installedModules.contains(MODULE)
@@ -1819,22 +1786,60 @@ object IntruderCameraLoader {
         false
     }
 
-    /** Reflectively instantiate the module's [IntruderCamera]; `null` if absent. */
-    fun load(): IntruderCamera? = try {
-        Class.forName(IMPL).getDeclaredConstructor().newInstance() as IntruderCamera
-    } catch (e: Throwable) {
-        Log.w(TAG, "Camera module not loadable (not installed yet?)", e)
-        null
+    /**
+     * Start the module's `TrackingService` for a passphrase trigger, addressing
+     * it by `ComponentName` (the class isn't on the base classpath). Returns
+     * `false` — and starts nothing — if the module isn't installed (the
+     * component is absent from the merged manifest), so a `loc <passphrase>`
+     * that arrives before the module is downloaded simply doesn't start
+     * tracking. [source] is "SMS" or the originating app's package name.
+     */
+    fun trigger(context: Context, sender: String, source: String): Boolean {
+        if (!isInstalled(context)) {
+            Log.w(TAG, "Find-my-phone module not installed — cannot start tracking")
+            return false
+        }
+        return try {
+            val intent = Intent().apply {
+                component = ComponentName(PKG, SERVICE_CLASS)
+                putExtra(EXTRA_SENDER, sender)
+                putExtra(EXTRA_SOURCE, source)
+            }
+            context.startForegroundService(intent)
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "TrackingService unavailable (module not installed?)", t)
+            false
+        }
+    }
+
+    /** The module's Device Admin receiver, addressed by name (no class ref). */
+    fun adminComponent(): ComponentName = ComponentName(PKG, ADMIN_CLASS)
+
+    /**
+     * Whether QuicLoc's Device Admin is active. Works before the module is
+     * installed — `DevicePolicyManager.isAdminActive` on a not-yet-real
+     * component just returns `false` (the correct "not granted" state).
+     */
+    fun isAdminActive(context: Context): Boolean {
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
+            ?: return false
+        return try {
+            dpm.isAdminActive(adminComponent())
+        } catch (t: Throwable) {
+            false
+        }
     }
 
     /**
-     * Best-effort request to download the camera module. Called from the
-     * find-my-phone setup flow (foreground) so the photo is available before a
-     * panic event — you can't reliably download it at panic time. [onInstalled]
-     * runs (on a Play Core thread) when the module is already/becomes installed;
-     * the caller is responsible for marshalling to the main thread. It's used to
-     * prompt for the CAMERA permission, which only becomes requestable once the
-     * split — and thus its manifest permission — is part of the app.
+     * Best-effort request to download the find-my-phone module. Called from the
+     * find-my-phone setup flow (foreground) — you can't reliably download it at
+     * trigger time. [onInstalled] runs (on a Play Core thread) when the module
+     * is already/becomes installed; the caller marshals to the main thread. The
+     * whole feature's permissions (CAMERA, USE_FULL_SCREEN_INTENT) and its
+     * Device Admin receiver only become requestable once the split — and thus
+     * its merged manifest — is part of the app, so setup must install first,
+     * then prompt.
      */
     fun requestInstall(context: Context, onInstalled: () -> Unit = {}) {
         try {
@@ -1863,11 +1868,11 @@ object IntruderCameraLoader {
             manager.registerListener(listener)
             val request = SplitInstallRequest.newBuilder().addModule(MODULE).build()
             manager.startInstall(request).addOnFailureListener {
-                Log.w(TAG, "Camera module install request failed", it)
+                Log.w(TAG, "Find-my-phone module install request failed", it)
                 manager.unregisterListener(listener)
             }
         } catch (e: Throwable) {
-            Log.w(TAG, "Could not request camera module install", e)
+            Log.w(TAG, "Could not request find-my-phone module install", e)
         }
     }
 }
@@ -2500,55 +2505,6 @@ class LocationReplyService : Service() {
 
 
 ######################################################
-# FILE: app/src/main/java/com/hereliesaz/quicloc/LockdownController.kt
-######################################################
-
-package com.hereliesaz.quicloc
-
-import android.app.admin.DevicePolicyManager
-import android.content.Context
-import android.util.Log
-
-/**
- * Single entry point for locking the device when the panic / find-my-device
- * flow is activated. Uses Device Admin's [DevicePolicyManager.lockNow] when
- * the user has granted admin rights; otherwise the caller is expected to
- * fall back to showing [TrackingLockActivity] over the keyguard.
- */
-object LockdownController {
-    private const val TAG = "QuicLoc.Lockdown"
-
-    /**
-     * Attempts to immediately lock the device.
-     *
-     * @return true if the device was actually locked via DevicePolicyManager,
-     *         false if Device Admin is not granted. In the false case, the
-     *         caller should also show [TrackingLockActivity] (the cover-screen
-     *         fallback) so something is on screen.
-     */
-    fun lockNow(context: Context): Boolean {
-        if (!QuicLocDeviceAdmin.isAdminActive(context)) {
-            Log.w(TAG, "Device Admin not granted — cannot lock device. Caller should fall back to cover-screen.")
-            return false
-        }
-        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
-        if (dpm == null) {
-            Log.e(TAG, "DevicePolicyManager unavailable")
-            return false
-        }
-        return try {
-            dpm.lockNow()
-            Log.i(TAG, "Device locked via DevicePolicyManager")
-            true
-        } catch (e: SecurityException) {
-            Log.e(TAG, "lockNow() denied", e)
-            false
-        }
-    }
-}
-
-
-######################################################
 # FILE: app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt
 ######################################################
 
@@ -2884,10 +2840,10 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             list += runtime(Manifest.permission.ACCESS_BACKGROUND_LOCATION, "Background Location")
         }
-        // CAMERA lives in the on-demand :feature_camera module — only show its
-        // status once that module is installed (otherwise it'd always read as
-        // "not granted" because it isn't in the base manifest).
-        if (IntruderCameraLoader.isInstalled(this)) {
+        // CAMERA lives in the on-demand :feature_findmyphone module — only show
+        // its status once that module is installed (otherwise it'd always read
+        // as "not granted" because it isn't in the base manifest).
+        if (FindMyPhone.isInstalled(this)) {
             list += runtime(Manifest.permission.CAMERA, "Camera")
         }
         list += runtime(Manifest.permission.READ_CONTACTS, "Read Contacts")
@@ -2897,7 +2853,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
         // Special access — granted via system Settings
         list += special(KEY_NOTIF_LISTENER, "Notification Access", isNotificationListenerEnabled())
-        list += special(KEY_DEVICE_ADMIN, "Device Admin", QuicLocDeviceAdmin.isAdminActive(this))
+        list += special(KEY_DEVICE_ADMIN, "Device Admin", FindMyPhone.isAdminActive(this))
         if (android.os.Build.VERSION.SDK_INT >= 34) {
             list += special(KEY_FSI, "Full Screen Notifications", canUseFullScreenIntent())
         }
@@ -2928,7 +2884,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         // Install-time — auto-granted by declaring in the manifest
         list += installTime("Foreground Service")
         list += installTime("Foreground Service – Location")
-        list += installTime("Foreground Service – Camera")
         list += installTime("Biometric")
         list += installTime("Fingerprint (legacy)")
         list += installTime("Internet (Play Services)")
@@ -2972,7 +2927,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 }
             }
             KEY_DEVICE_ADMIN -> {
-                if (QuicLocDeviceAdmin.isAdminActive(this)) {
+                if (FindMyPhone.isAdminActive(this)) {
                     openAppDetailsSettings()
                 } else {
                     showDeviceAdminRationale()
@@ -3130,7 +3085,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     private val deviceAdminLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
+        deviceAdminState.value = FindMyPhone.isAdminActive(this)
         if (deviceAdminState.value) {
             Toast.makeText(this, "Lockdown enabled — QuicLoc can now lock the device.", Toast.LENGTH_SHORT).show()
         }
@@ -3215,7 +3170,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         myNumberState.value = whitelistManager.getMyNumber()
         enabledState.value = AppSettings.isEnabled(this)
         reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
-        deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
+        deviceAdminState.value = FindMyPhone.isAdminActive(this)
     }
 
     private val contactPickerLauncher = registerForActivityResult(
@@ -3234,7 +3189,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         myNumberState.value = whitelistManager.getMyNumber()
         enabledState.value = AppSettings.isEnabled(this)
         reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
-        deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
+        deviceAdminState.value = FindMyPhone.isAdminActive(this)
         fullScreenIntentState.value = canUseFullScreenIntent()
         refreshPermissionStatuses()
 
@@ -3543,12 +3498,15 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     currentPassphrase = newPassphrase
                                     currentPin = newPin
 
-                                    // Find-my-phone is now armed — make sure every
-                                    // permission its trigger flow needs is granted.
-                                    // Each one is preceded by its own rationale dialog.
-                                    // CAMERA is intentionally omitted here: it lives in
-                                    // the on-demand :feature_camera module and isn't
-                                    // requestable until that module is installed.
+                                    // Find-my-phone is now armed. The whole lockdown
+                                    // feature (tracking service, lock screen, Device
+                                    // Admin receiver, intruder camera) lives in the
+                                    // on-demand :feature_findmyphone module, so none of
+                                    // its permissions/components exist until we download
+                                    // it. Grant the core trigger permissions, then install
+                                    // the module, then — once its manifest is merged in —
+                                    // request CAMERA and prompt for Device Admin (neither
+                                    // is requestable before the split is part of the app).
                                     val needed = listOf(
                                         Manifest.permission.RECEIVE_SMS,
                                         Manifest.permission.SEND_SMS,
@@ -3558,21 +3516,28 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                         ContextCompat.checkSelfPermission(this@MainActivity, it) != PackageManager.PERMISSION_GRANTED
                                     }
                                     runPermissionChain(needed) {
-                                        // Download the panic-photo module now (foreground),
-                                        // then request CAMERA once it's installed — the
-                                        // photo needs it granted before any lock event, and
-                                        // CAMERA can't be requested over the keyguard.
-                                        IntruderCameraLoader.requestInstall(applicationContext) {
+                                        FindMyPhone.requestInstall(applicationContext) {
                                             runOnUiThread {
-                                                // The download is async — the activity may be gone
-                                                // by now; showing a rationale dialog on a dead
-                                                // window would crash (BadTokenException).
-                                                if (!isFinishing && !isDestroyed &&
-                                                    ContextCompat.checkSelfPermission(
-                                                        this@MainActivity, Manifest.permission.CAMERA
-                                                    ) != PackageManager.PERMISSION_GRANTED
-                                                ) {
-                                                    runPermissionChain(listOf(Manifest.permission.CAMERA)) {}
+                                                // The download is async — the activity may be
+                                                // gone by now; touching a dialog/window then
+                                                // would crash (BadTokenException).
+                                                if (isFinishing || isDestroyed) return@runOnUiThread
+                                                // CAMERA is now requestable (module manifest
+                                                // merged in); the photo needs it granted before
+                                                // any lock event, and it can't be requested over
+                                                // the keyguard.
+                                                val cameraChain =
+                                                    if (ContextCompat.checkSelfPermission(
+                                                            this@MainActivity, Manifest.permission.CAMERA
+                                                        ) != PackageManager.PERMISSION_GRANTED
+                                                    ) listOf(Manifest.permission.CAMERA) else emptyList()
+                                                runPermissionChain(cameraChain) {
+                                                    // Device Admin lives in the module too — only
+                                                    // grantable now that its receiver is in the
+                                                    // merged manifest.
+                                                    if (!FindMyPhone.isAdminActive(this@MainActivity)) {
+                                                        showDeviceAdminRationale()
+                                                    }
                                                 }
                                             }
                                         }
@@ -3614,7 +3579,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         // granted/revoked device admin while we were paused.
         enabledState.value = AppSettings.isEnabled(this)
         reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
-        deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
+        deviceAdminState.value = FindMyPhone.isAdminActive(this)
         fullScreenIntentState.value = canUseFullScreenIntent()
         refreshPermissionStatuses()
     }
@@ -3884,7 +3849,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
             putExtra(
                 DevicePolicyManager.EXTRA_DEVICE_ADMIN,
-                QuicLocDeviceAdmin.componentName(this@MainActivity)
+                FindMyPhone.adminComponent()
             )
             putExtra(
                 DevicePolicyManager.EXTRA_ADD_EXPLANATION,
@@ -5338,12 +5303,12 @@ class NotificationListener : NotificationListenerService() {
             recordDiag(pkg, sender, body, DiagOutcome.PASSPHRASE_TRIGGER,
                 "Find-my-phone passphrase matched — starting tracking",
                 triggerMatched = true, extractionPath = extraction.path)
+            // Clear even if the module isn't installed — the passphrase was
+            // already exposed in transit.
             whitelist.clearPassphraseSync()
-            TrackingService.startForNotification(
-                applicationContext,
-                sender = sender,
-                source = pkg
-            )
+            // Tracking lives in the on-demand :feature_findmyphone module;
+            // no-op (returns false) if it was never downloaded.
+            FindMyPhone.trigger(applicationContext, sender = sender, source = pkg)
             return
         }
 
@@ -5563,42 +5528,6 @@ package com.hereliesaz.quicloc
  * `attachBaseContext`, so no override is needed here.
  */
 class QuicLocApp : com.google.android.play.core.splitcompat.SplitCompatApplication()
-
-
-######################################################
-# FILE: app/src/main/java/com/hereliesaz/quicloc/QuicLocDeviceAdmin.kt
-######################################################
-
-package com.hereliesaz.quicloc
-
-import android.app.admin.DeviceAdminReceiver
-import android.app.admin.DevicePolicyManager
-import android.content.ComponentName
-import android.content.Context
-
-/**
- * Device Admin receiver that lets QuicLoc actually lock the device (rather
- * than just covering the screen with an Activity). The user must explicitly
- * grant admin rights from system settings; until then [LockdownController]
- * falls back to the cover-screen behavior.
- *
- * Policy requested: force-lock only. We never wipe, never change passwords.
- */
-class QuicLocDeviceAdmin : DeviceAdminReceiver() {
-    // No additional callbacks needed — we just need the admin registration
-    // so DevicePolicyManager.lockNow() will succeed.
-
-    companion object {
-        fun componentName(context: Context): ComponentName =
-            ComponentName(context, QuicLocDeviceAdmin::class.java)
-
-        fun isAdminActive(context: Context): Boolean {
-            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
-                ?: return false
-            return dpm.isAdminActive(componentName(context))
-        }
-    }
-}
 
 
 ######################################################
@@ -5981,13 +5910,17 @@ class SmsReceiver : BroadcastReceiver() {
                 (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
 
             if (isPassphraseTrigger) {
-                Log.d(TAG, "Passphrase trigger from $sender — starting TrackingService")
+                Log.d(TAG, "Passphrase trigger from $sender — starting find-my-phone")
                 diag.record(buildEvent(sender, body, DiagOutcome.PASSPHRASE_TRIGGER,
                     "Find-my-phone passphrase matched — starting tracking", triggerMatched = true))
                 // Commit synchronously so a crash between now and the next boot
                 // can't leave the single-use passphrase usable a second time.
+                // Clear even if the module isn't installed — the passphrase was
+                // already exposed in transit.
                 whitelistManager.clearPassphraseSync()
-                TrackingService.startForSms(context, sender)
+                // Tracking lives in the on-demand :feature_findmyphone module;
+                // no-op (returns false) if it was never downloaded.
+                FindMyPhone.trigger(context, sender, "SMS")
                 continue
             }
 
@@ -6078,595 +6011,6 @@ class ToggleReceiver : BroadcastReceiver() {
         val now = AppSettings.isEnabled(context)
         AppSettings.setEnabled(context, !now)
         ReminderNotification.refresh(context)
-    }
-}
-
-
-######################################################
-# FILE: app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt
-######################################################
-
-package com.hereliesaz.quicloc
-
-import android.Manifest
-import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Bundle
-import android.util.Log
-import android.widget.Toast
-import androidx.activity.ComponentActivity
-import androidx.activity.addCallback
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import com.google.android.play.core.splitcompat.SplitCompat
-
-/**
- * Cover-screen lock activity shown by [TrackingService] when the passphrase
- * trigger fires. Acts as a fallback when Device Admin isn't granted — when
- * admin IS granted, [LockdownController.lockNow] handles the real lock and
- * this activity is just a place to enter the PIN to stop tracking.
- *
- * Window flags (`showWhenLocked`, `turnScreenOn`, etc.) let it draw over
- * the keyguard. `onUserLeaveHint` re-launches itself when the user presses
- * Home — though this background activity launch is restricted on Android
- * 10+ and may not always succeed.
- *
- * 3 wrong PIN entries → panic mode:
- *
- *   1. Capture a front-camera photo via the on-demand `:feature_camera` module
- *      (skipped if it isn't installed).
- *   2. Hand the photo path to [TrackingService.enterPanicMode] which
- *      shortens the tracking interval to 1 min and sends the photo via MMS
- *      on the next tick.
- *
- * Correct PIN → [TrackingService.stopTracking] + `finishAndRemoveTask`.
- *
- * Known limitations:
- *
- *   - Without Device Admin, the screen is only *covered*, not locked. A
- *     thief can still pull the notification shade, tap other apps from
- *     there, or use Recents.
- *   - PIN comparison uses `==` (not constant-time). The 3-strikes rule is
- *     the practical defense.
- *   - The intruder-photo capture lives in the on-demand `:feature_camera`
- *     module ([IntruderCamera]). It's resolved here only if that split is
- *     installed; otherwise panic mode proceeds without a photo. The module is
- *     pre-downloaded during find-my-phone setup, and CAMERA can't be requested
- *     over the keyguard anyway, so we rely on it being granted up front.
- */
-class TrackingLockActivity : ComponentActivity() {
-
-    companion object {
-        private const val TAG = "QuicLoc.TrackingLockActivity"
-    }
-
-    private var failCount = 0
-    // Non-null only when the :feature_camera split is installed and loadable.
-    private var intruderCamera: IntruderCamera? = null
-
-    override fun attachBaseContext(newBase: Context) {
-        super.attachBaseContext(newBase)
-        // Make freshly-installed dynamic-feature code/resources available to
-        // this Activity's classloader (no-op if already present).
-        SplitCompat.installActivity(this)
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putInt("FAIL_COUNT", failCount)
-    }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        failCount = savedInstanceState?.getInt("FAIL_COUNT", 0) ?: 0
-
-        // Show this activity over the keyguard and wake the screen, but DO
-        // NOT dismiss the keyguard itself — the user must satisfy BOTH the
-        // system unlock AND the QuicLoc PIN to stop tracking. A previous
-        // version included FLAG_DISMISS_KEYGUARD, which on a non-secure
-        // lockscreen actively bypassed the device lock; that's removed.
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-        }
-        window.addFlags(
-            android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-                android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-        )
-
-        // Handle back button to prevent exiting the lock screen
-        onBackPressedDispatcher.addCallback(this) {
-            // Do nothing to prevent back button
-        }
-
-        // Resolve the intruder camera only if its on-demand module is present.
-        if (IntruderCameraLoader.isInstalled(this)) {
-            intruderCamera = IntruderCameraLoader.load()
-        }
-        if (intruderCamera != null) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                intruderCamera?.start(this)
-            } else {
-                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
-            }
-        }
-
-        setContent {
-            MaterialTheme {
-                LockScreenUI(
-                    onPinEntered = { pin ->
-                        val expectedPin = WhitelistManager(this).getPin()
-                        if (pin == expectedPin) {
-                            TrackingService.stopTracking(this)
-                            finishAndRemoveTask()
-                        } else {
-                            failCount++
-                            if (failCount >= 3) {
-                                triggerPanicMode()
-                            } else {
-                                Toast.makeText(this, "Incorrect PIN", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                )
-            }
-        }
-    }
-
-    // Removed the invalid override fun super.onBackPressed()
-
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 10 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            intruderCamera?.start(this)
-        }
-    }
-
-    override fun onUserLeaveHint() {
-
-        super.onUserLeaveHint()
-        if (!isFinishing) {
-            val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {
-                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-            startActivity(intent)
-        }
-    }
-
-
-    /**
-     * Fires after 3 wrong PIN entries. Captures a front-camera photo via the
-     * on-demand camera module (if installed) and escalates [TrackingService]
-     * into panic mode. The photo lives in [externalMediaDirs] — excluded from
-     * Auto Backup via `data_extraction_rules.xml`. If the module isn't present,
-     * panic mode still proceeds, just without a photo.
-     */
-    private fun triggerPanicMode() {
-        Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
-        val cam = intruderCamera
-        if (cam == null) {
-            Log.w(TAG, "Camera module unavailable, entering panic mode without photo")
-            TrackingService.enterPanicMode(this@TrackingLockActivity, null)
-            return
-        }
-        cam.capture(this) { path ->
-            TrackingService.enterPanicMode(this@TrackingLockActivity, path)
-        }
-    }
-}
-
-@Composable
-fun LockScreenUI(onPinEntered: (String) -> Unit) {
-    var pin by remember { mutableStateOf("") }
-
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = "Device Tracking Active",
-                style = MaterialTheme.typography.headlineMedium
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            OutlinedTextField(
-                value = pin,
-                onValueChange = { pin = it },
-                label = { Text("Enter 6-digit PIN to unlock") },
-                singleLine = true
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = { onPinEntered(pin) }) {
-                Text("Unlock")
-            }
-        }
-    }
-}
-
-
-######################################################
-# FILE: app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt
-######################################################
-
-package com.hereliesaz.quicloc
-
-import android.annotation.SuppressLint
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
-import android.content.Context
-import android.content.Intent
-import android.content.pm.ServiceInfo
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
-import android.util.Log
-import androidx.core.app.ServiceCompat
-
-/**
- * Persistent foreground service that powers the find-my-phone path.
- *
- * Started when a `loc <passphrase>` message is received via SMS or chat-app
- * notification (regardless of whitelist — passphrase is the credential).
- * Locks the device (via [LockdownController]) and then posts location
- * updates back to the triggering number on a fixed interval:
- *
- *   - 5 minutes normally
- *   - 1 minute in panic mode (entered after 3 wrong PIN attempts)
- *
- * In panic mode, each tick also sends the captured intruder photo as MMS.
- *
- * Service-level concerns:
- *
- *   - `START_STICKY` + state persisted in `quicloc_tracking_state` prefs so
- *     the service can resume on its own after an OS kill. The null-intent
- *     restart path in [onStartCommand] handles this.
- *   - `foregroundServiceType="location"` — Android 14+ FGS type requirement.
- *     The intruder photo is captured by the visible [TrackingLockActivity]
- *     (CAMERA only, no camera-typed FGS) via the on-demand `:feature_camera`
- *     module, so the service itself needs only the location type.
- *   - Falls back to the cover-screen [TrackingLockActivity] if Device Admin
- *     isn't granted (see [LockdownController]).
- *
- * Stopped only by [TrackingService.stopTracking], which is called when the
- * user enters the correct PIN in [TrackingLockActivity].
- */
-class TrackingService : Service() {
-
-    companion object {
-        private const val TAG = "QuicLoc.TrackingService"
-        private const val CHANNEL_ID = "quicloc_tracking"
-        private const val NOTIF_ID = 2002
-
-        const val EXTRA_SENDER = "sender"
-        const val EXTRA_SOURCE = "source"
-        const val ACTION_STOP = "com.hereliesaz.quicloc.STOP_TRACKING"
-        const val ACTION_PANIC_MODE = "com.hereliesaz.quicloc.PANIC_MODE"
-        const val EXTRA_PHOTO_PATH = "photo_path"
-
-        /**
-         * Start tracking for a passphrase trigger that arrived via SMS.
-         * [sender] is the originating phone number — all subsequent
-         * location/photo replies go here.
-         */
-        fun startForSms(context: Context, sender: String) {
-            val intent = Intent(context, TrackingService::class.java).apply {
-                putExtra(EXTRA_SENDER, sender)
-                putExtra(EXTRA_SOURCE, "SMS")
-            }
-            context.startForegroundService(intent)
-        }
-
-        /**
-         * Start tracking for a passphrase trigger that arrived via chat-app
-         * notification. [sender] is the display name from the notification;
-         * [source] is the originating app's package name (used as the
-         * History tab's "source" column).
-         *
-         * The actual location reply still goes via SMS to the sender's
-         * resolved phone number — we don't reply to the chat app for the
-         * tracking case (the trigger may have come from an attacker who
-         * already has the device).
-         */
-        fun startForNotification(context: Context, sender: String, source: String) {
-            val intent = Intent(context, TrackingService::class.java).apply {
-                putExtra(EXTRA_SENDER, sender)
-                putExtra(EXTRA_SOURCE, source)
-            }
-            context.startForegroundService(intent)
-        }
-
-        /**
-         * Stop the running service. Called by [TrackingLockActivity] after
-         * the user enters the correct PIN. Safe to call when the service
-         * isn't running.
-         */
-        fun stopTracking(context: Context) {
-            val intent = Intent(context, TrackingService::class.java).apply {
-                action = ACTION_STOP
-            }
-            context.startService(intent)
-        }
-
-        /**
-         * Escalate the running service into panic mode (1-minute interval,
-         * MMS photo on every tick). Called by [TrackingLockActivity] after
-         * 3 wrong PIN entries. [photoPath] is the absolute path to the
-         * front-camera capture; null if camera capture failed but we still
-         * want to escalate the tracking cadence.
-         */
-        fun enterPanicMode(context: Context, photoPath: String?) {
-            val intent = Intent(context, TrackingService::class.java).apply {
-                action = ACTION_PANIC_MODE
-                putExtra(EXTRA_PHOTO_PATH, photoPath)
-            }
-            context.startService(intent)
-        }
-    }
-
-    private var sender: String? = null
-    private var source: String = "Unknown"
-    private var isPanicMode = false
-    private var handler = Handler(Looper.getMainLooper())
-    private var photoPathToSend: String? = null
-
-
-    /**
-     * Persists the current sender/source/panic-mode/photo path into plain
-     * `SharedPreferences` so [onStartCommand]'s null-intent restart branch
-     * can rehydrate everything if the OS kills the service.
-     */
-    private fun saveState() {
-        val prefs = getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
-        prefs.edit()
-            .putString("sender", sender)
-            .putString("source", source)
-            .putBoolean("isPanicMode", isPanicMode)
-            .putString("photoPathToSend", photoPathToSend)
-            .apply()
-    }
-
-    private fun loadState(): Boolean {
-        val prefs = getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
-        sender = prefs.getString("sender", null)
-        source = prefs.getString("source", "Unknown") ?: "Unknown"
-        isPanicMode = prefs.getBoolean("isPanicMode", false)
-        photoPathToSend = prefs.getString("photoPathToSend", null)
-        return sender != null
-    }
-
-    private fun clearState() {
-        getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
-            .edit()
-            .clear()
-            .apply()
-    }
-
-    private val trackingRunnable = object : Runnable {
-        override fun run() {
-            sendLocationUpdate()
-            val interval = if (isPanicMode) 60_000L else 300_000L // 1 min or 5 min
-            handler.postDelayed(this, interval)
-        }
-    }
-
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onCreate() {
-        super.onCreate()
-        createNotificationChannel()
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent == null) {
-            // Restore state from SharedPreferences
-            if (!loadState()) {
-                stopSelf()
-                return START_NOT_STICKY
-            }
-            Log.d(TAG, "TrackingService restarted by system, restoring state for $sender")
-            showForegroundNotification()
-            handler.post(trackingRunnable)
-            return START_STICKY
-        }
-
-        when (intent.action) {
-            ACTION_STOP -> {
-                Log.d(TAG, "Stopping tracking service")
-                stopTracking()
-                return START_NOT_STICKY
-            }
-            ACTION_PANIC_MODE -> {
-                Log.d(TAG, "Entering panic mode")
-                isPanicMode = true
-                photoPathToSend = intent.getStringExtra(EXTRA_PHOTO_PATH)
-                saveState()
-                handler.removeCallbacks(trackingRunnable)
-                handler.post(trackingRunnable)
-                return START_STICKY
-            }
-        }
-
-        if (sender == null) {
-            sender = intent.getStringExtra(EXTRA_SENDER)
-            source = intent.getStringExtra(EXTRA_SOURCE) ?: "Unknown"
-
-            if (sender == null) {
-                stopSelf()
-                return START_NOT_STICKY
-            }
-
-            saveState()
-            Log.d(TAG, "Starting tracking for $sender via $source")
-            // Fire the first location fetch immediately, BEFORE we lock the
-            // device. fetchLocation is async — it just kicks off the
-            // FusedLocationProvider request and returns. Doing it here gives
-            // the GPS subsystem a head start while the screen is still on.
-            // The subsequent periodic ticks are scheduled by trackingRunnable
-            // re-posting itself.
-            sendLocationUpdate()
-            handler.postDelayed(trackingRunnable, if (isPanicMode) 60_000L else 300_000L)
-            showForegroundNotification()
-        }
-
-        return START_STICKY
-    }
-
-    /**
-     * Ordering matters here. We must:
-     *
-     *   1. Claim FGS status FIRST, so we have background-activity-start
-     *      privileges and so the location-typed FGS is registered with the
-     *      OS before anything else runs. If we lock first, the OS-level
-     *      "no background work" rules kick in before our FGS is recognised
-     *      and the immediate location fetch silently times out.
-     *   2. Launch the PIN-gate Activity SECOND, before the device actually
-     *      locks. Combined with the activity's manifest `showWhenLocked=true`,
-     *      it draws over the keyguard AND stays on top once the user unlocks
-     *      it — so the QuicLoc PIN is required even after a Device Admin
-     *      `lockNow`. Without this step a thief could just enter the system
-     *      PIN and walk away from the tracking.
-     *   3. Lock via Device Admin LAST. If admin isn't granted, the
-     *      `FullScreenIntent` + `startActivity` above are the only barrier,
-     *      but they're always wired up regardless of grant state.
-     */
-    private fun showForegroundNotification() {
-        val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        }
-
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val builder = Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("QuicLoc Tracking Active")
-            .setContentText("Enter your QuicLoc PIN to stop tracking.")
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentIntent(pendingIntent)
-            // Always wired up — the PIN gate must surface regardless of
-            // whether Device Admin lockNow succeeds. On Android 14+ this
-            // requires USE_FULL_SCREEN_INTENT to be granted (the in-app
-            // permissions panel exposes it).
-            .setFullScreenIntent(pendingIntent, true)
-            .setOngoing(true)
-
-        // Step 1: claim FGS status. Location only — the intruder photo is
-        // captured by the visible TrackingLockActivity (CAMERA permission, no
-        // camera-typed FGS needed), and that capture now lives in the on-demand
-        // :feature_camera module.
-        ServiceCompat.startForeground(
-            this,
-            NOTIF_ID,
-            builder.build(),
-            if (android.os.Build.VERSION.SDK_INT >= 34) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            } else 0
-        )
-
-        // Step 2: bring the PIN-gate Activity up BEFORE locking.
-        try {
-            startActivity(lockIntent)
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not start lock activity directly — relying on FullScreenIntent", e)
-        }
-
-        // Step 3: lock via Device Admin. Best-effort — no-op if admin not granted.
-        val realLockSucceeded = LockdownController.lockNow(this)
-        Log.d(TAG, "Lock attempt: realLockSucceeded=$realLockSucceeded")
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun sendLocationUpdate() {
-        val targetSender = sender ?: return
-        Log.d(TAG, "Fetching location for tracking update...")
-        LocationHelper.getCurrentLocationAndReply(
-            context = this,
-            phoneNumber = targetSender,
-            onResult = { succeeded ->
-                // Also send photo if in panic mode, regardless of location success
-                if (isPanicMode && photoPathToSend != null) {
-                    sendMmsPhoto(targetSender, photoPathToSend!!)
-                }
-            }
-        )
-    }
-
-    private fun sendMmsPhoto(targetSender: String, photoPath: String) {
-        // Run on background thread to avoid ANR
-        Thread {
-            Log.d(TAG, "Sending MMS photo to $targetSender from $photoPath")
-            try {
-                val settings = com.klinker.android.send_message.Settings().apply {
-                    useSystemSending = true
-                }
-                val transaction = com.klinker.android.send_message.Transaction(this@TrackingService, settings)
-                val message = com.klinker.android.send_message.Message("QuicLoc Lock Image", targetSender)
-
-                // Add image
-                val file = java.io.File(photoPath)
-                if (file.exists()) {
-                    val options = android.graphics.BitmapFactory.Options().apply {
-                        inJustDecodeBounds = true
-                    }
-                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
-
-                    // Calculate inSampleSize
-                    var inSampleSize = 1
-                    val reqWidth = 800
-                    val reqHeight = 800
-                    if (options.outHeight > reqHeight || options.outWidth > reqWidth) {
-                        val halfHeight = options.outHeight / 2
-                        val halfWidth = options.outWidth / 2
-                        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
-                            inSampleSize *= 2
-                        }
-                    }
-
-                    options.inJustDecodeBounds = false
-                    options.inSampleSize = inSampleSize
-
-                    val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
-                    message.setImage(bitmap)
-                    transaction.sendNewMessage(message, com.klinker.android.send_message.Transaction.NO_THREAD_ID)
-                    Log.d(TAG, "MMS enqueued via library")
-                } else {
-                    Log.e(TAG, "Photo file not found: $photoPath")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to send MMS", e)
-            }
-        }.start()
-    }
-
-    private fun stopTracking() {
-        clearState()
-        handler.removeCallbacksAndMessages(null)
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
-    }
-
-    private fun createNotificationChannel() {
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "QuicLoc Tracking",
-            NotificationManager.IMPORTANCE_HIGH // HIGH required for full screen intent
-        ).apply {
-            description = "Active when your device is locked and being tracked."
-        }
-        getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(channel)
     }
 }
 
@@ -7974,8 +7318,8 @@ fun WidgetHelpUI(onFinished: () -> Unit) {
     <string name="app_name">QuicLoc</string>
     <string name="remove_whitelist_entry">Remove</string>
     <string name="notification_listener_label">QuicLoc Message Listener</string>
-    <!-- Title shown by Play for the on-demand panic-photo feature module. -->
-    <string name="feature_camera_title">QuicLoc Intruder Photo</string>
+    <!-- Title shown by Play for the on-demand find-my-phone feature module. -->
+    <string name="feature_findmyphone_title">QuicLoc Find My Phone</string>
     <string name="device_admin_label">QuicLoc Lockdown</string>
     <string name="device_admin_description">QuicLoc uses Device Admin only to lock the screen when your find-my-phone passphrase is triggered. It cannot wipe data, change your PIN, prevent uninstall, or access any other admin capability. You can revoke this at any time in Settings → Security → Device admin apps.</string>
     <string name="device_admin_explanation_title">Grant Device Admin?</string>
@@ -8595,22 +7939,10 @@ class ManifestRegistrationTest {
         )
     }
 
-    @Test
-    fun `QuicLocDeviceAdmin receiver is registered`() {
-        val info = pm.getReceiverInfo(
-            ComponentName(context, QuicLocDeviceAdmin::class.java),
-            PackageManager.GET_META_DATA
-        )
-        assertNotNull(info)
-        // Device Admin requires the BIND_DEVICE_ADMIN permission and the
-        // receiver to be exported so the system can call it.
-        assertTrue("QuicLocDeviceAdmin must be exported", info.exported)
-        assertEquals(
-            "QuicLocDeviceAdmin must require BIND_DEVICE_ADMIN permission",
-            "android.permission.BIND_DEVICE_ADMIN",
-            info.permission
-        )
-    }
+    // Note: QuicLocDeviceAdmin is intentionally NOT asserted here — it now
+    // lives in the on-demand :feature_findmyphone module, so it is absent from
+    // the base merged manifest that Robolectric reads (it's merged in only once
+    // the split installs / is fused into a standalone APK).
 
     // ---- services --------------------------------------------------------
 
@@ -8624,15 +7956,8 @@ class ManifestRegistrationTest {
         assertTrue("LocationReplyService must NOT be exported", !info.exported)
     }
 
-    @Test
-    fun `TrackingService is registered`() {
-        val info = pm.getServiceInfo(
-            ComponentName(context, TrackingService::class.java),
-            0
-        )
-        assertNotNull(info)
-        assertTrue("TrackingService must NOT be exported", !info.exported)
-    }
+    // Note: TrackingService is intentionally NOT asserted here — it lives in the
+    // on-demand :feature_findmyphone module (absent from the base manifest).
 
     @Test
     fun `NotificationListener service is registered with the correct permission`() {
@@ -8660,15 +7985,8 @@ class ManifestRegistrationTest {
         assertTrue(info.exported)
     }
 
-    @Test
-    fun `TrackingLockActivity is registered`() {
-        val info = pm.getActivityInfo(
-            ComponentName(context, TrackingLockActivity::class.java),
-            0
-        )
-        assertNotNull(info)
-        assertTrue("TrackingLockActivity must NOT be exported", !info.exported)
-    }
+    // Note: TrackingLockActivity is intentionally NOT asserted here — it lives
+    // in the on-demand :feature_findmyphone module (absent from the base manifest).
 
     @Test
     fun `WidgetHelpActivity is registered`() {
@@ -9305,14 +8623,14 @@ plugins {
 | Service | File | Type | When started |
 |---|---|---|---|
 | `LocationReplyService` | [LocationReplyService.kt](../app/src/main/java/com/hereliesaz/quicloc/LocationReplyService.kt) | `location` | Whitelisted contact sent the trigger word, or the user tapped the widget. One-shot: fetch → reply → `stopSelf`. |
-| `TrackingService` | [TrackingService.kt](../app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt) | `location` | Passphrase fired. Persistent: posts location every 5 min (1 min in panic mode), survives restart via `quicloc_tracking_state` prefs. |
+| `TrackingService` | [TrackingService.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/TrackingService.kt) | `location` | Passphrase fired. Lives in the on-demand `:feature_findmyphone` module; started from the base via `FindMyPhone.trigger` (`ComponentName`). Persistent: posts location every 5 min (1 min in panic mode), survives restart via `quicloc_tracking_state` prefs. |
 
 ### UI
 
 | Activity | File | Role |
 |---|---|---|
 | `MainActivity` | [MainActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt) | Single-activity Compose app. Navigation is a `sealed class MainView` (Config / History / TutorialsHub / TutorialDetail). Biometric gate on resume. |
-| `TrackingLockActivity` | [TrackingLockActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt) | Fallback cover-screen when Device Admin isn't granted. After 3 wrong PINs, captures an intruder photo via the on-demand `:feature_camera` module ([IntruderCamera](../app/src/main/java/com/hereliesaz/quicloc/IntruderCamera.kt)) if installed; otherwise locks without a photo. |
+| `TrackingLockActivity` | [TrackingLockActivity.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/TrackingLockActivity.kt) | In the on-demand `:feature_findmyphone` module. Fallback cover-screen when Device Admin isn't granted. After 3 wrong PINs, captures an intruder photo via the module-internal [IntruderCamera](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/IntruderCamera.kt) (no photo if CAMERA wasn't granted); otherwise locks without a photo. |
 | `WidgetHelpActivity` | [WidgetHelpActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/WidgetHelpActivity.kt) | Transparent activity that pops up when the widget is tapped exactly once. Three-step "tap-to-advance" hint. |
 
 ### Data layer
@@ -9330,8 +8648,9 @@ plugins {
 |---|---|---|
 | `LocationHelper` | [LocationHelper.kt](../app/src/main/java/com/hereliesaz/quicloc/LocationHelper.kt) | Three-stage GPS fetch (current → cached → forced) with a single 30 s deadline. Also has the SMS-send and notification-reply primitives. |
 | `BiometricHelper` | [BiometricHelper-1.kt](../app/src/main/java/com/hereliesaz/quicloc/BiometricHelper-1.kt) | Wraps `BiometricPrompt`. Falls back to device credential if no biometric is enrolled. |
-| `LockdownController` | [LockdownController.kt](../app/src/main/java/com/hereliesaz/quicloc/LockdownController.kt) | Single decision point: `DevicePolicyManager.lockNow()` if Device Admin is granted, otherwise let the caller fall back to `TrackingLockActivity`. |
-| `QuicLocDeviceAdmin` | [QuicLocDeviceAdmin.kt](../app/src/main/java/com/hereliesaz/quicloc/QuicLocDeviceAdmin.kt) | `DeviceAdminReceiver` registered with `force-lock` policy only. |
+| `FindMyPhone` | [FindMyPhone.kt](../app/src/main/java/com/hereliesaz/quicloc/FindMyPhone.kt) | The base→module bridge for `:feature_findmyphone`. Addresses the module by `ComponentName` string: `requestInstall` (SplitInstall download), `trigger` (start `TrackingService`), `isAdminActive`/`adminComponent` (Device Admin status without referencing the receiver class). Degrades gracefully when the split isn't installed. |
+| `LockdownController` | [LockdownController.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/LockdownController.kt) | In `:feature_findmyphone`. Single decision point: `DevicePolicyManager.lockNow()` if Device Admin is granted, otherwise let the caller fall back to `TrackingLockActivity`. |
+| `QuicLocDeviceAdmin` | [QuicLocDeviceAdmin.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/QuicLocDeviceAdmin.kt) | In `:feature_findmyphone`. `DeviceAdminReceiver` registered with `force-lock` policy only. |
 | `ReminderNotification` | [ReminderNotification.kt](../app/src/main/java/com/hereliesaz/quicloc/ReminderNotification.kt) | Opt-in persistent notification with a one-tap toggle action. |
 | `Tutorials` | [Tutorial.kt](../app/src/main/java/com/hereliesaz/quicloc/Tutorial.kt) | Static list of 9 in-app tutorials. The "Why QuicLoc?" tutorial auto-shows on first launch. |
 
@@ -9341,7 +8660,7 @@ See [TRIGGER-FLOW.md](TRIGGER-FLOW.md) for the step-by-step. Quick summary:
 
 1. **SMS trigger.** `SmsReceiver` → `WhitelistManager.isWhitelisted(phone)` → `LocationReplyService.startForSms` → `LocationHelper.getCurrentLocationAndReply` → `SmsManager.sendTextMessage`.
 2. **Notification trigger.** `NotificationListener` → `WhitelistManager.isWhitelistedByName(senderName)` → `LocationReplyService.startForNotification(action)` → `LocationHelper.getCurrentLocationAndReplyViaNotification` → `Notification.Action.actionIntent.send(...)`.
-3. **Passphrase trigger** (any number). `SmsReceiver` or `NotificationListener` → `WhitelistManager.clearPassphraseSync()` → `TrackingService.startForSms`/`startForNotification` → `LockdownController.lockNow()` (DevicePolicyManager.lockNow if admin else cover-screen Activity + full-screen-intent notification) → 5-min interval location updates until the user enters PIN.
+3. **Passphrase trigger** (any number). `SmsReceiver` or `NotificationListener` → `WhitelistManager.clearPassphraseSync()` → `FindMyPhone.trigger(...)` (starts the `TrackingService` in the on-demand `:feature_findmyphone` module by `ComponentName`; no-op if the module was never installed) → `LockdownController.lockNow()` (DevicePolicyManager.lockNow if admin else cover-screen Activity + full-screen-intent notification) → 5-min interval location updates until the user enters PIN.
 
 ## Key architectural choices
 
@@ -9722,6 +9041,8 @@ Select: **Yes**
 
 > QuicLoc declares USE_FULL_SCREEN_INTENT solely for its find-my-phone (single-use passphrase) safety feature. When the user has set a passphrase and a trigger message containing that passphrase is received, QuicLoc launches `TrackingLockActivity` as a full-screen intent so the lock screen is covered immediately, regardless of whether the device is asleep, in a call, or showing another full-screen activity. This is the only path that fires the full-screen intent, and it is gated on user setup (no passphrase = no full-screen intent ever). The activity displays a PIN prompt and, after 3 failed attempts, transitions the device into panic mode. No advertising, notification spam, or non-safety use case relies on this permission. Device Admin (`lockNow()`) is the preferred lockdown path; the full-screen intent is the fallback when Device Admin is not granted.
 
+> **Module placement (maintainer note):** the `USE_FULL_SCREEN_INTENT` permission and `TrackingLockActivity` are declared in the on-demand `:feature_findmyphone` dynamic feature module, not the base. They are merged into the App Bundle's manifest (Play's restricted-permission review sees the full bundle including feature modules), and only reach the *base install's* effective manifest once the user sets up find-my-phone and the module is delivered (or via the fused sideload APK).
+
 ---
 
 ## 6. Device Admin Permission Declaration
@@ -9735,6 +9056,8 @@ Select: **Yes**
 **Describe why your app needs Device Admin and which policies it uses:**
 
 > QuicLoc registers `QuicLocDeviceAdmin` as a DeviceAdminReceiver solely so it can call `DevicePolicyManager.lockNow()` when the user's pre-configured find-my-phone passphrase is received in a trigger message. This is the only DPM API the app invokes. The app does not call `wipeData()`, `resetPassword()`, `setPasswordQuality()`, `setMaximumFailedPasswordsForWipe()`, `setUninstallBlocked()`, or any other Device Admin policy. The Device Admin grant is optional — when not granted, QuicLoc falls back to a cover-screen activity (`TrackingLockActivity`) that achieves the same intent without administrative privilege. The user is shown a custom in-app explanation dialog (`device_admin_explanation_body`) before the system grant screen is launched, and the grant is revocable at any time in Settings → Security → Device admin apps. Use case: personal device security, lost/stolen phone recovery.
+
+> **Module placement (maintainer note):** the `QuicLocDeviceAdmin` receiver is declared in the on-demand `:feature_findmyphone` dynamic feature module, not the base. The base checks admin status via `FindMyPhone.isAdminActive` (which builds the receiver's `ComponentName` by name). Because the receiver must be in the merged manifest before `ACTION_ADD_DEVICE_ADMIN` can resolve it, find-my-phone setup downloads the module first, then prompts for the Device Admin grant.
 
 ---
 
@@ -9814,6 +9137,16 @@ If Google Play reviewers contact you for additional clarification, use this resp
 
 This is the passphrase-triggered emergency path. Distinct from the normal "loc" trigger flow.
 
+> **Module boundary.** The entire lockdown feature — `TrackingService`, `TrackingLockActivity`,
+> `LockdownController`, `QuicLocDeviceAdmin`, and the `IntruderCamera` capture — lives in the
+> on-demand `:feature_findmyphone` dynamic feature module (package `com.hereliesaz.quicloc.lockdown`).
+> The base install carries none of it (nor its `CAMERA` / `USE_FULL_SCREEN_INTENT` permissions, nor the
+> Device Admin receiver) until find-my-phone is set up and the module is downloaded. The base reaches
+> the module **only** through the `FindMyPhone` bridge (`app/.../FindMyPhone.kt`), which addresses it by
+> `ComponentName`. The module fuses into sideload APKs (`dist:fusing dist:include="true"`); the Play AAB
+> path keeps it on-demand. See [PLAY_PUBLISHING.md](PLAY_PUBLISHING.md). Module→base calls (e.g.
+> `LocationHelper`, `WhitelistManager`) stay direct via `implementation(project(":app"))`.
+
 ## Setup
 
 User sets, in the app:
@@ -9834,11 +9167,12 @@ trigger detected
 WhitelistManager.clearPassphraseSync()   ← commit() not apply(): single-use
    │                                       must survive a crash
    ▼
-TrackingService.startForSms(sender)   or  startForNotification(sender, package)
-   │
+FindMyPhone.trigger(sender, "SMS")   or   FindMyPhone.trigger(sender, package)
+   │     (starts the module's TrackingService by ComponentName;
+   │      no-op if the :feature_findmyphone module was never installed)
    ▼
-TrackingService.onStartCommand
-   │  startForeground with type LOCATION | CAMERA (Android 14+)
+TrackingService.onStartCommand   (reads FindMyPhone.EXTRA_SENDER / EXTRA_SOURCE)
+   │  startForeground with type LOCATION (Android 14+)
    │  saveState() to quicloc_tracking_state
    │  start trackingRunnable (5-min interval)
    │
@@ -9929,7 +9263,7 @@ Two paths exist because **without Device Admin we can't actually lock the device
 - `android:showWhenLocked="true"` + `android:turnScreenOn="true"` in the manifest let it appear over the keyguard.
 - `FLAG_DISMISS_KEYGUARD` (deprecated but still works) tries to dismiss the keyguard if it's been "swiped away" but unlocked.
 - `onUserLeaveHint` re-launches the activity when the user presses Home. On Android 10+, this background activity launch is restricted; works while the activity is foreground (the launching happens during transition) but isn't guaranteed.
-- Requires `USE_FULL_SCREEN_INTENT` permission to bring itself up via the FGS notification on Android 14+. The user must grant this separately in Settings — we don't currently route them there. **Known gap.**
+- Requires `USE_FULL_SCREEN_INTENT` permission to bring itself up via the FGS notification on Android 14+. This permission is **declared in the `:feature_findmyphone` module manifest** (not the base), so it's present once the module is installed. On API 34+ the user must still grant the *runtime* full-screen-intent toggle separately in Settings (see below).
 
 ## Full-screen-intent on Android 14+
 
@@ -9949,7 +9283,7 @@ The photo file persists on external media until the user clears it. We don't aut
 
 ## MMS photo send (klinker library)
 
-`TrackingService.sendMmsPhoto` uses the `com.klinkerapps:android-smsmms` library to send the panic photo. The library wraps the historically-painful MMS APIs.
+`TrackingService.sendMmsPhoto` uses the `com.klinkerapps:android-smsmms` library to send the panic photo. The library wraps the historically-painful MMS APIs. The `android-smsmms` dependency lives in the `:feature_findmyphone` module (only `TrackingService` uses it), not the base.
 
 Notes:
 
@@ -9959,7 +9293,7 @@ Notes:
 
 ## Things to watch out for
 
-- **Camera FGS start from background on Android 14+.** `foregroundServiceType="location|camera"` was set so we could start a camera-using FGS from the trigger. On Android 14+, starting a camera-type FGS from background is normally restricted; `NotificationListenerService` grants a temporary exemption, but `SmsReceiver` may not. If you see crashes on Android 14, this is the first place to look.
+- **FGS start from background on Android 14+.** `TrackingService` uses `foregroundServiceType="location"` only — the intruder photo is captured by the visible `TrackingLockActivity` (CAMERA permission, no camera-typed FGS). `NotificationListenerService` grants a temporary background-start exemption; `SmsReceiver` may not. If you see FGS-start crashes on Android 14, this is the first place to look.
 - **`startActivity` from a background-started Service.** Forbidden on Android 10+ without `SYSTEM_ALERT_WINDOW`. We wrap in try/catch and rely on the full-screen-intent path as the fallback.
 - **PIN comparison.** Currently `==` on Strings. Not constant-time. The 3-strikes-then-photograph defense is what really discourages brute forcing.
 - **Don't expand Device Admin policies casually.** We only ever request `force-lock`. Adding anything else (wipe, reset password, etc.) changes the trust story dramatically.
@@ -9978,13 +9312,16 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 | Permission | Used for | Notes |
 |---|---|---|
 | `FOREGROUND_SERVICE` | Required to start any FGS on Android 9+ | Always granted, just needed in the manifest |
-| `FOREGROUND_SERVICE_LOCATION` | Type-specific FGS permission, Android 14+ | Required for `LocationReplyService` and `TrackingService` |
+| `FOREGROUND_SERVICE_LOCATION` | Type-specific FGS permission, Android 14+ | Required for `LocationReplyService`. The `TrackingService` (now in the on-demand `:feature_findmyphone` module) also relies on this base-declared, app-global permission. |
 | `USE_BIOMETRIC`, `USE_FINGERPRINT` | `BiometricPrompt` UI auth gate | `USE_FINGERPRINT` is the pre-API-28 name; we keep both for breadth |
 | `INTERNET` | Required by Play Services (`play-services-location`, `play-services-auth`) | QuicLoc itself makes no HTTP calls — no backend |
 | `ACCESS_NETWORK_STATE` | Required by Play Services | Same as above |
 | `VIBRATE` | Haptic feedback on widget taps | |
 | `RECEIVE_BOOT_COMPLETED` | `BootReceiver` re-posts the reminder notification after reboot | |
-| `USE_FULL_SCREEN_INTENT` | `setFullScreenIntent` on the tracking notification (cover-screen fallback when Device Admin not granted) | Android 14+ requires *runtime* grant via Settings; we declare the manifest permission but don't currently prompt — see [LOCKDOWN.md](LOCKDOWN.md) |
+
+> `USE_FULL_SCREEN_INTENT` is **no longer a base permission** — it moved into the on-demand
+> `:feature_findmyphone` module along with the tracking notification that uses it. See the
+> On-demand section below.
 
 ## Runtime (must request from the user)
 
@@ -10002,11 +9339,23 @@ These are all batched in a single `requestPermissions` call from `MainActivity.c
 
 ### On-demand (dynamic feature module)
 
+The **entire** find-my-phone / lockdown feature lives in the on-demand `:feature_findmyphone`
+module: the `TrackingService` (FGS), `TrackingLockActivity` (lock screen), `QuicLocDeviceAdmin`
+(Device Admin receiver), and the `IntruderCamera` capture. The base declares **none** of the
+feature's permissions or components until the user sets up find-my-phone and the module is
+downloaded via `SplitInstall` (`FindMyPhone.requestInstall`). The module fuses into sideload APKs
+(`dist:fusing dist:include="true"`), so APK users get it at install time; the Play AAB path keeps
+it on-demand.
+
 | Permission | Why | When |
 |---|---|---|
-| `CAMERA` | Panic-mode intruder photo (`IntruderCameraImpl` in the `:feature_camera` module) after 3 wrong PINs | **Not in the base install.** Declared only in the on-demand `:feature_camera` module, downloaded via `SplitInstall` when the user sets up find-my-phone (`IntruderCameraLoader.requestInstall`). CAMERA is then requested right after the module installs (foreground), because the lock activity can't show a permission dialog over the keyguard. If the module is never installed, panic mode still locks — just without a photo. |
+| `CAMERA` | Panic-mode intruder photo (module-internal `IntruderCamera`) after 3 wrong PINs | **Not in the base install.** Declared in `:feature_findmyphone`. Requested right after the module installs (foreground), because the lock activity can't show a permission dialog over the keyguard. If CAMERA isn't granted, panic mode still locks — just without a photo. |
+| `USE_FULL_SCREEN_INTENT` | `setFullScreenIntent` on the tracking notification (surfaces the lock screen over the keyguard) | **Not in the base install.** Declared in `:feature_findmyphone`. Android 14+ also requires a *runtime* grant via Settings — see the dedicated section below. |
 
-This is how the base install avoids declaring `CAMERA` (and `FOREGROUND_SERVICE_CAMERA`, no longer needed) until the user opts into find-my-phone.
+Because Device Admin, CAMERA, and the tracking components only exist once the module is merged in,
+find-my-phone setup is **install-first**: `MainActivity` downloads the module, then (on the installed
+callback) requests CAMERA and prompts for Device Admin. This is how the base install avoids declaring
+`CAMERA`, `USE_FULL_SCREEN_INTENT`, and the Device Admin receiver until the user opts into find-my-phone.
 
 ### Background location
 
@@ -10043,9 +9392,9 @@ Without this grant, the app still works for SMS but doesn't trigger from any cha
 
 - Show a Card in settings labeled "Real lockdown not enabled" with a "Grant Device Admin" button.
 - Tapping the button shows a confirmation dialog first (`device_admin_explanation_body` string) so the user isn't blindsided by the system grant screen.
-- Detect grant state via `QuicLocDeviceAdmin.isAdminActive(context)`.
+- Detect grant state via `FindMyPhone.isAdminActive(context)` (constructs the module receiver's `ComponentName` by name, so it works — returning `false` — even before the module is installed).
 
-Optional — without it, the find-my-phone path falls back to `TrackingLockActivity` cover-screen mode.
+Optional — without it, the find-my-phone path falls back to `TrackingLockActivity` cover-screen mode. Note the receiver lives in the on-demand `:feature_findmyphone` module, so Device Admin is only *grantable* after that module is installed (find-my-phone setup installs it first, then prompts).
 
 ### USE_FULL_SCREEN_INTENT (Android 14+ runtime grant)
 
@@ -10116,23 +9465,42 @@ debug APKs for sideloading.
 - **App Bundle auto-splits.** Play generates per-device APKs split by **screen density** and
   **language** automatically from the single `.aab` — no extra artifacts or config. (There are
   no native libraries in this app, so there's no ABI split to worry about.)
-- **Dynamic feature module: `:feature_camera` (on-demand).** The panic-mode intruder photo
-  (CameraX) is delivered as an on-demand module so the **base install never declares the
-  `CAMERA` permission** until the user sets up find-my-phone. Flow:
-  - `app/build.gradle.kts` lists `dynamicFeatures += setOf(":feature_camera")`; the module
-    (`com.android.dynamic-feature`) holds the CameraX deps + `CAMERA` permission +
-    `dist:on-demand` delivery.
-  - The base talks to it only through the `IntruderCamera` interface; `IntruderCameraLoader`
-    downloads it via `SplitInstall` (Play Feature Delivery) and loads `IntruderCameraImpl`
-    reflectively. `QuicLocApp : SplitCompatApplication` + `SplitCompat.installActivity` make the
-    freshly-installed code loadable in-process.
-  - Requires the app to be **bundle-delivered** (Play internal track or `bundletool`) for
-    `SplitInstall` to actually fetch the module — it won't download from a bare `assembleRelease`
-    APK. Needs **device testing**: confirm the module downloads at find-my-phone setup, that the
-    intruder photo is captured, and that a build *without* the module still locks (no photo).
-  - **Note for R8:** if `isMinifyEnabled` is ever turned on, add
-    `-keep class com.hereliesaz.quicloc.camera.IntruderCameraImpl { *; }` — it's loaded by
-    reflection and would otherwise be stripped/renamed.
+- **Dynamic feature module: `:feature_findmyphone` (on-demand, fused into APKs).** The **entire**
+  find-my-phone / lockdown feature — the tracking foreground service, the PIN-gate lock screen, the
+  Device Admin receiver, and the panic-mode intruder camera (CameraX) — is delivered as one on-demand
+  module so the **base install declares none of that feature's sensitive surface** (`CAMERA`,
+  `USE_FULL_SCREEN_INTENT`, the Device Admin receiver, the tracking FGS) until the user sets up
+  find-my-phone. Flow:
+  - `app/build.gradle.kts` lists `dynamicFeatures += setOf(":feature_findmyphone")`; the module
+    (`com.android.dynamic-feature`, namespace `com.hereliesaz.quicloc.lockdown`) holds the CameraX +
+    `android-smsmms` deps, the `CAMERA` / `USE_FULL_SCREEN_INTENT` permissions, the three lockdown
+    components, and `dist:on-demand` delivery.
+  - The base talks to it **only** through `FindMyPhone` (`app/.../FindMyPhone.kt`), which addresses the
+    module by `ComponentName` string and degrades gracefully when the split isn't installed:
+    `requestInstall` downloads it via `SplitInstall` (Play Feature Delivery), `trigger` starts the
+    tracking service, and `isAdminActive`/`adminComponent` check Device Admin without referencing the
+    receiver class. `QuicLocApp : SplitCompatApplication` + `SplitCompat.installActivity` make the
+    freshly-installed code loadable in-process. There is no longer a reflective `IntruderCamera`
+    boundary — the camera lives in the same split as its caller, `TrackingLockActivity`.
+  - **`<dist:fusing dist:include="true"/>`** means the module is **fused into the monolithic
+    `assembleDebug`/`assembleRelease` APKs**, so sideload users (the GitHub-Releases APK) still get
+    find-my-phone with its components present at install time. The Play **AAB** path keeps it
+    on-demand: it's downloaded via `SplitInstall` during find-my-phone setup and won't fetch from a
+    bare `assembleRelease` APK.
+  - **Setup is install-first.** Device Admin and `CAMERA` are only grantable *after* the module is
+    installed (their declarations must be in the merged manifest before
+    `ACTION_ADD_DEVICE_ADMIN` / the runtime CAMERA prompt can resolve). So `MainActivity`'s
+    find-my-phone setup sequences: grant SMS/location → `FindMyPhone.requestInstall` → on installed,
+    request `CAMERA` then prompt for Device Admin.
+  - Needs **device testing** (cannot be covered by CI): on the **AAB** path confirm the module
+    downloads at setup, the Device Admin prompt resolves post-install, a passphrase trigger launches
+    the tracking service via `ComponentName`, and a build *without* the module degrades (a
+    `loc <passphrase>` just doesn't start tracking; core `loc` still replies). On the **APK** path
+    confirm the fused feature is present and works. Also verify the base AAB manifest carries no
+    `CAMERA`/`USE_FULL_SCREEN_INTENT` and no lockdown components.
+  - **Note for R8:** if `isMinifyEnabled` is ever turned on, the module's components are addressed by
+    `ComponentName` string from the base, so keep them:
+    `-keep class com.hereliesaz.quicloc.lockdown.** { *; }`.
   - The core SMS + location permissions stay in the base on purpose: they're driven by a
     manifest `SmsReceiver` the system delivers broadcasts to, and the app must answer `loc` the
     moment it's installed. Other optional perms (`READ_CONTACTS`, the `BIND_*` signature
@@ -10637,7 +10005,9 @@ SmsReceiver.onReceive
         │
         ├─ if body == "loc <passphrase>"
         │     whitelist.clearPassphraseSync()           (commit, not apply)
-        │     TrackingService.startForSms(sender)
+        │     FindMyPhone.trigger(sender, "SMS")
+        │       (starts the :feature_findmyphone TrackingService by
+        │        ComponentName; no-op if the module isn't installed)
         │     → see LOCKDOWN.md
         │
         ├─ if WhitelistManager.isWhitelisted(sender)
@@ -10680,7 +10050,9 @@ NotificationListener.onNotificationPosted(sbn)
         │
         ├─ if body == "loc <passphrase>"
         │     whitelist.clearPassphraseSync()
-        │     TrackingService.startForNotification(sender, packageName)
+        │     FindMyPhone.trigger(sender, packageName)
+        │       (starts the :feature_findmyphone TrackingService by
+        │        ComponentName; no-op if the module isn't installed)
         │
         ├─ if WhitelistManager.isWhitelistedByName(sender)
         │       (case-insensitive name match OR PhoneNumberUtils.compare)
@@ -10833,16 +10205,18 @@ Let's verify `LocationHelper.kt` just to be absolutely sure.
 
 
 ######################################################
-# FILE: feature_camera/build.gradle.kts
+# FILE: feature_findmyphone/build.gradle.kts
 ######################################################
 
 plugins {
     id("com.android.dynamic-feature")
     id("org.jetbrains.kotlin.android")
+    // TrackingLockActivity is a Compose Activity (the PIN-gate lock screen).
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
-    namespace = "com.hereliesaz.quicloc.camera"
+    namespace = "com.hereliesaz.quicloc.lockdown"
     compileSdk = 37
 
     defaultConfig {
@@ -10858,18 +10232,30 @@ android {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }
     }
+    buildFeatures {
+        compose = true
+    }
 }
 
 dependencies {
-    // The base app — provides the IntruderCamera contract this module implements.
+    // The base app — provides LocationHelper, WhitelistManager, AppSettings,
+    // the FindMyPhone bridge (EXTRA_* keys), etc. The base does NOT see this
+    // module, so there's no circular dependency.
     implementation(project(":app"))
 
     implementation(libs.androidx.core.ktx)
-    // ComponentActivity (the type crossing the IntruderCamera boundary).
     implementation(libs.androidx.activity.compose)
 
-    // CameraX — lives here, not in the base, so CAMERA stays out of the base
-    // install until this module is downloaded.
+    // Compose — the lock screen (TrackingLockActivity / LockScreenUI) moved
+    // here out of the base. Mirror the base's BOM + artifacts (same catalog
+    // refs, no new versions pinned).
+    val composeBom = platform("androidx.compose:compose-bom:2025.01.00")
+    implementation(composeBom)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.ui)
+
+    // CameraX — the intruder-photo capture. Lives here so CAMERA stays out of
+    // the base install until this module is downloaded.
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
@@ -10879,11 +10265,15 @@ dependencies {
     implementation(libs.androidx.concurrent.futures)
     implementation(libs.androidx.concurrent.futures.ktx)
     implementation(libs.guava.listenablefuture)
+
+    // MMS — panic mode sends the intruder photo via MMS. Only TrackingService
+    // uses klinker, so the dependency lives here, not in the base.
+    implementation(libs.android.smsmms)
 }
 
 
 ######################################################
-# FILE: feature_camera/src/main/AndroidManifest.xml
+# FILE: feature_findmyphone/src/main/AndroidManifest.xml
 ######################################################
 
 <?xml version="1.0" encoding="utf-8"?>
@@ -10891,38 +10281,95 @@ dependencies {
     xmlns:dist="http://schemas.android.com/apk/distribution">
 
     <!--
-        On-demand delivery: this split is NOT part of the base install. The app
-        requests it via SplitInstall when the user sets up find-my-phone
-        (IntruderCameraLoader.requestInstall). Until then the device carries
-        neither this code nor the CAMERA permission below.
+        The ENTIRE find-my-phone / lockdown feature lives in this on-demand
+        module: the tracking foreground service, the PIN-gate lock screen, the
+        Device Admin receiver, and the intruder-photo camera. The base install
+        carries none of it — and none of the permissions/components below — until
+        the user sets up find-my-phone (FindMyPhone.requestInstall). Until then
+        the base just does core location sharing.
     -->
     <dist:module
         dist:instant="false"
-        dist:title="@string/feature_camera_title">
+        dist:title="@string/feature_findmyphone_title">
         <dist:delivery>
             <dist:on-demand />
         </dist:delivery>
-        <!-- minSdk 26, so no need to fuse into a base multi-APK for pre-Lollipop. -->
-        <dist:fusing dist:include="false" />
+        <!--
+            Fuse into monolithic assembleDebug/assembleRelease APKs so sideload
+            users (the README's "download from Releases" path) still get
+            find-my-phone. The Play AAB path keeps it on-demand.
+        -->
+        <dist:fusing dist:include="true" />
     </dist:module>
 
-    <!-- Lives here so the base install doesn't declare it. Merged into the app
-         only once this module is downloaded. -->
+    <!-- Permissions that belong only to the lockdown feature. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Android 14+ — required for TrackingService's full-screen-intent lock notification. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- CAMERA implies android.hardware.camera (rear) is required on Play; we
          only use the FRONT camera and degrade gracefully, so mark all camera
          hardware optional to avoid filtering out devices with no rear/any camera. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.front" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+    <application>
+
+        <!--
+            Tracking foreground service. foregroundServiceType="location" — the
+            intruder photo is captured by the visible TrackingLockActivity
+            (CAMERA only, no camera-typed FGS).
+        -->
+        <service
+            android:name=".TrackingService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <!--
+            Cover-screen PIN gate, drawn over the keyguard. Launched by
+            TrackingService; calls SplitCompat.installActivity so the split's
+            code/resources load in-process on AAB installs.
+        -->
+        <activity
+            android:name=".TrackingLockActivity"
+            android:theme="@style/Theme.QuicLoc"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:showForAllUsers="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:exported="false" />
+
+        <!--
+            Device Admin — opt-in. Lets QuicLoc actually lock the device via
+            DevicePolicyManager.lockNow() instead of just covering the screen.
+            Only grantable once this module is installed (the component must be
+            in the merged manifest before ACTION_ADD_DEVICE_ADMIN can resolve it).
+            Resources (@xml/device_admin, @string/device_admin_*) live in the base.
+        -->
+        <receiver
+            android:name=".QuicLocDeviceAdmin"
+            android:label="@string/device_admin_label"
+            android:description="@string/device_admin_description"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+    </application>
 </manifest>
 
 
 ######################################################
-# FILE: feature_camera/src/main/java/com/hereliesaz/quicloc/camera/IntruderCameraImpl.kt
+# FILE: feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/IntruderCamera.kt
 ######################################################
 
-package com.hereliesaz.quicloc.camera
+package com.hereliesaz.quicloc.lockdown
 
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -10931,23 +10378,24 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
-import com.hereliesaz.quicloc.IntruderCamera
 import java.io.File
 
 /**
- * CameraX implementation of [IntruderCamera], delivered in the on-demand
- * `:feature_camera` module. Instantiated reflectively by
- * `IntruderCameraLoader.load()` in the base once the split is installed.
+ * Front-camera intruder-photo capture for panic mode. Lives in the on-demand
+ * `:feature_findmyphone` module alongside its only caller,
+ * [TrackingLockActivity], so it's a plain class — no interface, no reflection.
  *
- * Lifted from the former in-base capture in `TrackingLockActivity`: bind the
- * front camera to the activity lifecycle, then write a JPEG to the activity's
- * external media dir on capture.
+ * Bind the front camera to the activity lifecycle, then write a JPEG to the
+ * activity's external media dir on capture. Every call degrades gracefully
+ * (returns `null`) when the camera isn't ready, so a failed capture never
+ * blocks the lock.
  */
-class IntruderCameraImpl : IntruderCamera {
+class IntruderCamera {
 
     private var imageCapture: ImageCapture? = null
 
-    override fun start(activity: ComponentActivity) {
+    /** Bind the front camera to [activity]'s lifecycle so a capture is ready. */
+    fun start(activity: ComponentActivity) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(activity)
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
@@ -10964,7 +10412,12 @@ class IntruderCameraImpl : IntruderCamera {
         }, ContextCompat.getMainExecutor(activity))
     }
 
-    override fun capture(activity: ComponentActivity, onResult: (String?) -> Unit) {
+    /**
+     * Take a photo. [onResult] gets the saved file's absolute path, or `null`
+     * if capture wasn't possible — callers must treat `null` as "no photo" and
+     * carry on (the lock still works).
+     */
+    fun capture(activity: ComponentActivity, onResult: (String?) -> Unit) {
         val capture = imageCapture
         if (capture == null) {
             Log.e(TAG, "Image capture not ready")
@@ -10997,6 +10450,648 @@ class IntruderCameraImpl : IntruderCamera {
 
     companion object {
         private const val TAG = "QuicLoc.IntruderCamera"
+    }
+}
+
+
+######################################################
+# FILE: feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/LockdownController.kt
+######################################################
+
+package com.hereliesaz.quicloc.lockdown
+
+import android.app.admin.DevicePolicyManager
+import android.content.Context
+import android.util.Log
+
+/**
+ * Single entry point for locking the device when the panic / find-my-device
+ * flow is activated. Uses Device Admin's [DevicePolicyManager.lockNow] when
+ * the user has granted admin rights; otherwise the caller is expected to
+ * fall back to showing [TrackingLockActivity] over the keyguard.
+ */
+object LockdownController {
+    private const val TAG = "QuicLoc.Lockdown"
+
+    /**
+     * Attempts to immediately lock the device.
+     *
+     * @return true if the device was actually locked via DevicePolicyManager,
+     *         false if Device Admin is not granted. In the false case, the
+     *         caller should also show [TrackingLockActivity] (the cover-screen
+     *         fallback) so something is on screen.
+     */
+    fun lockNow(context: Context): Boolean {
+        if (!QuicLocDeviceAdmin.isAdminActive(context)) {
+            Log.w(TAG, "Device Admin not granted — cannot lock device. Caller should fall back to cover-screen.")
+            return false
+        }
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
+        if (dpm == null) {
+            Log.e(TAG, "DevicePolicyManager unavailable")
+            return false
+        }
+        return try {
+            dpm.lockNow()
+            Log.i(TAG, "Device locked via DevicePolicyManager")
+            true
+        } catch (e: SecurityException) {
+            Log.e(TAG, "lockNow() denied", e)
+            false
+        }
+    }
+}
+
+
+######################################################
+# FILE: feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/QuicLocDeviceAdmin.kt
+######################################################
+
+package com.hereliesaz.quicloc.lockdown
+
+import android.app.admin.DeviceAdminReceiver
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Context
+
+/**
+ * Device Admin receiver that lets QuicLoc actually lock the device (rather
+ * than just covering the screen with an Activity). The user must explicitly
+ * grant admin rights from system settings; until then [LockdownController]
+ * falls back to the cover-screen behavior.
+ *
+ * Lives in the on-demand `:feature_findmyphone` module, so the base install
+ * carries no Device Admin receiver until find-my-phone is set up. The base
+ * checks admin status via [com.hereliesaz.quicloc.FindMyPhone.isAdminActive],
+ * which constructs this receiver's [ComponentName] by name (no class
+ * reference) so it works before the module is installed.
+ *
+ * Policy requested: force-lock only. We never wipe, never change passwords.
+ */
+class QuicLocDeviceAdmin : DeviceAdminReceiver() {
+    // No additional callbacks needed — we just need the admin registration
+    // so DevicePolicyManager.lockNow() will succeed.
+
+    companion object {
+        fun componentName(context: Context): ComponentName =
+            ComponentName(context, QuicLocDeviceAdmin::class.java)
+
+        fun isAdminActive(context: Context): Boolean {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
+                ?: return false
+            return dpm.isAdminActive(componentName(context))
+        }
+    }
+}
+
+
+######################################################
+# FILE: feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/TrackingLockActivity.kt
+######################################################
+
+package com.hereliesaz.quicloc.lockdown
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import com.google.android.play.core.splitcompat.SplitCompat
+import com.hereliesaz.quicloc.WhitelistManager
+
+/**
+ * Cover-screen lock activity shown by [TrackingService] when the passphrase
+ * trigger fires. Acts as a fallback when Device Admin isn't granted — when
+ * admin IS granted, [LockdownController.lockNow] handles the real lock and
+ * this activity is just a place to enter the PIN to stop tracking.
+ *
+ * Window flags (`showWhenLocked`, `turnScreenOn`, etc.) let it draw over
+ * the keyguard. `onUserLeaveHint` re-launches itself when the user presses
+ * Home — though this background activity launch is restricted on Android
+ * 10+ and may not always succeed.
+ *
+ * 3 wrong PIN entries → panic mode:
+ *
+ *   1. Capture a front-camera photo via [IntruderCamera] (returns no photo if
+ *      the camera isn't ready / CAMERA wasn't granted).
+ *   2. Hand the photo path to [TrackingService.enterPanicMode] which
+ *      shortens the tracking interval to 1 min and sends the photo via MMS
+ *      on the next tick.
+ *
+ * Correct PIN → [TrackingService.stopTracking] + `finishAndRemoveTask`.
+ *
+ * Known limitations:
+ *
+ *   - Without Device Admin, the screen is only *covered*, not locked. A
+ *     thief can still pull the notification shade, tap other apps from
+ *     there, or use Recents.
+ *   - PIN comparison uses `==` (not constant-time). The 3-strikes rule is
+ *     the practical defense.
+ *   - CAMERA can't be requested over the keyguard, so we rely on it being
+ *     granted up front during find-my-phone setup. If it wasn't, panic mode
+ *     still proceeds, just without a photo.
+ */
+class TrackingLockActivity : ComponentActivity() {
+
+    companion object {
+        private const val TAG = "QuicLoc.TrackingLockActivity"
+    }
+
+    private var failCount = 0
+    // The camera lives in this same split, so it's always present here. It only
+    // produces a photo once start() has bound the front camera (which needs the
+    // CAMERA permission); otherwise capture() returns null and the lock proceeds.
+    private val intruderCamera = IntruderCamera()
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(newBase)
+        // Make freshly-installed dynamic-feature code/resources available to
+        // this Activity's classloader (no-op if already present).
+        SplitCompat.installActivity(this)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("FAIL_COUNT", failCount)
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        failCount = savedInstanceState?.getInt("FAIL_COUNT", 0) ?: 0
+
+        // Show this activity over the keyguard and wake the screen, but DO
+        // NOT dismiss the keyguard itself — the user must satisfy BOTH the
+        // system unlock AND the QuicLoc PIN to stop tracking. A previous
+        // version included FLAG_DISMISS_KEYGUARD, which on a non-secure
+        // lockscreen actively bypassed the device lock; that's removed.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
+        window.addFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+        )
+
+        // Handle back button to prevent exiting the lock screen
+        onBackPressedDispatcher.addCallback(this) {
+            // Do nothing to prevent back button
+        }
+
+        // Bind the front camera now if CAMERA is already granted (it can't be
+        // requested over the keyguard, so a denial here just means no photo).
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            intruderCamera.start(this)
+        } else {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
+        }
+
+        setContent {
+            MaterialTheme {
+                LockScreenUI(
+                    onPinEntered = { pin ->
+                        val expectedPin = WhitelistManager(this).getPin()
+                        if (pin == expectedPin) {
+                            TrackingService.stopTracking(this)
+                            finishAndRemoveTask()
+                        } else {
+                            failCount++
+                            if (failCount >= 3) {
+                                triggerPanicMode()
+                            } else {
+                                Toast.makeText(this, "Incorrect PIN", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    // Removed the invalid override fun super.onBackPressed()
+
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 10 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            intruderCamera.start(this)
+        }
+    }
+
+    override fun onUserLeaveHint() {
+
+        super.onUserLeaveHint()
+        if (!isFinishing) {
+            val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            startActivity(intent)
+        }
+    }
+
+
+    /**
+     * Fires after 3 wrong PIN entries. Captures a front-camera photo (if the
+     * camera bound successfully) and escalates [TrackingService] into panic
+     * mode. The photo lives in [externalMediaDirs] — excluded from Auto Backup
+     * via `data_extraction_rules.xml`. If no photo is available, panic mode
+     * still proceeds without one.
+     */
+    private fun triggerPanicMode() {
+        Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
+        intruderCamera.capture(this) { path ->
+            TrackingService.enterPanicMode(this@TrackingLockActivity, path)
+        }
+    }
+}
+
+@Composable
+fun LockScreenUI(onPinEntered: (String) -> Unit) {
+    var pin by remember { mutableStateOf("") }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "Device Tracking Active",
+                style = MaterialTheme.typography.headlineMedium
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(
+                value = pin,
+                onValueChange = { pin = it },
+                label = { Text("Enter 6-digit PIN to unlock") },
+                singleLine = true
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(onClick = { onPinEntered(pin) }) {
+                Text("Unlock")
+            }
+        }
+    }
+}
+
+
+######################################################
+# FILE: feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/TrackingService.kt
+######################################################
+
+package com.hereliesaz.quicloc.lockdown
+
+import android.annotation.SuppressLint
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.util.Log
+import androidx.core.app.ServiceCompat
+import com.hereliesaz.quicloc.FindMyPhone
+import com.hereliesaz.quicloc.LocationHelper
+
+/**
+ * Persistent foreground service that powers the find-my-phone path. Lives in
+ * the on-demand `:feature_findmyphone` module along with the rest of the
+ * lockdown feature.
+ *
+ * Started — via [FindMyPhone.trigger] in the base, which targets this service
+ * by `ComponentName` — when a `loc <passphrase>` message is received via SMS
+ * or chat-app notification (regardless of whitelist — the passphrase is the
+ * credential). Locks the device (via [LockdownController]) and then posts
+ * location updates back to the triggering number on a fixed interval:
+ *
+ *   - 5 minutes normally
+ *   - 1 minute in panic mode (entered after 3 wrong PIN attempts)
+ *
+ * In panic mode, each tick also sends the captured intruder photo as MMS.
+ *
+ * Service-level concerns:
+ *
+ *   - `START_STICKY` + state persisted in `quicloc_tracking_state` prefs so
+ *     the service can resume on its own after an OS kill. The null-intent
+ *     restart path in [onStartCommand] handles this.
+ *   - `foregroundServiceType="location"` — Android 14+ FGS type requirement.
+ *     The intruder photo is captured by the visible [TrackingLockActivity]
+ *     (CAMERA only, no camera-typed FGS).
+ *   - Falls back to the cover-screen [TrackingLockActivity] if Device Admin
+ *     isn't granted (see [LockdownController]).
+ *
+ * Stopped only by [stopTracking], which is called when the user enters the
+ * correct PIN in [TrackingLockActivity].
+ */
+class TrackingService : Service() {
+
+    companion object {
+        private const val TAG = "QuicLoc.TrackingService"
+        private const val CHANNEL_ID = "quicloc_tracking"
+        private const val NOTIF_ID = 2002
+
+        const val ACTION_STOP = "com.hereliesaz.quicloc.STOP_TRACKING"
+        const val ACTION_PANIC_MODE = "com.hereliesaz.quicloc.PANIC_MODE"
+        const val EXTRA_PHOTO_PATH = "photo_path"
+
+        /**
+         * Stop the running service. Called by [TrackingLockActivity] after
+         * the user enters the correct PIN. Safe to call when the service
+         * isn't running.
+         */
+        fun stopTracking(context: Context) {
+            val intent = Intent(context, TrackingService::class.java).apply {
+                action = ACTION_STOP
+            }
+            context.startService(intent)
+        }
+
+        /**
+         * Escalate the running service into panic mode (1-minute interval,
+         * MMS photo on every tick). Called by [TrackingLockActivity] after
+         * 3 wrong PIN entries. [photoPath] is the absolute path to the
+         * front-camera capture; null if camera capture failed but we still
+         * want to escalate the tracking cadence.
+         */
+        fun enterPanicMode(context: Context, photoPath: String?) {
+            val intent = Intent(context, TrackingService::class.java).apply {
+                action = ACTION_PANIC_MODE
+                putExtra(EXTRA_PHOTO_PATH, photoPath)
+            }
+            context.startService(intent)
+        }
+    }
+
+    private var sender: String? = null
+    private var source: String = "Unknown"
+    private var isPanicMode = false
+    private var handler = Handler(Looper.getMainLooper())
+    private var photoPathToSend: String? = null
+
+
+    /**
+     * Persists the current sender/source/panic-mode/photo path into plain
+     * `SharedPreferences` so [onStartCommand]'s null-intent restart branch
+     * can rehydrate everything if the OS kills the service.
+     */
+    private fun saveState() {
+        val prefs = getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString("sender", sender)
+            .putString("source", source)
+            .putBoolean("isPanicMode", isPanicMode)
+            .putString("photoPathToSend", photoPathToSend)
+            .apply()
+    }
+
+    private fun loadState(): Boolean {
+        val prefs = getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
+        sender = prefs.getString("sender", null)
+        source = prefs.getString("source", "Unknown") ?: "Unknown"
+        isPanicMode = prefs.getBoolean("isPanicMode", false)
+        photoPathToSend = prefs.getString("photoPathToSend", null)
+        return sender != null
+    }
+
+    private fun clearState() {
+        getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .apply()
+    }
+
+    private val trackingRunnable = object : Runnable {
+        override fun run() {
+            sendLocationUpdate()
+            val interval = if (isPanicMode) 60_000L else 300_000L // 1 min or 5 min
+            handler.postDelayed(this, interval)
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent == null) {
+            // Restore state from SharedPreferences
+            if (!loadState()) {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            Log.d(TAG, "TrackingService restarted by system, restoring state for $sender")
+            showForegroundNotification()
+            handler.post(trackingRunnable)
+            return START_STICKY
+        }
+
+        when (intent.action) {
+            ACTION_STOP -> {
+                Log.d(TAG, "Stopping tracking service")
+                stopTracking()
+                return START_NOT_STICKY
+            }
+            ACTION_PANIC_MODE -> {
+                Log.d(TAG, "Entering panic mode")
+                isPanicMode = true
+                photoPathToSend = intent.getStringExtra(EXTRA_PHOTO_PATH)
+                saveState()
+                handler.removeCallbacks(trackingRunnable)
+                handler.post(trackingRunnable)
+                return START_STICKY
+            }
+        }
+
+        if (sender == null) {
+            // Extra keys are defined in the base FindMyPhone bridge that built
+            // this intent, so the two can never drift apart.
+            sender = intent.getStringExtra(FindMyPhone.EXTRA_SENDER)
+            source = intent.getStringExtra(FindMyPhone.EXTRA_SOURCE) ?: "Unknown"
+
+            if (sender == null) {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+
+            saveState()
+            Log.d(TAG, "Starting tracking for $sender via $source")
+            // Fire the first location fetch immediately, BEFORE we lock the
+            // device. fetchLocation is async — it just kicks off the
+            // FusedLocationProvider request and returns. Doing it here gives
+            // the GPS subsystem a head start while the screen is still on.
+            // The subsequent periodic ticks are scheduled by trackingRunnable
+            // re-posting itself.
+            sendLocationUpdate()
+            handler.postDelayed(trackingRunnable, if (isPanicMode) 60_000L else 300_000L)
+            showForegroundNotification()
+        }
+
+        return START_STICKY
+    }
+
+    /**
+     * Ordering matters here. We must:
+     *
+     *   1. Claim FGS status FIRST, so we have background-activity-start
+     *      privileges and so the location-typed FGS is registered with the
+     *      OS before anything else runs. If we lock first, the OS-level
+     *      "no background work" rules kick in before our FGS is recognised
+     *      and the immediate location fetch silently times out.
+     *   2. Launch the PIN-gate Activity SECOND, before the device actually
+     *      locks. Combined with the activity's manifest `showWhenLocked=true`,
+     *      it draws over the keyguard AND stays on top once the user unlocks
+     *      it — so the QuicLoc PIN is required even after a Device Admin
+     *      `lockNow`. Without this step a thief could just enter the system
+     *      PIN and walk away from the tracking.
+     *   3. Lock via Device Admin LAST. If admin isn't granted, the
+     *      `FullScreenIntent` + `startActivity` above are the only barrier,
+     *      but they're always wired up regardless of grant state.
+     */
+    private fun showForegroundNotification() {
+        val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("QuicLoc Tracking Active")
+            .setContentText("Enter your QuicLoc PIN to stop tracking.")
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setContentIntent(pendingIntent)
+            // Always wired up — the PIN gate must surface regardless of
+            // whether Device Admin lockNow succeeds. On Android 14+ this
+            // requires USE_FULL_SCREEN_INTENT to be granted (the in-app
+            // permissions panel exposes it).
+            .setFullScreenIntent(pendingIntent, true)
+            .setOngoing(true)
+
+        // Step 1: claim FGS status. Location only — the intruder photo is
+        // captured by the visible TrackingLockActivity (CAMERA permission, no
+        // camera-typed FGS needed).
+        ServiceCompat.startForeground(
+            this,
+            NOTIF_ID,
+            builder.build(),
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            } else 0
+        )
+
+        // Step 2: bring the PIN-gate Activity up BEFORE locking.
+        try {
+            startActivity(lockIntent)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not start lock activity directly — relying on FullScreenIntent", e)
+        }
+
+        // Step 3: lock via Device Admin. Best-effort — no-op if admin not granted.
+        val realLockSucceeded = LockdownController.lockNow(this)
+        Log.d(TAG, "Lock attempt: realLockSucceeded=$realLockSucceeded")
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun sendLocationUpdate() {
+        val targetSender = sender ?: return
+        Log.d(TAG, "Fetching location for tracking update...")
+        LocationHelper.getCurrentLocationAndReply(
+            context = this,
+            phoneNumber = targetSender,
+            onResult = { succeeded ->
+                // Also send photo if in panic mode, regardless of location success
+                if (isPanicMode && photoPathToSend != null) {
+                    sendMmsPhoto(targetSender, photoPathToSend!!)
+                }
+            }
+        )
+    }
+
+    private fun sendMmsPhoto(targetSender: String, photoPath: String) {
+        // Run on background thread to avoid ANR
+        Thread {
+            Log.d(TAG, "Sending MMS photo to $targetSender from $photoPath")
+            try {
+                val settings = com.klinker.android.send_message.Settings().apply {
+                    useSystemSending = true
+                }
+                val transaction = com.klinker.android.send_message.Transaction(this@TrackingService, settings)
+                val message = com.klinker.android.send_message.Message("QuicLoc Lock Image", targetSender)
+
+                // Add image
+                val file = java.io.File(photoPath)
+                if (file.exists()) {
+                    val options = android.graphics.BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+
+                    // Calculate inSampleSize
+                    var inSampleSize = 1
+                    val reqWidth = 800
+                    val reqHeight = 800
+                    if (options.outHeight > reqHeight || options.outWidth > reqWidth) {
+                        val halfHeight = options.outHeight / 2
+                        val halfWidth = options.outWidth / 2
+                        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                            inSampleSize *= 2
+                        }
+                    }
+
+                    options.inJustDecodeBounds = false
+                    options.inSampleSize = inSampleSize
+
+                    val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+                    message.setImage(bitmap)
+                    transaction.sendNewMessage(message, com.klinker.android.send_message.Transaction.NO_THREAD_ID)
+                    Log.d(TAG, "MMS enqueued via library")
+                } else {
+                    Log.e(TAG, "Photo file not found: $photoPath")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send MMS", e)
+            }
+        }.start()
+    }
+
+    private fun stopTracking() {
+        clearState()
+        handler.removeCallbacksAndMessages(null)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun createNotificationChannel() {
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "QuicLoc Tracking",
+            NotificationManager.IMPORTANCE_HIGH // HIGH required for full screen intent
+        ).apply {
+            description = "Active when your device is locked and being tracked."
+        }
+        getSystemService(NotificationManager::class.java)
+            .createNotificationChannel(channel)
     }
 }
 
@@ -11223,7 +11318,7 @@ dependencyResolutionManagement {
 }
 rootProject.name = "QuicLoc"
 include(":app")
-include(":feature_camera")
+include(":feature_findmyphone")
 
 
 ======================================================
