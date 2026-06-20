@@ -1,4 +1,4 @@
-package com.hereliesaz.quicloc
+package com.hereliesaz.quicloc.lockdown
 
 import android.annotation.SuppressLint
 import android.app.Notification
@@ -14,14 +14,19 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.ServiceCompat
+import com.hereliesaz.quicloc.FindMyPhone
+import com.hereliesaz.quicloc.LocationHelper
 
 /**
- * Persistent foreground service that powers the find-my-phone path.
+ * Persistent foreground service that powers the find-my-phone path. Lives in
+ * the on-demand `:feature_findmyphone` module along with the rest of the
+ * lockdown feature.
  *
- * Started when a `loc <passphrase>` message is received via SMS or chat-app
- * notification (regardless of whitelist — passphrase is the credential).
- * Locks the device (via [LockdownController]) and then posts location
- * updates back to the triggering number on a fixed interval:
+ * Started — via [FindMyPhone.trigger] in the base, which targets this service
+ * by `ComponentName` — when a `loc <passphrase>` message is received via SMS
+ * or chat-app notification (regardless of whitelist — the passphrase is the
+ * credential). Locks the device (via [LockdownController]) and then posts
+ * location updates back to the triggering number on a fixed interval:
  *
  *   - 5 minutes normally
  *   - 1 minute in panic mode (entered after 3 wrong PIN attempts)
@@ -35,13 +40,12 @@ import androidx.core.app.ServiceCompat
  *     restart path in [onStartCommand] handles this.
  *   - `foregroundServiceType="location"` — Android 14+ FGS type requirement.
  *     The intruder photo is captured by the visible [TrackingLockActivity]
- *     (CAMERA only, no camera-typed FGS) via the on-demand `:feature_camera`
- *     module, so the service itself needs only the location type.
+ *     (CAMERA only, no camera-typed FGS).
  *   - Falls back to the cover-screen [TrackingLockActivity] if Device Admin
  *     isn't granted (see [LockdownController]).
  *
- * Stopped only by [TrackingService.stopTracking], which is called when the
- * user enters the correct PIN in [TrackingLockActivity].
+ * Stopped only by [stopTracking], which is called when the user enters the
+ * correct PIN in [TrackingLockActivity].
  */
 class TrackingService : Service() {
 
@@ -50,43 +54,9 @@ class TrackingService : Service() {
         private const val CHANNEL_ID = "quicloc_tracking"
         private const val NOTIF_ID = 2002
 
-        const val EXTRA_SENDER = "sender"
-        const val EXTRA_SOURCE = "source"
         const val ACTION_STOP = "com.hereliesaz.quicloc.STOP_TRACKING"
         const val ACTION_PANIC_MODE = "com.hereliesaz.quicloc.PANIC_MODE"
         const val EXTRA_PHOTO_PATH = "photo_path"
-
-        /**
-         * Start tracking for a passphrase trigger that arrived via SMS.
-         * [sender] is the originating phone number — all subsequent
-         * location/photo replies go here.
-         */
-        fun startForSms(context: Context, sender: String) {
-            val intent = Intent(context, TrackingService::class.java).apply {
-                putExtra(EXTRA_SENDER, sender)
-                putExtra(EXTRA_SOURCE, "SMS")
-            }
-            context.startForegroundService(intent)
-        }
-
-        /**
-         * Start tracking for a passphrase trigger that arrived via chat-app
-         * notification. [sender] is the display name from the notification;
-         * [source] is the originating app's package name (used as the
-         * History tab's "source" column).
-         *
-         * The actual location reply still goes via SMS to the sender's
-         * resolved phone number — we don't reply to the chat app for the
-         * tracking case (the trigger may have come from an attacker who
-         * already has the device).
-         */
-        fun startForNotification(context: Context, sender: String, source: String) {
-            val intent = Intent(context, TrackingService::class.java).apply {
-                putExtra(EXTRA_SENDER, sender)
-                putExtra(EXTRA_SOURCE, source)
-            }
-            context.startForegroundService(intent)
-        }
 
         /**
          * Stop the running service. Called by [TrackingLockActivity] after
@@ -200,8 +170,10 @@ class TrackingService : Service() {
         }
 
         if (sender == null) {
-            sender = intent.getStringExtra(EXTRA_SENDER)
-            source = intent.getStringExtra(EXTRA_SOURCE) ?: "Unknown"
+            // Extra keys are defined in the base FindMyPhone bridge that built
+            // this intent, so the two can never drift apart.
+            sender = intent.getStringExtra(FindMyPhone.EXTRA_SENDER)
+            source = intent.getStringExtra(FindMyPhone.EXTRA_SOURCE) ?: "Unknown"
 
             if (sender == null) {
                 stopSelf()
@@ -265,8 +237,7 @@ class TrackingService : Service() {
 
         // Step 1: claim FGS status. Location only — the intruder photo is
         // captured by the visible TrackingLockActivity (CAMERA permission, no
-        // camera-typed FGS needed), and that capture now lives in the on-demand
-        // :feature_camera module.
+        // camera-typed FGS needed).
         ServiceCompat.startForeground(
             this,
             NOTIF_ID,

@@ -1,4 +1,4 @@
-package com.hereliesaz.quicloc
+package com.hereliesaz.quicloc.lockdown
 
 import android.app.admin.DevicePolicyManager
 import android.content.Context

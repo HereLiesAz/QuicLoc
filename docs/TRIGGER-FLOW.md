@@ -24,7 +24,9 @@ SmsReceiver.onReceive
         │
         ├─ if body == "loc <passphrase>"
         │     whitelist.clearPassphraseSync()           (commit, not apply)
-        │     TrackingService.startForSms(sender)
+        │     FindMyPhone.trigger(sender, "SMS")
+        │       (starts the :feature_findmyphone TrackingService by
+        │        ComponentName; no-op if the module isn't installed)
         │     → see LOCKDOWN.md
         │
         ├─ if WhitelistManager.isWhitelisted(sender)
@@ -67,7 +69,9 @@ NotificationListener.onNotificationPosted(sbn)
         │
         ├─ if body == "loc <passphrase>"
         │     whitelist.clearPassphraseSync()
-        │     TrackingService.startForNotification(sender, packageName)
+        │     FindMyPhone.trigger(sender, packageName)
+        │       (starts the :feature_findmyphone TrackingService by
+        │        ComponentName; no-op if the module isn't installed)
         │
         ├─ if WhitelistManager.isWhitelistedByName(sender)
         │       (case-insensitive name match OR PhoneNumberUtils.compare)

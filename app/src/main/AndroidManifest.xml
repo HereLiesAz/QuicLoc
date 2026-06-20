@@ -12,17 +12,19 @@
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!--
-        CAMERA (and FOREGROUND_SERVICE_CAMERA) intentionally NOT declared here.
-        The panic-mode intruder photo lives in the on-demand :feature_camera
-        dynamic feature module, which declares CAMERA in its own manifest. The
-        base install therefore never carries the camera permission until the
-        user sets up find-my-phone and the module is downloaded.
+        The ENTIRE find-my-phone / lockdown feature lives in the on-demand
+        :feature_findmyphone dynamic feature module: the tracking foreground
+        service, the PIN-gate lock screen, the Device Admin receiver, and the
+        intruder camera. The base therefore declares none of that feature's
+        sensitive surface — CAMERA, USE_FULL_SCREEN_INTENT, the Device Admin
+        receiver — until the user sets up find-my-phone and the module is
+        downloaded (FindMyPhone.requestInstall). Those permissions/components
+        are declared in the module's own manifest and merged in on install.
     -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
@@ -73,25 +75,6 @@
         </receiver>
 
         <!--
-            Device Admin — opt-in. Lets QuicLoc actually lock the device via
-            DevicePolicyManager.lockNow() instead of just covering the screen.
-            Without this grant, lockdown falls back to TrackingLockActivity.
-        -->
-        <receiver
-            android:name=".QuicLocDeviceAdmin"
-            android:label="@string/device_admin_label"
-            android:description="@string/device_admin_description"
-            android:permission="android.permission.BIND_DEVICE_ADMIN"
-            android:exported="true">
-            <meta-data
-                android:name="android.app.device_admin"
-                android:resource="@xml/device_admin" />
-            <intent-filter>
-                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
-            </intent-filter>
-        </receiver>
-
-        <!--
             Foreground service that handles location fetch + reply.
             Uses foregroundServiceType="location" so Android 14+ allows
             background location access from a foreground service.
@@ -116,24 +99,9 @@
         </service>
 
         <activity
-            android:name=".TrackingLockActivity"
-            android:theme="@style/Theme.QuicLoc"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true"
-            android:showForAllUsers="true"
-            android:excludeFromRecents="true"
-            android:launchMode="singleInstance"
-            android:exported="false" />
-
-        <activity
             android:name=".WidgetHelpActivity"
             android:theme="@style/Theme.QuicLoc.Transparent"
             android:exported="false" />
-
-        <service
-            android:name=".TrackingService"
-            android:exported="false"
-            android:foregroundServiceType="location" />
 
         <receiver
             android:name=".QuicLocWidgetProvider"

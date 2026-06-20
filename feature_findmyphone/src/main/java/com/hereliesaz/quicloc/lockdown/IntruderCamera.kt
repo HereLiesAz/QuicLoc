@@ -1,4 +1,4 @@
-package com.hereliesaz.quicloc.camera
+package com.hereliesaz.quicloc.lockdown
 
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -7,23 +7,24 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
-import com.hereliesaz.quicloc.IntruderCamera
 import java.io.File
 
 /**
- * CameraX implementation of [IntruderCamera], delivered in the on-demand
- * `:feature_camera` module. Instantiated reflectively by
- * `IntruderCameraLoader.load()` in the base once the split is installed.
+ * Front-camera intruder-photo capture for panic mode. Lives in the on-demand
+ * `:feature_findmyphone` module alongside its only caller,
+ * [TrackingLockActivity], so it's a plain class — no interface, no reflection.
  *
- * Lifted from the former in-base capture in `TrackingLockActivity`: bind the
- * front camera to the activity lifecycle, then write a JPEG to the activity's
- * external media dir on capture.
+ * Bind the front camera to the activity lifecycle, then write a JPEG to the
+ * activity's external media dir on capture. Every call degrades gracefully
+ * (returns `null`) when the camera isn't ready, so a failed capture never
+ * blocks the lock.
  */
-class IntruderCameraImpl : IntruderCamera {
+class IntruderCamera {
 
     private var imageCapture: ImageCapture? = null
 
-    override fun start(activity: ComponentActivity) {
+    /** Bind the front camera to [activity]'s lifecycle so a capture is ready. */
+    fun start(activity: ComponentActivity) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(activity)
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
@@ -40,7 +41,12 @@ class IntruderCameraImpl : IntruderCamera {
         }, ContextCompat.getMainExecutor(activity))
     }
 
-    override fun capture(activity: ComponentActivity, onResult: (String?) -> Unit) {
+    /**
+     * Take a photo. [onResult] gets the saved file's absolute path, or `null`
+     * if capture wasn't possible — callers must treat `null` as "no photo" and
+     * carry on (the lock still works).
+     */
+    fun capture(activity: ComponentActivity, onResult: (String?) -> Unit) {
         val capture = imageCapture
         if (capture == null) {
             Log.e(TAG, "Image capture not ready")

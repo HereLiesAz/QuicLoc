@@ -330,10 +330,10 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             list += runtime(Manifest.permission.ACCESS_BACKGROUND_LOCATION, "Background Location")
         }
-        // CAMERA lives in the on-demand :feature_camera module — only show its
-        // status once that module is installed (otherwise it'd always read as
-        // "not granted" because it isn't in the base manifest).
-        if (IntruderCameraLoader.isInstalled(this)) {
+        // CAMERA lives in the on-demand :feature_findmyphone module — only show
+        // its status once that module is installed (otherwise it'd always read
+        // as "not granted" because it isn't in the base manifest).
+        if (FindMyPhone.isInstalled(this)) {
             list += runtime(Manifest.permission.CAMERA, "Camera")
         }
         list += runtime(Manifest.permission.READ_CONTACTS, "Read Contacts")
@@ -343,7 +343,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
         // Special access — granted via system Settings
         list += special(KEY_NOTIF_LISTENER, "Notification Access", isNotificationListenerEnabled())
-        list += special(KEY_DEVICE_ADMIN, "Device Admin", QuicLocDeviceAdmin.isAdminActive(this))
+        list += special(KEY_DEVICE_ADMIN, "Device Admin", FindMyPhone.isAdminActive(this))
         if (android.os.Build.VERSION.SDK_INT >= 34) {
             list += special(KEY_FSI, "Full Screen Notifications", canUseFullScreenIntent())
         }
@@ -374,7 +374,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         // Install-time — auto-granted by declaring in the manifest
         list += installTime("Foreground Service")
         list += installTime("Foreground Service – Location")
-        list += installTime("Foreground Service – Camera")
         list += installTime("Biometric")
         list += installTime("Fingerprint (legacy)")
         list += installTime("Internet (Play Services)")
@@ -418,7 +417,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 }
             }
             KEY_DEVICE_ADMIN -> {
-                if (QuicLocDeviceAdmin.isAdminActive(this)) {
+                if (FindMyPhone.isAdminActive(this)) {
                     openAppDetailsSettings()
                 } else {
                     showDeviceAdminRationale()
@@ -576,7 +575,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     private val deviceAdminLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
+        deviceAdminState.value = FindMyPhone.isAdminActive(this)
         if (deviceAdminState.value) {
             Toast.makeText(this, "Lockdown enabled — QuicLoc can now lock the device.", Toast.LENGTH_SHORT).show()
         }
@@ -661,7 +660,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         myNumberState.value = whitelistManager.getMyNumber()
         enabledState.value = AppSettings.isEnabled(this)
         reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
-        deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
+        deviceAdminState.value = FindMyPhone.isAdminActive(this)
     }
 
     private val contactPickerLauncher = registerForActivityResult(
@@ -680,7 +679,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         myNumberState.value = whitelistManager.getMyNumber()
         enabledState.value = AppSettings.isEnabled(this)
         reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
-        deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
+        deviceAdminState.value = FindMyPhone.isAdminActive(this)
         fullScreenIntentState.value = canUseFullScreenIntent()
         refreshPermissionStatuses()
 
@@ -989,12 +988,15 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     currentPassphrase = newPassphrase
                                     currentPin = newPin
 
-                                    // Find-my-phone is now armed — make sure every
-                                    // permission its trigger flow needs is granted.
-                                    // Each one is preceded by its own rationale dialog.
-                                    // CAMERA is intentionally omitted here: it lives in
-                                    // the on-demand :feature_camera module and isn't
-                                    // requestable until that module is installed.
+                                    // Find-my-phone is now armed. The whole lockdown
+                                    // feature (tracking service, lock screen, Device
+                                    // Admin receiver, intruder camera) lives in the
+                                    // on-demand :feature_findmyphone module, so none of
+                                    // its permissions/components exist until we download
+                                    // it. Grant the core trigger permissions, then install
+                                    // the module, then — once its manifest is merged in —
+                                    // request CAMERA and prompt for Device Admin (neither
+                                    // is requestable before the split is part of the app).
                                     val needed = listOf(
                                         Manifest.permission.RECEIVE_SMS,
                                         Manifest.permission.SEND_SMS,
@@ -1004,21 +1006,28 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                         ContextCompat.checkSelfPermission(this@MainActivity, it) != PackageManager.PERMISSION_GRANTED
                                     }
                                     runPermissionChain(needed) {
-                                        // Download the panic-photo module now (foreground),
-                                        // then request CAMERA once it's installed — the
-                                        // photo needs it granted before any lock event, and
-                                        // CAMERA can't be requested over the keyguard.
-                                        IntruderCameraLoader.requestInstall(applicationContext) {
+                                        FindMyPhone.requestInstall(applicationContext) {
                                             runOnUiThread {
-                                                // The download is async — the activity may be gone
-                                                // by now; showing a rationale dialog on a dead
-                                                // window would crash (BadTokenException).
-                                                if (!isFinishing && !isDestroyed &&
-                                                    ContextCompat.checkSelfPermission(
-                                                        this@MainActivity, Manifest.permission.CAMERA
-                                                    ) != PackageManager.PERMISSION_GRANTED
-                                                ) {
-                                                    runPermissionChain(listOf(Manifest.permission.CAMERA)) {}
+                                                // The download is async — the activity may be
+                                                // gone by now; touching a dialog/window then
+                                                // would crash (BadTokenException).
+                                                if (isFinishing || isDestroyed) return@runOnUiThread
+                                                // CAMERA is now requestable (module manifest
+                                                // merged in); the photo needs it granted before
+                                                // any lock event, and it can't be requested over
+                                                // the keyguard.
+                                                val cameraChain =
+                                                    if (ContextCompat.checkSelfPermission(
+                                                            this@MainActivity, Manifest.permission.CAMERA
+                                                        ) != PackageManager.PERMISSION_GRANTED
+                                                    ) listOf(Manifest.permission.CAMERA) else emptyList()
+                                                runPermissionChain(cameraChain) {
+                                                    // Device Admin lives in the module too — only
+                                                    // grantable now that its receiver is in the
+                                                    // merged manifest.
+                                                    if (!FindMyPhone.isAdminActive(this@MainActivity)) {
+                                                        showDeviceAdminRationale()
+                                                    }
                                                 }
                                             }
                                         }
@@ -1060,7 +1069,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         // granted/revoked device admin while we were paused.
         enabledState.value = AppSettings.isEnabled(this)
         reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
-        deviceAdminState.value = QuicLocDeviceAdmin.isAdminActive(this)
+        deviceAdminState.value = FindMyPhone.isAdminActive(this)
         fullScreenIntentState.value = canUseFullScreenIntent()
         refreshPermissionStatuses()
     }
@@ -1330,7 +1339,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
             putExtra(
                 DevicePolicyManager.EXTRA_DEVICE_ADMIN,
-                QuicLocDeviceAdmin.componentName(this@MainActivity)
+                FindMyPhone.adminComponent()
             )
             putExtra(
                 DevicePolicyManager.EXTRA_ADD_EXPLANATION,

@@ -57,14 +57,14 @@
 | Service | File | Type | When started |
 |---|---|---|---|
 | `LocationReplyService` | [LocationReplyService.kt](../app/src/main/java/com/hereliesaz/quicloc/LocationReplyService.kt) | `location` | Whitelisted contact sent the trigger word, or the user tapped the widget. One-shot: fetch → reply → `stopSelf`. |
-| `TrackingService` | [TrackingService.kt](../app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt) | `location` | Passphrase fired. Persistent: posts location every 5 min (1 min in panic mode), survives restart via `quicloc_tracking_state` prefs. |
+| `TrackingService` | [TrackingService.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/TrackingService.kt) | `location` | Passphrase fired. Lives in the on-demand `:feature_findmyphone` module; started from the base via `FindMyPhone.trigger` (`ComponentName`). Persistent: posts location every 5 min (1 min in panic mode), survives restart via `quicloc_tracking_state` prefs. |
 
 ### UI
 
 | Activity | File | Role |
 |---|---|---|
 | `MainActivity` | [MainActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt) | Single-activity Compose app. Navigation is a `sealed class MainView` (Config / History / TutorialsHub / TutorialDetail). Biometric gate on resume. |
-| `TrackingLockActivity` | [TrackingLockActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt) | Fallback cover-screen when Device Admin isn't granted. After 3 wrong PINs, captures an intruder photo via the on-demand `:feature_camera` module ([IntruderCamera](../app/src/main/java/com/hereliesaz/quicloc/IntruderCamera.kt)) if installed; otherwise locks without a photo. |
+| `TrackingLockActivity` | [TrackingLockActivity.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/TrackingLockActivity.kt) | In the on-demand `:feature_findmyphone` module. Fallback cover-screen when Device Admin isn't granted. After 3 wrong PINs, captures an intruder photo via the module-internal [IntruderCamera](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/IntruderCamera.kt) (no photo if CAMERA wasn't granted); otherwise locks without a photo. |
 | `WidgetHelpActivity` | [WidgetHelpActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/WidgetHelpActivity.kt) | Transparent activity that pops up when the widget is tapped exactly once. Three-step "tap-to-advance" hint. |
 
 ### Data layer
@@ -82,8 +82,9 @@
 |---|---|---|
 | `LocationHelper` | [LocationHelper.kt](../app/src/main/java/com/hereliesaz/quicloc/LocationHelper.kt) | Three-stage GPS fetch (current → cached → forced) with a single 30 s deadline. Also has the SMS-send and notification-reply primitives. |
 | `BiometricHelper` | [BiometricHelper-1.kt](../app/src/main/java/com/hereliesaz/quicloc/BiometricHelper-1.kt) | Wraps `BiometricPrompt`. Falls back to device credential if no biometric is enrolled. |
-| `LockdownController` | [LockdownController.kt](../app/src/main/java/com/hereliesaz/quicloc/LockdownController.kt) | Single decision point: `DevicePolicyManager.lockNow()` if Device Admin is granted, otherwise let the caller fall back to `TrackingLockActivity`. |
-| `QuicLocDeviceAdmin` | [QuicLocDeviceAdmin.kt](../app/src/main/java/com/hereliesaz/quicloc/QuicLocDeviceAdmin.kt) | `DeviceAdminReceiver` registered with `force-lock` policy only. |
+| `FindMyPhone` | [FindMyPhone.kt](../app/src/main/java/com/hereliesaz/quicloc/FindMyPhone.kt) | The base→module bridge for `:feature_findmyphone`. Addresses the module by `ComponentName` string: `requestInstall` (SplitInstall download), `trigger` (start `TrackingService`), `isAdminActive`/`adminComponent` (Device Admin status without referencing the receiver class). Degrades gracefully when the split isn't installed. |
+| `LockdownController` | [LockdownController.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/LockdownController.kt) | In `:feature_findmyphone`. Single decision point: `DevicePolicyManager.lockNow()` if Device Admin is granted, otherwise let the caller fall back to `TrackingLockActivity`. |
+| `QuicLocDeviceAdmin` | [QuicLocDeviceAdmin.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/QuicLocDeviceAdmin.kt) | In `:feature_findmyphone`. `DeviceAdminReceiver` registered with `force-lock` policy only. |
 | `ReminderNotification` | [ReminderNotification.kt](../app/src/main/java/com/hereliesaz/quicloc/ReminderNotification.kt) | Opt-in persistent notification with a one-tap toggle action. |
 | `Tutorials` | [Tutorial.kt](../app/src/main/java/com/hereliesaz/quicloc/Tutorial.kt) | Static list of 9 in-app tutorials. The "Why QuicLoc?" tutorial auto-shows on first launch. |
 
@@ -93,7 +94,7 @@ See [TRIGGER-FLOW.md](TRIGGER-FLOW.md) for the step-by-step. Quick summary:
 
 1. **SMS trigger.** `SmsReceiver` → `WhitelistManager.isWhitelisted(phone)` → `LocationReplyService.startForSms` → `LocationHelper.getCurrentLocationAndReply` → `SmsManager.sendTextMessage`.
 2. **Notification trigger.** `NotificationListener` → `WhitelistManager.isWhitelistedByName(senderName)` → `LocationReplyService.startForNotification(action)` → `LocationHelper.getCurrentLocationAndReplyViaNotification` → `Notification.Action.actionIntent.send(...)`.
-3. **Passphrase trigger** (any number). `SmsReceiver` or `NotificationListener` → `WhitelistManager.clearPassphraseSync()` → `TrackingService.startForSms`/`startForNotification` → `LockdownController.lockNow()` (DevicePolicyManager.lockNow if admin else cover-screen Activity + full-screen-intent notification) → 5-min interval location updates until the user enters PIN.
+3. **Passphrase trigger** (any number). `SmsReceiver` or `NotificationListener` → `WhitelistManager.clearPassphraseSync()` → `FindMyPhone.trigger(...)` (starts the `TrackingService` in the on-demand `:feature_findmyphone` module by `ComponentName`; no-op if the module was never installed) → `LockdownController.lockNow()` (DevicePolicyManager.lockNow if admin else cover-screen Activity + full-screen-intent notification) → 5-min interval location updates until the user enters PIN.
 
 ## Key architectural choices
 

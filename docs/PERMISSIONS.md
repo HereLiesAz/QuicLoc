@@ -7,13 +7,16 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 | Permission | Used for | Notes |
 |---|---|---|
 | `FOREGROUND_SERVICE` | Required to start any FGS on Android 9+ | Always granted, just needed in the manifest |
-| `FOREGROUND_SERVICE_LOCATION` | Type-specific FGS permission, Android 14+ | Required for `LocationReplyService` and `TrackingService` |
+| `FOREGROUND_SERVICE_LOCATION` | Type-specific FGS permission, Android 14+ | Required for `LocationReplyService`. The `TrackingService` (now in the on-demand `:feature_findmyphone` module) also relies on this base-declared, app-global permission. |
 | `USE_BIOMETRIC`, `USE_FINGERPRINT` | `BiometricPrompt` UI auth gate | `USE_FINGERPRINT` is the pre-API-28 name; we keep both for breadth |
 | `INTERNET` | Required by Play Services (`play-services-location`, `play-services-auth`) | QuicLoc itself makes no HTTP calls — no backend |
 | `ACCESS_NETWORK_STATE` | Required by Play Services | Same as above |
 | `VIBRATE` | Haptic feedback on widget taps | |
 | `RECEIVE_BOOT_COMPLETED` | `BootReceiver` re-posts the reminder notification after reboot | |
-| `USE_FULL_SCREEN_INTENT` | `setFullScreenIntent` on the tracking notification (cover-screen fallback when Device Admin not granted) | Android 14+ requires *runtime* grant via Settings; we declare the manifest permission but don't currently prompt — see [LOCKDOWN.md](LOCKDOWN.md) |
+
+> `USE_FULL_SCREEN_INTENT` is **no longer a base permission** — it moved into the on-demand
+> `:feature_findmyphone` module along with the tracking notification that uses it. See the
+> On-demand section below.
 
 ## Runtime (must request from the user)
 
@@ -31,11 +34,23 @@ These are all batched in a single `requestPermissions` call from `MainActivity.c
 
 ### On-demand (dynamic feature module)
 
+The **entire** find-my-phone / lockdown feature lives in the on-demand `:feature_findmyphone`
+module: the `TrackingService` (FGS), `TrackingLockActivity` (lock screen), `QuicLocDeviceAdmin`
+(Device Admin receiver), and the `IntruderCamera` capture. The base declares **none** of the
+feature's permissions or components until the user sets up find-my-phone and the module is
+downloaded via `SplitInstall` (`FindMyPhone.requestInstall`). The module fuses into sideload APKs
+(`dist:fusing dist:include="true"`), so APK users get it at install time; the Play AAB path keeps
+it on-demand.
+
 | Permission | Why | When |
 |---|---|---|
-| `CAMERA` | Panic-mode intruder photo (`IntruderCameraImpl` in the `:feature_camera` module) after 3 wrong PINs | **Not in the base install.** Declared only in the on-demand `:feature_camera` module, downloaded via `SplitInstall` when the user sets up find-my-phone (`IntruderCameraLoader.requestInstall`). CAMERA is then requested right after the module installs (foreground), because the lock activity can't show a permission dialog over the keyguard. If the module is never installed, panic mode still locks — just without a photo. |
+| `CAMERA` | Panic-mode intruder photo (module-internal `IntruderCamera`) after 3 wrong PINs | **Not in the base install.** Declared in `:feature_findmyphone`. Requested right after the module installs (foreground), because the lock activity can't show a permission dialog over the keyguard. If CAMERA isn't granted, panic mode still locks — just without a photo. |
+| `USE_FULL_SCREEN_INTENT` | `setFullScreenIntent` on the tracking notification (surfaces the lock screen over the keyguard) | **Not in the base install.** Declared in `:feature_findmyphone`. Android 14+ also requires a *runtime* grant via Settings — see the dedicated section below. |
 
-This is how the base install avoids declaring `CAMERA` (and `FOREGROUND_SERVICE_CAMERA`, no longer needed) until the user opts into find-my-phone.
+Because Device Admin, CAMERA, and the tracking components only exist once the module is merged in,
+find-my-phone setup is **install-first**: `MainActivity` downloads the module, then (on the installed
+callback) requests CAMERA and prompts for Device Admin. This is how the base install avoids declaring
+`CAMERA`, `USE_FULL_SCREEN_INTENT`, and the Device Admin receiver until the user opts into find-my-phone.
 
 ### Background location
 
@@ -72,9 +87,9 @@ Without this grant, the app still works for SMS but doesn't trigger from any cha
 
 - Show a Card in settings labeled "Real lockdown not enabled" with a "Grant Device Admin" button.
 - Tapping the button shows a confirmation dialog first (`device_admin_explanation_body` string) so the user isn't blindsided by the system grant screen.
-- Detect grant state via `QuicLocDeviceAdmin.isAdminActive(context)`.
+- Detect grant state via `FindMyPhone.isAdminActive(context)` (constructs the module receiver's `ComponentName` by name, so it works — returning `false` — even before the module is installed).
 
-Optional — without it, the find-my-phone path falls back to `TrackingLockActivity` cover-screen mode.
+Optional — without it, the find-my-phone path falls back to `TrackingLockActivity` cover-screen mode. Note the receiver lives in the on-demand `:feature_findmyphone` module, so Device Admin is only *grantable* after that module is installed (find-my-phone setup installs it first, then prompts).
 
 ### USE_FULL_SCREEN_INTENT (Android 14+ runtime grant)
 
