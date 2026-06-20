@@ -131,12 +131,12 @@ class NotificationListener : NotificationListenerService() {
             recordDiag(pkg, sender, body, DiagOutcome.PASSPHRASE_TRIGGER,
                 "Find-my-phone passphrase matched — starting tracking",
                 triggerMatched = true, extractionPath = extraction.path)
+            // Clear even if the module isn't installed — the passphrase was
+            // already exposed in transit.
             whitelist.clearPassphraseSync()
-            TrackingService.startForNotification(
-                applicationContext,
-                sender = sender,
-                source = pkg
-            )
+            // Tracking lives in the on-demand :feature_findmyphone module;
+            // no-op (returns false) if it was never downloaded.
+            FindMyPhone.trigger(applicationContext, sender = sender, source = pkg)
             return
         }
 

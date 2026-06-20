@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:dist="http://schemas.android.com/apk/distribution">
+
+    <!--
+        The ENTIRE find-my-phone / lockdown feature lives in this on-demand
+        module: the tracking foreground service, the PIN-gate lock screen, the
+        Device Admin receiver, and the intruder-photo camera. The base install
+        carries none of it — and none of the permissions/components below — until
+        the user sets up find-my-phone (FindMyPhone.requestInstall). Until then
+        the base just does core location sharing.
+    -->
+    <dist:module
+        dist:instant="false"
+        dist:title="@string/feature_findmyphone_title">
+        <dist:delivery>
+            <dist:on-demand />
+        </dist:delivery>
+        <!--
+            Fuse into monolithic assembleDebug/assembleRelease APKs so sideload
+            users (the README's "download from Releases" path) still get
+            find-my-phone. The Play AAB path keeps it on-demand.
+        -->
+        <dist:fusing dist:include="true" />
+    </dist:module>
+
+    <!-- Permissions that belong only to the lockdown feature. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Android 14+ — required for TrackingService's full-screen-intent lock notification. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- CAMERA implies android.hardware.camera (rear) is required on Play; we
+         only use the FRONT camera and degrade gracefully, so mark all camera
+         hardware optional to avoid filtering out devices with no rear/any camera. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+    <application>
+
+        <!--
+            Tracking foreground service. foregroundServiceType="location" — the
+            intruder photo is captured by the visible TrackingLockActivity
+            (CAMERA only, no camera-typed FGS).
+        -->
+        <service
+            android:name=".TrackingService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <!--
+            Cover-screen PIN gate, drawn over the keyguard. Launched by
+            TrackingService; calls SplitCompat.installActivity so the split's
+            code/resources load in-process on AAB installs.
+        -->
+        <activity
+            android:name=".TrackingLockActivity"
+            android:theme="@style/Theme.QuicLoc"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:showForAllUsers="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:exported="false" />
+
+        <!--
+            Device Admin — opt-in. Lets QuicLoc actually lock the device via
+            DevicePolicyManager.lockNow() instead of just covering the screen.
+            Only grantable once this module is installed (the component must be
+            in the merged manifest before ACTION_ADD_DEVICE_ADMIN can resolve it).
+            Resources (@xml/device_admin, @string/device_admin_*) live in the base.
+        -->
+        <receiver
+            android:name=".QuicLocDeviceAdmin"
+            android:label="@string/device_admin_label"
+            android:description="@string/device_admin_description"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+</manifest>

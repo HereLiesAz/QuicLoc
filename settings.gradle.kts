@@ -17,4 +17,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "QuicLoc"
 include(":app")
-include(":feature_camera")
+include(":feature_findmyphone")

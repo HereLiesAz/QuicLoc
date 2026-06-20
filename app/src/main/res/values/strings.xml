@@ -2,8 +2,8 @@
     <string name="app_name">QuicLoc</string>
     <string name="remove_whitelist_entry">Remove</string>
     <string name="notification_listener_label">QuicLoc Message Listener</string>
-    <!-- Title shown by Play for the on-demand panic-photo feature module. -->
-    <string name="feature_camera_title">QuicLoc Intruder Photo</string>
+    <!-- Title shown by Play for the on-demand find-my-phone feature module. -->
+    <string name="feature_findmyphone_title">QuicLoc Find My Phone</string>
     <string name="device_admin_label">QuicLoc Lockdown</string>
     <string name="device_admin_description">QuicLoc uses Device Admin only to lock the screen when your find-my-phone passphrase is triggered. It cannot wipe data, change your PIN, prevent uninstall, or access any other admin capability. You can revoke this at any time in Settings → Security → Device admin apps.</string>
     <string name="device_admin_explanation_title">Grant Device Admin?</string>

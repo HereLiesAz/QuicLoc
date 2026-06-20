@@ -17,23 +17,42 @@ debug APKs for sideloading.
 - **App Bundle auto-splits.** Play generates per-device APKs split by **screen density** and
   **language** automatically from the single `.aab` — no extra artifacts or config. (There are
   no native libraries in this app, so there's no ABI split to worry about.)
-- **Dynamic feature module: `:feature_camera` (on-demand).** The panic-mode intruder photo
-  (CameraX) is delivered as an on-demand module so the **base install never declares the
-  `CAMERA` permission** until the user sets up find-my-phone. Flow:
-  - `app/build.gradle.kts` lists `dynamicFeatures += setOf(":feature_camera")`; the module
-    (`com.android.dynamic-feature`) holds the CameraX deps + `CAMERA` permission +
-    `dist:on-demand` delivery.
-  - The base talks to it only through the `IntruderCamera` interface; `IntruderCameraLoader`
-    downloads it via `SplitInstall` (Play Feature Delivery) and loads `IntruderCameraImpl`
-    reflectively. `QuicLocApp : SplitCompatApplication` + `SplitCompat.installActivity` make the
-    freshly-installed code loadable in-process.
-  - Requires the app to be **bundle-delivered** (Play internal track or `bundletool`) for
-    `SplitInstall` to actually fetch the module — it won't download from a bare `assembleRelease`
-    APK. Needs **device testing**: confirm the module downloads at find-my-phone setup, that the
-    intruder photo is captured, and that a build *without* the module still locks (no photo).
-  - **Note for R8:** if `isMinifyEnabled` is ever turned on, add
-    `-keep class com.hereliesaz.quicloc.camera.IntruderCameraImpl { *; }` — it's loaded by
-    reflection and would otherwise be stripped/renamed.
+- **Dynamic feature module: `:feature_findmyphone` (on-demand, fused into APKs).** The **entire**
+  find-my-phone / lockdown feature — the tracking foreground service, the PIN-gate lock screen, the
+  Device Admin receiver, and the panic-mode intruder camera (CameraX) — is delivered as one on-demand
+  module so the **base install declares none of that feature's sensitive surface** (`CAMERA`,
+  `USE_FULL_SCREEN_INTENT`, the Device Admin receiver, the tracking FGS) until the user sets up
+  find-my-phone. Flow:
+  - `app/build.gradle.kts` lists `dynamicFeatures += setOf(":feature_findmyphone")`; the module
+    (`com.android.dynamic-feature`, namespace `com.hereliesaz.quicloc.lockdown`) holds the CameraX +
+    `android-smsmms` deps, the `CAMERA` / `USE_FULL_SCREEN_INTENT` permissions, the three lockdown
+    components, and `dist:on-demand` delivery.
+  - The base talks to it **only** through `FindMyPhone` (`app/.../FindMyPhone.kt`), which addresses the
+    module by `ComponentName` string and degrades gracefully when the split isn't installed:
+    `requestInstall` downloads it via `SplitInstall` (Play Feature Delivery), `trigger` starts the
+    tracking service, and `isAdminActive`/`adminComponent` check Device Admin without referencing the
+    receiver class. `QuicLocApp : SplitCompatApplication` + `SplitCompat.installActivity` make the
+    freshly-installed code loadable in-process. There is no longer a reflective `IntruderCamera`
+    boundary — the camera lives in the same split as its caller, `TrackingLockActivity`.
+  - **`<dist:fusing dist:include="true"/>`** means the module is **fused into the monolithic
+    `assembleDebug`/`assembleRelease` APKs**, so sideload users (the GitHub-Releases APK) still get
+    find-my-phone with its components present at install time. The Play **AAB** path keeps it
+    on-demand: it's downloaded via `SplitInstall` during find-my-phone setup and won't fetch from a
+    bare `assembleRelease` APK.
+  - **Setup is install-first.** Device Admin and `CAMERA` are only grantable *after* the module is
+    installed (their declarations must be in the merged manifest before
+    `ACTION_ADD_DEVICE_ADMIN` / the runtime CAMERA prompt can resolve). So `MainActivity`'s
+    find-my-phone setup sequences: grant SMS/location → `FindMyPhone.requestInstall` → on installed,
+    request `CAMERA` then prompt for Device Admin.
+  - Needs **device testing** (cannot be covered by CI): on the **AAB** path confirm the module
+    downloads at setup, the Device Admin prompt resolves post-install, a passphrase trigger launches
+    the tracking service via `ComponentName`, and a build *without* the module degrades (a
+    `loc <passphrase>` just doesn't start tracking; core `loc` still replies). On the **APK** path
+    confirm the fused feature is present and works. Also verify the base AAB manifest carries no
+    `CAMERA`/`USE_FULL_SCREEN_INTENT` and no lockdown components.
+  - **Note for R8:** if `isMinifyEnabled` is ever turned on, the module's components are addressed by
+    `ComponentName` string from the base, so keep them:
+    `-keep class com.hereliesaz.quicloc.lockdown.** { *; }`.
   - The core SMS + location permissions stay in the base on purpose: they're driven by a
     manifest `SmsReceiver` the system delivers broadcasts to, and the app must answer `loc` the
     moment it's installed. Other optional perms (`READ_CONTACTS`, the `BIND_*` signature

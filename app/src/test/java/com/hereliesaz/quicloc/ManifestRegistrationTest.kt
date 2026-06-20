@@ -108,22 +108,10 @@ class ManifestRegistrationTest {
         )
     }
 
-    @Test
-    fun `QuicLocDeviceAdmin receiver is registered`() {
-        val info = pm.getReceiverInfo(
-            ComponentName(context, QuicLocDeviceAdmin::class.java),
-            PackageManager.GET_META_DATA
-        )
-        assertNotNull(info)
-        // Device Admin requires the BIND_DEVICE_ADMIN permission and the
-        // receiver to be exported so the system can call it.
-        assertTrue("QuicLocDeviceAdmin must be exported", info.exported)
-        assertEquals(
-            "QuicLocDeviceAdmin must require BIND_DEVICE_ADMIN permission",
-            "android.permission.BIND_DEVICE_ADMIN",
-            info.permission
-        )
-    }
+    // Note: QuicLocDeviceAdmin is intentionally NOT asserted here — it now
+    // lives in the on-demand :feature_findmyphone module, so it is absent from
+    // the base merged manifest that Robolectric reads (it's merged in only once
+    // the split installs / is fused into a standalone APK).
 
     // ---- services --------------------------------------------------------
 
@@ -137,15 +125,8 @@ class ManifestRegistrationTest {
         assertTrue("LocationReplyService must NOT be exported", !info.exported)
     }
 
-    @Test
-    fun `TrackingService is registered`() {
-        val info = pm.getServiceInfo(
-            ComponentName(context, TrackingService::class.java),
-            0
-        )
-        assertNotNull(info)
-        assertTrue("TrackingService must NOT be exported", !info.exported)
-    }
+    // Note: TrackingService is intentionally NOT asserted here — it lives in the
+    // on-demand :feature_findmyphone module (absent from the base manifest).
 
     @Test
     fun `NotificationListener service is registered with the correct permission`() {
@@ -173,15 +154,8 @@ class ManifestRegistrationTest {
         assertTrue(info.exported)
     }
 
-    @Test
-    fun `TrackingLockActivity is registered`() {
-        val info = pm.getActivityInfo(
-            ComponentName(context, TrackingLockActivity::class.java),
-            0
-        )
-        assertNotNull(info)
-        assertTrue("TrackingLockActivity must NOT be exported", !info.exported)
-    }
+    // Note: TrackingLockActivity is intentionally NOT asserted here — it lives
+    // in the on-demand :feature_findmyphone module (absent from the base manifest).
 
     @Test
     fun `WidgetHelpActivity is registered`() {

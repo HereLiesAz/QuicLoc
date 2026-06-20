@@ -2,6 +2,16 @@
 
 This is the passphrase-triggered emergency path. Distinct from the normal "loc" trigger flow.
 
+> **Module boundary.** The entire lockdown feature — `TrackingService`, `TrackingLockActivity`,
+> `LockdownController`, `QuicLocDeviceAdmin`, and the `IntruderCamera` capture — lives in the
+> on-demand `:feature_findmyphone` dynamic feature module (package `com.hereliesaz.quicloc.lockdown`).
+> The base install carries none of it (nor its `CAMERA` / `USE_FULL_SCREEN_INTENT` permissions, nor the
+> Device Admin receiver) until find-my-phone is set up and the module is downloaded. The base reaches
+> the module **only** through the `FindMyPhone` bridge (`app/.../FindMyPhone.kt`), which addresses it by
+> `ComponentName`. The module fuses into sideload APKs (`dist:fusing dist:include="true"`); the Play AAB
+> path keeps it on-demand. See [PLAY_PUBLISHING.md](PLAY_PUBLISHING.md). Module→base calls (e.g.
+> `LocationHelper`, `WhitelistManager`) stay direct via `implementation(project(":app"))`.
+
 ## Setup
 
 User sets, in the app:
@@ -22,11 +32,12 @@ trigger detected
 WhitelistManager.clearPassphraseSync()   ← commit() not apply(): single-use
    │                                       must survive a crash
    ▼
-TrackingService.startForSms(sender)   or  startForNotification(sender, package)
-   │
+FindMyPhone.trigger(sender, "SMS")   or   FindMyPhone.trigger(sender, package)
+   │     (starts the module's TrackingService by ComponentName;
+   │      no-op if the :feature_findmyphone module was never installed)
    ▼
-TrackingService.onStartCommand
-   │  startForeground with type LOCATION | CAMERA (Android 14+)
+TrackingService.onStartCommand   (reads FindMyPhone.EXTRA_SENDER / EXTRA_SOURCE)
+   │  startForeground with type LOCATION (Android 14+)
    │  saveState() to quicloc_tracking_state
    │  start trackingRunnable (5-min interval)
    │
@@ -117,7 +128,7 @@ Two paths exist because **without Device Admin we can't actually lock the device
 - `android:showWhenLocked="true"` + `android:turnScreenOn="true"` in the manifest let it appear over the keyguard.
 - `FLAG_DISMISS_KEYGUARD` (deprecated but still works) tries to dismiss the keyguard if it's been "swiped away" but unlocked.
 - `onUserLeaveHint` re-launches the activity when the user presses Home. On Android 10+, this background activity launch is restricted; works while the activity is foreground (the launching happens during transition) but isn't guaranteed.
-- Requires `USE_FULL_SCREEN_INTENT` permission to bring itself up via the FGS notification on Android 14+. The user must grant this separately in Settings — we don't currently route them there. **Known gap.**
+- Requires `USE_FULL_SCREEN_INTENT` permission to bring itself up via the FGS notification on Android 14+. This permission is **declared in the `:feature_findmyphone` module manifest** (not the base), so it's present once the module is installed. On API 34+ the user must still grant the *runtime* full-screen-intent toggle separately in Settings (see below).
 
 ## Full-screen-intent on Android 14+
 
@@ -137,7 +148,7 @@ The photo file persists on external media until the user clears it. We don't aut
 
 ## MMS photo send (klinker library)
 
-`TrackingService.sendMmsPhoto` uses the `com.klinkerapps:android-smsmms` library to send the panic photo. The library wraps the historically-painful MMS APIs.
+`TrackingService.sendMmsPhoto` uses the `com.klinkerapps:android-smsmms` library to send the panic photo. The library wraps the historically-painful MMS APIs. The `android-smsmms` dependency lives in the `:feature_findmyphone` module (only `TrackingService` uses it), not the base.
 
 Notes:
 
@@ -147,7 +158,7 @@ Notes:
 
 ## Things to watch out for
 
-- **Camera FGS start from background on Android 14+.** `foregroundServiceType="location|camera"` was set so we could start a camera-using FGS from the trigger. On Android 14+, starting a camera-type FGS from background is normally restricted; `NotificationListenerService` grants a temporary exemption, but `SmsReceiver` may not. If you see crashes on Android 14, this is the first place to look.
+- **FGS start from background on Android 14+.** `TrackingService` uses `foregroundServiceType="location"` only — the intruder photo is captured by the visible `TrackingLockActivity` (CAMERA permission, no camera-typed FGS). `NotificationListenerService` grants a temporary background-start exemption; `SmsReceiver` may not. If you see FGS-start crashes on Android 14, this is the first place to look.
 - **`startActivity` from a background-started Service.** Forbidden on Android 10+ without `SYSTEM_ALERT_WINDOW`. We wrap in try/catch and rely on the full-screen-intent path as the fallback.
 - **PIN comparison.** Currently `==` on Strings. Not constant-time. The 3-strikes-then-photograph defense is what really discourages brute forcing.
 - **Don't expand Device Admin policies casually.** We only ever request `force-lock`. Adding anything else (wipe, reset password, etc.) changes the trust story dramatically.

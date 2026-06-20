@@ -87,10 +87,12 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // On-demand dynamic feature modules. The panic-mode intruder photo lives in
-    // :feature_camera so the base install doesn't declare the CAMERA permission
-    // until the user sets up find-my-phone (see IntruderCameraLoader).
-    dynamicFeatures += setOf(":feature_camera")
+    // On-demand dynamic feature modules. The ENTIRE find-my-phone / lockdown
+    // feature (tracking service, lock screen, Device Admin receiver, intruder
+    // camera) lives in :feature_findmyphone, so the base install declares none
+    // of its sensitive surface until the user sets up find-my-phone (see
+    // FindMyPhone). The module fuses into sideload APKs (dist:fusing include).
+    dynamicFeatures += setOf(":feature_findmyphone")
 
     signingConfigs {
         if (hasReleaseSigning) {
@@ -154,12 +156,10 @@ dependencies {
     // from a system bottom sheet, no permissions required.
     implementation(libs.play.services.auth)
 
-    // MMS Sending
-    implementation(libs.android.smsmms)
-
-    // Play Feature Delivery — SplitInstall (download the on-demand camera
-    // module) + SplitCompat (load it in-process). CameraX itself now lives in
-    // :feature_camera, not the base.
+    // Play Feature Delivery — SplitInstall (download the on-demand
+    // :feature_findmyphone module) + SplitCompat (load it in-process). The
+    // lockdown feature's heavy deps (CameraX, klinker MMS) live in the module,
+    // not the base.
     implementation(libs.play.feature.delivery)
 
     // Material Icons

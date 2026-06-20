@@ -77,13 +77,17 @@ class SmsReceiver : BroadcastReceiver() {
                 (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
 
             if (isPassphraseTrigger) {
-                Log.d(TAG, "Passphrase trigger from $sender — starting TrackingService")
+                Log.d(TAG, "Passphrase trigger from $sender — starting find-my-phone")
                 diag.record(buildEvent(sender, body, DiagOutcome.PASSPHRASE_TRIGGER,
                     "Find-my-phone passphrase matched — starting tracking", triggerMatched = true))
                 // Commit synchronously so a crash between now and the next boot
                 // can't leave the single-use passphrase usable a second time.
+                // Clear even if the module isn't installed — the passphrase was
+                // already exposed in transit.
                 whitelistManager.clearPassphraseSync()
-                TrackingService.startForSms(context, sender)
+                // Tracking lives in the on-demand :feature_findmyphone module;
+                // no-op (returns false) if it was never downloaded.
+                FindMyPhone.trigger(context, sender, "SMS")
                 continue
             }
 

@@ -1,4 +1,4 @@
-package com.hereliesaz.quicloc
+package com.hereliesaz.quicloc.lockdown
 
 import android.Manifest
 import android.content.Context
@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.play.core.splitcompat.SplitCompat
+import com.hereliesaz.quicloc.WhitelistManager
 
 /**
  * Cover-screen lock activity shown by [TrackingService] when the passphrase
@@ -32,8 +33,8 @@ import com.google.android.play.core.splitcompat.SplitCompat
  *
  * 3 wrong PIN entries → panic mode:
  *
- *   1. Capture a front-camera photo via the on-demand `:feature_camera` module
- *      (skipped if it isn't installed).
+ *   1. Capture a front-camera photo via [IntruderCamera] (returns no photo if
+ *      the camera isn't ready / CAMERA wasn't granted).
  *   2. Hand the photo path to [TrackingService.enterPanicMode] which
  *      shortens the tracking interval to 1 min and sends the photo via MMS
  *      on the next tick.
@@ -47,11 +48,9 @@ import com.google.android.play.core.splitcompat.SplitCompat
  *     there, or use Recents.
  *   - PIN comparison uses `==` (not constant-time). The 3-strikes rule is
  *     the practical defense.
- *   - The intruder-photo capture lives in the on-demand `:feature_camera`
- *     module ([IntruderCamera]). It's resolved here only if that split is
- *     installed; otherwise panic mode proceeds without a photo. The module is
- *     pre-downloaded during find-my-phone setup, and CAMERA can't be requested
- *     over the keyguard anyway, so we rely on it being granted up front.
+ *   - CAMERA can't be requested over the keyguard, so we rely on it being
+ *     granted up front during find-my-phone setup. If it wasn't, panic mode
+ *     still proceeds, just without a photo.
  */
 class TrackingLockActivity : ComponentActivity() {
 
@@ -60,8 +59,10 @@ class TrackingLockActivity : ComponentActivity() {
     }
 
     private var failCount = 0
-    // Non-null only when the :feature_camera split is installed and loadable.
-    private var intruderCamera: IntruderCamera? = null
+    // The camera lives in this same split, so it's always present here. It only
+    // produces a photo once start() has bound the front camera (which needs the
+    // CAMERA permission); otherwise capture() returns null and the lock proceeds.
+    private val intruderCamera = IntruderCamera()
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(newBase)
@@ -99,16 +100,12 @@ class TrackingLockActivity : ComponentActivity() {
             // Do nothing to prevent back button
         }
 
-        // Resolve the intruder camera only if its on-demand module is present.
-        if (IntruderCameraLoader.isInstalled(this)) {
-            intruderCamera = IntruderCameraLoader.load()
-        }
-        if (intruderCamera != null) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                intruderCamera?.start(this)
-            } else {
-                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
-            }
+        // Bind the front camera now if CAMERA is already granted (it can't be
+        // requested over the keyguard, so a denial here just means no photo).
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            intruderCamera.start(this)
+        } else {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
         }
 
         setContent {
@@ -139,7 +136,7 @@ class TrackingLockActivity : ComponentActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 10 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            intruderCamera?.start(this)
+            intruderCamera.start(this)
         }
     }
 
@@ -156,21 +153,15 @@ class TrackingLockActivity : ComponentActivity() {
 
 
     /**
-     * Fires after 3 wrong PIN entries. Captures a front-camera photo via the
-     * on-demand camera module (if installed) and escalates [TrackingService]
-     * into panic mode. The photo lives in [externalMediaDirs] — excluded from
-     * Auto Backup via `data_extraction_rules.xml`. If the module isn't present,
-     * panic mode still proceeds, just without a photo.
+     * Fires after 3 wrong PIN entries. Captures a front-camera photo (if the
+     * camera bound successfully) and escalates [TrackingService] into panic
+     * mode. The photo lives in [externalMediaDirs] — excluded from Auto Backup
+     * via `data_extraction_rules.xml`. If no photo is available, panic mode
+     * still proceeds without one.
      */
     private fun triggerPanicMode() {
         Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
-        val cam = intruderCamera
-        if (cam == null) {
-            Log.w(TAG, "Camera module unavailable, entering panic mode without photo")
-            TrackingService.enterPanicMode(this@TrackingLockActivity, null)
-            return
-        }
-        cam.capture(this) { path ->
+        intruderCamera.capture(this) { path ->
             TrackingService.enterPanicMode(this@TrackingLockActivity, path)
         }
     }
