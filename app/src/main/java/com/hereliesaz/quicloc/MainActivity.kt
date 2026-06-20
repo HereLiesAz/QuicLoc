@@ -1010,7 +1010,11 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                         // CAMERA can't be requested over the keyguard.
                                         IntruderCameraLoader.requestInstall(applicationContext) {
                                             runOnUiThread {
-                                                if (ContextCompat.checkSelfPermission(
+                                                // The download is async — the activity may be gone
+                                                // by now; showing a rationale dialog on a dead
+                                                // window would crash (BadTokenException).
+                                                if (!isFinishing && !isDestroyed &&
+                                                    ContextCompat.checkSelfPermission(
                                                         this@MainActivity, Manifest.permission.CAMERA
                                                     ) != PackageManager.PERMISSION_GRANTED
                                                 ) {

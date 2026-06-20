@@ -21,5 +21,10 @@
     <!-- Lives here so the base install doesn't declare it. Merged into the app
          only once this module is downloaded. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- CAMERA implies android.hardware.camera (rear) is required on Play; we
+         only use the FRONT camera and degrade gracefully, so mark all camera
+         hardware optional to avoid filtering out devices with no rear/any camera. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 </manifest>

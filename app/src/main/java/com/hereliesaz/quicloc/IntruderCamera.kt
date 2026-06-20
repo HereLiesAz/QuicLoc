@@ -76,9 +76,18 @@ object IntruderCameraLoader {
             }
             val listener = object : SplitInstallStateUpdatedListener {
                 override fun onStateUpdate(state: SplitInstallSessionState) {
-                    if (state.status() == SplitInstallSessionStatus.INSTALLED) {
-                        manager.unregisterListener(this)
-                        onInstalled()
+                    when (state.status()) {
+                        SplitInstallSessionStatus.INSTALLED -> {
+                            manager.unregisterListener(this)
+                            onInstalled()
+                        }
+                        // Terminal failures: unregister so we don't leak the
+                        // listener when the download fails or is canceled.
+                        SplitInstallSessionStatus.FAILED,
+                        SplitInstallSessionStatus.CANCELED -> {
+                            manager.unregisterListener(this)
+                        }
+                        else -> { /* PENDING / DOWNLOADING / INSTALLING — keep waiting */ }
                     }
                 }
             }
