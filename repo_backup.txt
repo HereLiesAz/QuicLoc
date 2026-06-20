@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    521718c1373e9bf78e3a4f0f1fc2bc200e65051c
-  Timestamp: 2026-06-18 01:24:31 UTC
+  Branch:    claude/play-aab-publishing
+  Commit:    545570a7dd146a98c8751c522a944cb904d9f46a
+  Timestamp: 2026-06-20 02:13:19 UTC
 ======================================================
 
 
@@ -279,6 +279,99 @@ jobs:
 
 
 ######################################################
+# FILE: .github/workflows/release-play.yml
+######################################################
+
+name: Release to Play
+
+# Manual, signed Android App Bundle build + (optional) Google Play upload.
+# Defaults are deliberately safe: builds the .aab and uploads it as a workflow
+# artifact, and only pushes to Play when `publish` is explicitly enabled, to the
+# internal track, as a draft.
+#
+# Required repo secrets (see docs/PLAY_PUBLISHING.md):
+#   UPLOAD_KEYSTORE_BASE64     - base64 of the upload keystore (.jks)
+#   UPLOAD_KEYSTORE_PASSWORD   - keystore password
+#   UPLOAD_KEY_ALIAS           - key alias
+#   UPLOAD_KEY_PASSWORD        - key password
+#   PLAY_SERVICE_ACCOUNT_JSON  - Google Play service-account JSON (publish only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      track:
+        description: "Play track"
+        type: choice
+        options: [internal, alpha, beta, production]
+        default: internal
+      status:
+        description: "Release status"
+        type: choice
+        options: [draft, completed]
+        default: draft
+      publish:
+        description: "Publish to Play (off = build + upload the .aab artifact only)"
+        type: boolean
+        default: false
+
+jobs:
+  build-publish:
+    name: Build signed AAB${{ inputs.publish && ' + publish' || '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so versionCode = commit count is correct
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission to Gradle wrapper
+        run: chmod +x gradlew
+
+      - name: Decode upload keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+        run: echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+
+      - name: Compute versionCode from commit count
+        run: echo "VERSION_BUILD=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+
+      - name: Read application id
+        run: echo "APP_ID=$(./gradlew -q :app:printApplicationId)" >> "$GITHUB_ENV"
+
+      - name: Build signed release bundle
+        env:
+          QUICLOC_KEYSTORE_FILE: ${{ runner.temp }}/upload.jks
+          QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
+          QUICLOC_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
+          QUICLOC_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+        run: ./gradlew bundleRelease -PversionBuild=${{ env.VERSION_BUILD }}
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quicloc-release-aab-${{ env.VERSION_BUILD }}
+          path: app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+
+      - name: Publish to Google Play
+        if: ${{ inputs.publish }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ env.APP_ID }}
+          releaseFiles: app/build/outputs/bundle/release/*.aab
+          track: ${{ inputs.track }}
+          status: ${{ inputs.status }}
+
+
+######################################################
 # FILE: .gitignore
 ######################################################
 
@@ -310,6 +403,7 @@ render.experimental.xml
 # Keystore files
 *.jks
 *.keystore
+keystore.properties
 
 # Google Services (e.g. APIs or Firebase)
 google-services.json
@@ -483,6 +577,11 @@ Version state is tracked in `app/version.properties`.
 
 This app uses sensitive permissions (`NotificationListenerService`, background location, SMS) that require manual review by Google Play. See [DECLARATIONS.md](docs/DECLARATIONS.md) for the full Play Console declaration text and Data Safety form guidance.
 
+Play releases ship as a **signed App Bundle (`.aab`)** built and (optionally) uploaded by the
+`release-play.yml` workflow. Build/signing, the commit-count `versionCode`, required secrets,
+and the one-time service-account / first-manual-upload setup are documented in
+**[PLAY_PUBLISHING.md](docs/PLAY_PUBLISHING.md)**.
+
 ---
 
 ## License
@@ -530,16 +629,42 @@ android {
     var vC = versionProps["VERSION_C"].toString().toInt()
     var vD = versionProps["VERSION_D"].toString().toInt()
 
-    if (isBuilding) {
-        vD += 1
-        vC += 1
-        versionProps["VERSION_D"] = vD.toString()
-        versionProps["VERSION_C"] = vC.toString()
-        versionProps.store(FileOutputStream(versionPropsFile), null)
+    // CI passes -PversionBuild=<n> (e.g. `git rev-list --count HEAD`) to force a
+    // deterministic, strictly-increasing versionCode for Play uploads. When the
+    // override is present we do NOT touch version.properties, so the build stays
+    // reproducible and the working tree clean. With no override, keep the local
+    // auto-increment behavior unchanged.
+    val versionOverride = (project.findProperty("versionBuild") as String?)?.toIntOrNull()
+
+    val finalVersionCode: Int
+    val finalVersionName: String
+    if (versionOverride != null) {
+        finalVersionCode = versionOverride
+        finalVersionName = "${vA}.${vB}.${vC}.${versionOverride}"
+    } else {
+        if (isBuilding) {
+            vD += 1
+            vC += 1
+            versionProps["VERSION_D"] = vD.toString()
+            versionProps["VERSION_C"] = vC.toString()
+            versionProps.store(FileOutputStream(versionPropsFile), null)
+        }
+        finalVersionCode = vD
+        finalVersionName = "${vA}.${vB}.${vC}.${vD}"
     }
 
-    val finalVersionName = "${vA}.${vB}.${vC}.${vD}"
-    val finalVersionCode = vD
+    // ---- Release signing -------------------------------------------------
+    // Reads a git-ignored keystore.properties (local dev) or environment
+    // variables (CI). Signing is only wired in when material is present, so an
+    // unsigned `assembleRelease` (e.g. a PR build with no secrets) still builds.
+    val keystorePropsFile = rootProject.file("keystore.properties")
+    val keystoreProps = Properties().apply {
+        if (keystorePropsFile.canRead()) FileInputStream(keystorePropsFile).use { load(it) }
+    }
+    fun signingProp(key: String, env: String): String? =
+        (keystoreProps.getProperty(key) ?: System.getenv(env))?.takeIf { it.isNotBlank() }
+    val releaseStoreFile = signingProp("storeFile", "QUICLOC_KEYSTORE_FILE")
+    val hasReleaseSigning = releaseStoreFile != null
 
     defaultConfig {
         applicationId = "com.hereliesaz.quicloc"
@@ -551,6 +676,17 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = signingProp("storePassword", "QUICLOC_KEYSTORE_PASSWORD")
+                keyAlias = signingProp("keyAlias", "QUICLOC_KEY_ALIAS")
+                keyPassword = signingProp("keyPassword", "QUICLOC_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -558,6 +694,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Only signed when keystore material is supplied (see signingConfigs).
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
@@ -580,6 +718,12 @@ android {
 tasks.register("printVersionName") {
     doLast {
         println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.versionName)
+    }
+}
+
+tasks.register("printApplicationId") {
+    doLast {
+        println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.applicationId)
     }
 }
 
@@ -9263,8 +9407,10 @@ QuicLoc/
 |---|---|
 | `./gradlew assembleDebug` | Debug APK at `app/build/outputs/apk/debug/` |
 | `./gradlew assembleRelease` | Release APK |
+| `./gradlew bundleRelease` | Release **AAB** at `app/build/outputs/bundle/release/` (signed if `keystore.properties`/signing env is present — see [PLAY_PUBLISHING.md](PLAY_PUBLISHING.md)) |
 | `./gradlew testDebugUnitTest` | Run all unit tests |
 | `./gradlew printVersionName` | Print the current `versionName` (A.B.C.D) |
+| `./gradlew printApplicationId` | Print the `applicationId` |
 | `./gradlew lint` | Run Android Lint |
 
 The build auto-increments `version.properties` on every `assemble*` invocation. If you don't want a build counter bump, do `./gradlew compileDebugKotlin` (or any task without `assemble`/`bundle` in the name) instead.
@@ -9278,7 +9424,7 @@ Scheme is `A.B.C.D`:
 - **C** — Build count within current `B`. Auto-incremented on each `assemble*`.
 - **D** — Absolute total build count. Auto-incremented on each `assemble*`. Also serves as `versionCode`.
 
-Manual bumps: edit `app/version.properties` directly. Don't try to set `versionCode` from outside that file — the Gradle config reads it dynamically.
+Manual bumps: edit `app/version.properties` directly. The one exception is CI Play builds, which pass `-PversionBuild=<n>` (the git commit count) to force a deterministic, strictly-increasing `versionCode` **without** rewriting `version.properties`. See [PLAY_PUBLISHING.md](PLAY_PUBLISHING.md).
 
 ## Code style
 
@@ -9320,12 +9466,18 @@ Tutorials are static data in [Tutorial.kt](../app/src/main/java/com/hereliesaz/q
 
 ## Releasing
 
-CI is configured in `.github/workflows/` to build and publish release APKs to GitHub Releases on tag push.
+**GitHub Releases (APK).** CI in `.github/workflows/` builds and publishes a release APK to
+GitHub Releases on tag push:
 
 ```bash
 git tag v1.2.0
 git push origin v1.2.0
 ```
+
+**Google Play (signed AAB).** The `release-play.yml` workflow (`workflow_dispatch`) builds a
+signed App Bundle with a commit-count `versionCode` and optionally uploads it to Play (default:
+internal track, draft). Full setup, required secrets, and the one-time service-account /
+first-manual-upload steps are in **[PLAY_PUBLISHING.md](PLAY_PUBLISHING.md)**.
 
 Don't tag a release without:
 
@@ -9790,6 +9942,161 @@ The battery optimization exemption requires a Play Console disclosure — see [D
 - `MANAGE_OVERLAY_PERMISSION` / `SYSTEM_ALERT_WINDOW` — we don't draw overlays; the lock screen is a real `Activity`.
 
 Adding any of these requires updating [DECLARATIONS.md](../DECLARATIONS.md) and the privacy policy.
+
+
+######################################################
+# FILE: docs/PLAY_PUBLISHING.md
+######################################################
+
+# Play Store publishing (signed AAB)
+
+QuicLoc publishes to Google Play as a **signed Android App Bundle (`.aab`)**, built and
+uploaded by the [`release-play.yml`](../.github/workflows/release-play.yml) workflow. The
+GitHub-Releases APK pipeline (`build-apk.yml` / `ci-cd.yml`) is unchanged and still produces
+debug APKs for sideloading.
+
+## TL;DR
+
+- Local signed bundle: create `keystore.properties` (below) and run `./gradlew bundleRelease`.
+- CI: run the **Release to Play** workflow (`workflow_dispatch`). It builds a signed `.aab`
+  with a commit-count `versionCode`, uploads it as an artifact, and — only if you tick
+  `publish` — pushes it to Play (default: `internal` track, `draft` status).
+
+## Why AAB (and what about modular delivery)
+
+- **App Bundle auto-splits.** Play generates per-device APKs split by **screen density** and
+  **language** automatically from the single `.aab` — no extra artifacts or config. (There are
+  no native libraries in this app, so there's no ABI split to worry about.)
+- **Dynamic feature modules: intentionally not used (for now).** The only large, isolatable
+  code is the tracking / panic-mode / CameraX / MMS cluster — but that's triggered in the
+  **background** by an SMS/passphrase with no user interaction, so it can't be reliably
+  on-demand-downloaded at the moment it's needed; a safety feature that might not be installed
+  is worse than a slightly larger install. The optional UI (Tutorials, Diagnostics) is small
+  and wired into `MainActivity`'s `sealed MainView` navigation, so extracting it would need an
+  intent/`SplitInstall` entry-point indirection for little real size gain. If install size
+  ever becomes a problem, the cleanest first candidate is **Tutorials as an on-demand module**
+  reached via an intent entry point.
+- **R8 / resource shrinking: deferred.** `isMinifyEnabled` is still `false`. Enabling R8 +
+  `shrinkResources` is the realistic size win, but this is a safety app that uses
+  `android-smsmms` (third-party, may use reflection) and Tink-backed `EncryptedSharedPreferences`,
+  so it must be **device-tested** before shipping. Start from a conservative keep set:
+  ```
+  -keep class com.klinker.android.send_message.** { *; }   # android-smsmms
+  -keep class com.google.crypto.tink.** { *; }              # EncryptedSharedPreferences
+  -keep class com.hereliesaz.quicloc.** extends android.content.BroadcastReceiver { *; }
+  -keep class com.hereliesaz.quicloc.** extends android.app.Service { *; }
+  ```
+  (Compose and CameraX ship their own consumer ProGuard rules.)
+- **Play in-app updates (Play Core):** an optional future enhancement; not wired up.
+
+## Signing
+
+`app/build.gradle.kts` defines a `release` signing config that reads, in order:
+
+1. a git-ignored **`keystore.properties`** at the repo root (local development), or
+2. **environment variables** (CI).
+
+Signing is only attached to the `release` build type when this material is present, so an
+unsigned `assembleRelease` (e.g. a PR build with no secrets) still succeeds.
+
+| `keystore.properties` key | Environment variable        |
+|---------------------------|-----------------------------|
+| `storeFile`               | `QUICLOC_KEYSTORE_FILE`      |
+| `storePassword`           | `QUICLOC_KEYSTORE_PASSWORD`  |
+| `keyAlias`                | `QUICLOC_KEY_ALIAS`          |
+| `keyPassword`             | `QUICLOC_KEY_PASSWORD`       |
+
+**Local `keystore.properties` template** (repo root — git-ignored, never commit it):
+
+```properties
+storeFile=/absolute/path/to/upload.jks
+storePassword=********
+keyAlias=upload
+keyPassword=********
+```
+
+Generate an upload keystore once:
+
+```bash
+keytool -genkeypair -v -keystore upload.jks -alias upload \
+  -keyalg RSA -keysize 2048 -validity 9125
+```
+
+Then `./gradlew bundleRelease` → signed bundle at `app/build/outputs/bundle/release/app-release.aab`.
+
+## versionCode
+
+Locally, `versionCode`/`versionName` come from `app/version.properties` (`A.B.C.D`), with the
+counter auto-incrementing on `assemble*`/`bundle*` — unchanged.
+
+For Play, **pass an explicit, monotonic code** so uploads are never rejected for a duplicate
+or lower `versionCode`:
+
+```bash
+./gradlew bundleRelease -PversionBuild=$(git rev-list --count HEAD)
+```
+
+When `-PversionBuild=<n>` is set, that value is used as the `versionCode` (and
+`versionName` becomes `A.B.C.<n>`) and **`version.properties` is not modified** — the build is
+deterministic and the tree stays clean. The CI workflow does exactly this.
+
+> The commit count is larger than the current file-based code (52) — that one-time jump up is
+> fine. Once you publish using the commit-count scheme, keep using it: `versionCode` may only
+> ever increase.
+
+## Running the workflow
+
+**Actions → "Release to Play" → Run workflow.** Run it from `main` (the `versionCode` derives
+from the checked-out commit's history). Inputs:
+
+| Input     | Default    | Meaning |
+|-----------|------------|---------|
+| `track`   | `internal` | `internal` / `alpha` / `beta` / `production` |
+| `status`  | `draft`    | `draft` (review in console before going live) / `completed` |
+| `publish` | `false`    | **off** = build + upload the `.aab` as a workflow artifact only; **on** = also upload to Play |
+
+Recommended first run: leave `publish` off, download the artifact, and confirm it's signed:
+
+```bash
+jarsigner -verify -verbose -certs app-release.aab   # or: bundletool validate --bundle=...
+```
+
+## Required GitHub secrets
+
+| Secret | Purpose |
+|--------|---------|
+| `UPLOAD_KEYSTORE_BASE64`    | `base64 -w0 upload.jks` — the upload keystore |
+| `UPLOAD_KEYSTORE_PASSWORD`  | keystore password |
+| `UPLOAD_KEY_ALIAS`          | key alias |
+| `UPLOAD_KEY_PASSWORD`       | key password |
+| `PLAY_SERVICE_ACCOUNT_JSON` | Google Play service-account JSON (only needed when `publish=true`) |
+
+`base64 -w0 upload.jks | pbcopy` (macOS) or `base64 -w0 upload.jks` (Linux) to get the value.
+
+## One-time maintainer setup
+
+1. **Upload keystore** — generate it (above), keep it safe (losing it complicates updates
+   unless Play App Signing is enabled), and add the four `UPLOAD_*` secrets.
+2. **Enable Play App Signing** for the app (recommended) so Google manages the app signing key
+   and you only hold the upload key.
+3. **Service account** — in Google Cloud, create a service account; in the **Play Console →
+   Users & permissions** (and **Setup → API access**), grant it permission to manage releases.
+   Download its JSON key and store it as `PLAY_SERVICE_ACCOUNT_JSON`.
+4. **First release must be manual.** For a brand-new app, the very first `.aab` has to be
+   uploaded **by hand** in the Play Console once (create the app + first internal release)
+   before the API is allowed to publish subsequent builds. After that, `release-play.yml`
+   handles uploads.
+
+## Data safety / privacy
+
+- The app has **no ads, no analytics, no crash reporting, and no third-party trackers** (only
+  `play-services-location` and `play-services-auth`), so it declares **no advertising ID** —
+  there is intentionally no `com.google.android.gms.permission.AD_ID` permission.
+- Location is **shared device-to-device** with the contact who requested it, via SMS/MMS — it
+  is **not collected by the developer** and never sent to any server. Reflect this in the Play
+  **Data safety** form (location *shared*, not *collected*; user-initiated). See
+  [`DECLARATIONS.md`](../DECLARATIONS.md) and [`PRIVACY_POLICY.md`](../PRIVACY_POLICY.md).
+- `INTERNET` is used for Play Services location and MMS transport, not for telemetry.
 
 
 ######################################################
