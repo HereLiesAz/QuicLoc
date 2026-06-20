@@ -36,6 +36,11 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
 
+    // Play Feature Delivery — TrackingLockActivity calls SplitCompat.installActivity
+    // in attachBaseContext so this on-demand split's code/resources load in-process.
+    // The base's copy isn't transitive (implementation), so declare it here too.
+    implementation(libs.play.feature.delivery)
+
     // Compose — the lock screen (TrackingLockActivity / LockScreenUI) moved
     // here out of the base. Share the base's BOM via the version catalog so the
     // two modules can't drift to different Compose versions.
