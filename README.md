@@ -125,6 +125,11 @@ Version state is tracked in `app/version.properties`.
 
 This app uses sensitive permissions (`NotificationListenerService`, background location, SMS) that require manual review by Google Play. See [DECLARATIONS.md](docs/DECLARATIONS.md) for the full Play Console declaration text and Data Safety form guidance.
 
+Play releases ship as a **signed App Bundle (`.aab`)** built and (optionally) uploaded by the
+`release-play.yml` workflow. Build/signing, the commit-count `versionCode`, required secrets,
+and the one-time service-account / first-manual-upload setup are documented in
+**[PLAY_PUBLISHING.md](docs/PLAY_PUBLISHING.md)**.
+
 ---
 
 ## License

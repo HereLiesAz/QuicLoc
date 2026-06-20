@@ -34,16 +34,48 @@ android {
     var vC = versionProps["VERSION_C"].toString().toInt()
     var vD = versionProps["VERSION_D"].toString().toInt()
 
-    if (isBuilding) {
-        vD += 1
-        vC += 1
-        versionProps["VERSION_D"] = vD.toString()
-        versionProps["VERSION_C"] = vC.toString()
-        versionProps.store(FileOutputStream(versionPropsFile), null)
+    // CI passes -PversionBuild=<n> (e.g. `git rev-list --count HEAD`) to force a
+    // deterministic, strictly-increasing versionCode for Play uploads. When the
+    // override is present we do NOT touch version.properties, so the build stays
+    // reproducible and the working tree clean. With no override, keep the local
+    // auto-increment behavior unchanged.
+    val versionOverride = (project.findProperty("versionBuild") as String?)?.toIntOrNull()
+
+    val finalVersionCode: Int
+    val finalVersionName: String
+    if (versionOverride != null) {
+        finalVersionCode = versionOverride
+        finalVersionName = "${vA}.${vB}.${vC}.${versionOverride}"
+    } else {
+        if (isBuilding) {
+            vD += 1
+            vC += 1
+            versionProps["VERSION_D"] = vD.toString()
+            versionProps["VERSION_C"] = vC.toString()
+            versionProps.store(FileOutputStream(versionPropsFile), null)
+        }
+        finalVersionCode = vD
+        finalVersionName = "${vA}.${vB}.${vC}.${vD}"
     }
 
-    val finalVersionName = "${vA}.${vB}.${vC}.${vD}"
-    val finalVersionCode = vD
+    // ---- Release signing -------------------------------------------------
+    // Reads a git-ignored keystore.properties (local dev) or environment
+    // variables (CI). Signing is only wired in when material is present, so an
+    // unsigned `assembleRelease` (e.g. a PR build with no secrets) still builds.
+    val keystorePropsFile = rootProject.file("keystore.properties")
+    val keystoreProps = Properties().apply {
+        if (keystorePropsFile.canRead()) FileInputStream(keystorePropsFile).use { load(it) }
+    }
+    fun signingProp(key: String, env: String): String? =
+        (keystoreProps.getProperty(key) ?: System.getenv(env))?.takeIf { it.isNotBlank() }
+    val releaseStoreFile = signingProp("storeFile", "QUICLOC_KEYSTORE_FILE")
+    val releaseStorePassword = signingProp("storePassword", "QUICLOC_KEYSTORE_PASSWORD")
+    val releaseKeyAlias = signingProp("keyAlias", "QUICLOC_KEY_ALIAS")
+    val releaseKeyPassword = signingProp("keyPassword", "QUICLOC_KEY_PASSWORD")
+    // Only sign when every credential is present; otherwise fall back to an
+    // unsigned release build rather than failing with a half-configured config.
+    val hasReleaseSigning = releaseStoreFile != null && releaseStorePassword != null &&
+        releaseKeyAlias != null && releaseKeyPassword != null
 
     defaultConfig {
         applicationId = "com.hereliesaz.quicloc"
@@ -55,6 +87,19 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                // Resolve relative paths against the repo root, where
+                // keystore.properties lives (CI passes an absolute path).
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -62,6 +107,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Only signed when keystore material is supplied (see signingConfigs).
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
@@ -84,6 +131,12 @@ android {
 tasks.register("printVersionName") {
     doLast {
         println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.versionName)
+    }
+}
+
+tasks.register("printApplicationId") {
+    doLast {
+        println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.applicationId)
     }
 }
 
