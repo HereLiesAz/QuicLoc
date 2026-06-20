@@ -25,6 +25,19 @@ android {
     buildFeatures {
         compose = true
     }
+    packaging {
+        resources {
+            // AndroidX AARs each ship a META-INF/<group>_<artifact>.version
+            // metadata file. CameraX/Compose here pull some AndroidX libs at
+            // versions that differ from the base, so these files would collide
+            // in the AAB's root/ ("Modules 'base' and 'feature_findmyphone'
+            // contain entry 'root/META-INF/androidx.tracing_tracing.version'
+            // with different content" at packageReleaseBundle). They're pure
+            // informational metadata — drop the module's copies so only the
+            // base contributes them and bundletool sees no conflict.
+            excludes += "/META-INF/*.version"
+        }
+    }
 }
 
 dependencies {
