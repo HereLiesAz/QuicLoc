@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    5feaabb5726543f80a389c795ced16ae5007e6cd
-  Timestamp: 2026-06-20 14:07:52 UTC
+  Branch:    claude/debug-loc-messaging-u0p51l
+  Commit:    83212646731e4e8afdb64b520f8f28e2642581f9
+  Timestamp: 2026-06-20 14:35:15 UTC
 ======================================================
 
 
@@ -10234,6 +10234,19 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+    packaging {
+        resources {
+            // AndroidX AARs each ship a META-INF/<group>_<artifact>.version
+            // metadata file. CameraX/Compose here pull some AndroidX libs at
+            // versions that differ from the base, so these files would collide
+            // in the AAB's root/ ("Modules 'base' and 'feature_findmyphone'
+            // contain entry 'root/META-INF/androidx.tracing_tracing.version'
+            // with different content" at packageReleaseBundle). They're pure
+            // informational metadata — drop the module's copies so only the
+            // base contributes them and bundletool sees no conflict.
+            excludes += "/META-INF/*.version"
+        }
     }
 }
 
