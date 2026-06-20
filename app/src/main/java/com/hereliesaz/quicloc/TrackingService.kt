@@ -33,10 +33,10 @@ import androidx.core.app.ServiceCompat
  *   - `START_STICKY` + state persisted in `quicloc_tracking_state` prefs so
  *     the service can resume on its own after an OS kill. The null-intent
  *     restart path in [onStartCommand] handles this.
- *   - `foregroundServiceType="location|camera"` — Android 14+ FGS type
- *     requirement. Note camera-typed FGS background-start is restricted on
- *     14+; trigger from `NotificationListenerService` works, trigger from
- *     `SmsReceiver` may not. See [docs/LOCKDOWN.md] for details.
+ *   - `foregroundServiceType="location"` — Android 14+ FGS type requirement.
+ *     The intruder photo is captured by the visible [TrackingLockActivity]
+ *     (CAMERA only, no camera-typed FGS) via the on-demand `:feature_camera`
+ *     module, so the service itself needs only the location type.
  *   - Falls back to the cover-screen [TrackingLockActivity] if Device Admin
  *     isn't granted (see [LockdownController]).
  *
@@ -263,13 +263,16 @@ class TrackingService : Service() {
             .setFullScreenIntent(pendingIntent, true)
             .setOngoing(true)
 
-        // Step 1: claim FGS status.
+        // Step 1: claim FGS status. Location only — the intruder photo is
+        // captured by the visible TrackingLockActivity (CAMERA permission, no
+        // camera-typed FGS needed), and that capture now lives in the on-demand
+        // :feature_camera module.
         ServiceCompat.startForeground(
             this,
             NOTIF_ID,
             builder.build(),
             if (android.os.Build.VERSION.SDK_INT >= 34) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
             } else 0
         )
 

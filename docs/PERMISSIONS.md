@@ -8,7 +8,6 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 |---|---|---|
 | `FOREGROUND_SERVICE` | Required to start any FGS on Android 9+ | Always granted, just needed in the manifest |
 | `FOREGROUND_SERVICE_LOCATION` | Type-specific FGS permission, Android 14+ | Required for `LocationReplyService` and `TrackingService` |
-| `FOREGROUND_SERVICE_CAMERA` | Type-specific FGS permission, Android 14+ | Required because `TrackingService` declares `foregroundServiceType="location\|camera"` |
 | `USE_BIOMETRIC`, `USE_FINGERPRINT` | `BiometricPrompt` UI auth gate | `USE_FINGERPRINT` is the pre-API-28 name; we keep both for breadth |
 | `INTERNET` | Required by Play Services (`play-services-location`, `play-services-auth`) | QuicLoc itself makes no HTTP calls — no backend |
 | `ACCESS_NETWORK_STATE` | Required by Play Services | Same as above |
@@ -26,10 +25,17 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 | `SEND_SMS` | `LocationHelper.sendSms` replies via `SmsManager` | Same |
 | `ACCESS_FINE_LOCATION` | `LocationHelper.fetchLocation` GPS fix | Same |
 | `ACCESS_COARSE_LOCATION` | Fallback when fine location unavailable | Same |
-| `CAMERA` | `TrackingLockActivity` photo capture after 3 wrong PINs (panic mode) | Same — requested up front, not at panic time, because the lock activity can't show a permission dialog over the keyguard |
 | `POST_NOTIFICATIONS` (API 33+) | All our notifications: FGS, tracking, reminder | Same |
 
 These are all batched in a single `requestPermissions` call from `MainActivity.checkPermissions` after biometric auth passes.
+
+### On-demand (dynamic feature module)
+
+| Permission | Why | When |
+|---|---|---|
+| `CAMERA` | Panic-mode intruder photo (`IntruderCameraImpl` in the `:feature_camera` module) after 3 wrong PINs | **Not in the base install.** Declared only in the on-demand `:feature_camera` module, downloaded via `SplitInstall` when the user sets up find-my-phone (`IntruderCameraLoader.requestInstall`). CAMERA is then requested right after the module installs (foreground), because the lock activity can't show a permission dialog over the keyguard. If the module is never installed, panic mode still locks — just without a photo. |
+
+This is how the base install avoids declaring `CAMERA` (and `FOREGROUND_SERVICE_CAMERA`, no longer needed) until the user opts into find-my-phone.
 
 ### Background location
 

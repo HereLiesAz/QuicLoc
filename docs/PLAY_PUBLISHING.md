@@ -17,15 +17,27 @@ debug APKs for sideloading.
 - **App Bundle auto-splits.** Play generates per-device APKs split by **screen density** and
   **language** automatically from the single `.aab` — no extra artifacts or config. (There are
   no native libraries in this app, so there's no ABI split to worry about.)
-- **Dynamic feature modules: intentionally not used (for now).** The only large, isolatable
-  code is the tracking / panic-mode / CameraX / MMS cluster — but that's triggered in the
-  **background** by an SMS/passphrase with no user interaction, so it can't be reliably
-  on-demand-downloaded at the moment it's needed; a safety feature that might not be installed
-  is worse than a slightly larger install. The optional UI (Tutorials, Diagnostics) is small
-  and wired into `MainActivity`'s `sealed MainView` navigation, so extracting it would need an
-  intent/`SplitInstall` entry-point indirection for little real size gain. If install size
-  ever becomes a problem, the cleanest first candidate is **Tutorials as an on-demand module**
-  reached via an intent entry point.
+- **Dynamic feature module: `:feature_camera` (on-demand).** The panic-mode intruder photo
+  (CameraX) is delivered as an on-demand module so the **base install never declares the
+  `CAMERA` permission** until the user sets up find-my-phone. Flow:
+  - `app/build.gradle.kts` lists `dynamicFeatures += setOf(":feature_camera")`; the module
+    (`com.android.dynamic-feature`) holds the CameraX deps + `CAMERA` permission +
+    `dist:on-demand` delivery.
+  - The base talks to it only through the `IntruderCamera` interface; `IntruderCameraLoader`
+    downloads it via `SplitInstall` (Play Feature Delivery) and loads `IntruderCameraImpl`
+    reflectively. `QuicLocApp : SplitCompatApplication` + `SplitCompat.installActivity` make the
+    freshly-installed code loadable in-process.
+  - Requires the app to be **bundle-delivered** (Play internal track or `bundletool`) for
+    `SplitInstall` to actually fetch the module — it won't download from a bare `assembleRelease`
+    APK. Needs **device testing**: confirm the module downloads at find-my-phone setup, that the
+    intruder photo is captured, and that a build *without* the module still locks (no photo).
+  - **Note for R8:** if `isMinifyEnabled` is ever turned on, add
+    `-keep class com.hereliesaz.quicloc.camera.IntruderCameraImpl { *; }` — it's loaded by
+    reflection and would otherwise be stripped/renamed.
+  - The core SMS + location permissions stay in the base on purpose: they're driven by a
+    manifest `SmsReceiver` the system delivers broadcasts to, and the app must answer `loc` the
+    moment it's installed. Other optional perms (`READ_CONTACTS`, the `BIND_*` signature
+    permissions) were intentionally left in the base — see the PR discussion.
 - **R8 / resource shrinking: deferred.** `isMinifyEnabled` is still `false`. Enabling R8 +
   `shrinkResources` is the realistic size win, but this is a safety app that uses
   `android-smsmms` (third-party, may use reflection) and Tink-backed `EncryptedSharedPreferences`,

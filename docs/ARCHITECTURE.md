@@ -57,14 +57,14 @@
 | Service | File | Type | When started |
 |---|---|---|---|
 | `LocationReplyService` | [LocationReplyService.kt](../app/src/main/java/com/hereliesaz/quicloc/LocationReplyService.kt) | `location` | Whitelisted contact sent the trigger word, or the user tapped the widget. One-shot: fetch → reply → `stopSelf`. |
-| `TrackingService` | [TrackingService.kt](../app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt) | `location\|camera` | Passphrase fired. Persistent: posts location every 5 min (1 min in panic mode), survives restart via `quicloc_tracking_state` prefs. |
+| `TrackingService` | [TrackingService.kt](../app/src/main/java/com/hereliesaz/quicloc/TrackingService.kt) | `location` | Passphrase fired. Persistent: posts location every 5 min (1 min in panic mode), survives restart via `quicloc_tracking_state` prefs. |
 
 ### UI
 
 | Activity | File | Role |
 |---|---|---|
 | `MainActivity` | [MainActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt) | Single-activity Compose app. Navigation is a `sealed class MainView` (Config / History / TutorialsHub / TutorialDetail). Biometric gate on resume. |
-| `TrackingLockActivity` | [TrackingLockActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt) | Fallback cover-screen when Device Admin isn't granted. Captures intruder photo after 3 wrong PINs via CameraX. |
+| `TrackingLockActivity` | [TrackingLockActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/TrackingLockActivity.kt) | Fallback cover-screen when Device Admin isn't granted. After 3 wrong PINs, captures an intruder photo via the on-demand `:feature_camera` module ([IntruderCamera](../app/src/main/java/com/hereliesaz/quicloc/IntruderCamera.kt)) if installed; otherwise locks without a photo. |
 | `WidgetHelpActivity` | [WidgetHelpActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/WidgetHelpActivity.kt) | Transparent activity that pops up when the widget is tapped exactly once. Three-step "tap-to-advance" hint. |
 
 ### Data layer

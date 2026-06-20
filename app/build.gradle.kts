@@ -87,6 +87,11 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // On-demand dynamic feature modules. The panic-mode intruder photo lives in
+    // :feature_camera so the base install doesn't declare the CAMERA permission
+    // until the user sets up find-my-phone (see IntruderCameraLoader).
+    dynamicFeatures += setOf(":feature_camera")
+
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
@@ -152,16 +157,10 @@ dependencies {
     // MMS Sending
     implementation(libs.android.smsmms)
 
-    // CameraX
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.view)
-
-    // Guava ListenableFuture needed for CameraX
-    implementation(libs.androidx.concurrent.futures)
-    implementation(libs.androidx.concurrent.futures.ktx)
-    implementation(libs.guava.listenablefuture)
+    // Play Feature Delivery — SplitInstall (download the on-demand camera
+    // module) + SplitCompat (load it in-process). CameraX itself now lives in
+    // :feature_camera, not the base.
+    implementation(libs.play.feature.delivery)
 
     // Material Icons
     implementation(libs.androidx.compose.material.icons.core)
