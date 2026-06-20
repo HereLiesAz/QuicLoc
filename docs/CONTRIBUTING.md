@@ -35,8 +35,10 @@ QuicLoc/
 |---|---|
 | `./gradlew assembleDebug` | Debug APK at `app/build/outputs/apk/debug/` |
 | `./gradlew assembleRelease` | Release APK |
+| `./gradlew bundleRelease` | Release **AAB** at `app/build/outputs/bundle/release/` (signed if `keystore.properties`/signing env is present — see [PLAY_PUBLISHING.md](PLAY_PUBLISHING.md)) |
 | `./gradlew testDebugUnitTest` | Run all unit tests |
 | `./gradlew printVersionName` | Print the current `versionName` (A.B.C.D) |
+| `./gradlew printApplicationId` | Print the `applicationId` |
 | `./gradlew lint` | Run Android Lint |
 
 The build auto-increments `version.properties` on every `assemble*` invocation. If you don't want a build counter bump, do `./gradlew compileDebugKotlin` (or any task without `assemble`/`bundle` in the name) instead.
@@ -50,7 +52,7 @@ Scheme is `A.B.C.D`:
 - **C** — Build count within current `B`. Auto-incremented on each `assemble*`.
 - **D** — Absolute total build count. Auto-incremented on each `assemble*`. Also serves as `versionCode`.
 
-Manual bumps: edit `app/version.properties` directly. Don't try to set `versionCode` from outside that file — the Gradle config reads it dynamically.
+Manual bumps: edit `app/version.properties` directly. The one exception is CI Play builds, which pass `-PversionBuild=<n>` (the git commit count) to force a deterministic, strictly-increasing `versionCode` **without** rewriting `version.properties`. See [PLAY_PUBLISHING.md](PLAY_PUBLISHING.md).
 
 ## Code style
 
@@ -92,12 +94,18 @@ Tutorials are static data in [Tutorial.kt](../app/src/main/java/com/hereliesaz/q
 
 ## Releasing
 
-CI is configured in `.github/workflows/` to build and publish release APKs to GitHub Releases on tag push.
+**GitHub Releases (APK).** CI in `.github/workflows/` builds and publishes a release APK to
+GitHub Releases on tag push:
 
 ```bash
 git tag v1.2.0
 git push origin v1.2.0
 ```
+
+**Google Play (signed AAB).** The `release-play.yml` workflow (`workflow_dispatch`) builds a
+signed App Bundle with a commit-count `versionCode` and optionally uploads it to Play (default:
+internal track, draft). Full setup, required secrets, and the one-time service-account /
+first-manual-upload steps are in **[PLAY_PUBLISHING.md](PLAY_PUBLISHING.md)**.
 
 Don't tag a release without:
 
