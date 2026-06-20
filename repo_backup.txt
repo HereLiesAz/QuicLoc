@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    claude/camera-feature-module
-  Commit:    e2396111d08929fe9f7ac1b16b4deb7703f60f2c
-  Timestamp: 2026-06-20 07:03:12 UTC
+  Commit:    b6b6d64c97dc6ad2e4b03d8603301338c1eea432
+  Timestamp: 2026-06-20 07:07:11 UTC
 ======================================================
 
 
@@ -1845,9 +1845,18 @@ object IntruderCameraLoader {
             }
             val listener = object : SplitInstallStateUpdatedListener {
                 override fun onStateUpdate(state: SplitInstallSessionState) {
-                    if (state.status() == SplitInstallSessionStatus.INSTALLED) {
-                        manager.unregisterListener(this)
-                        onInstalled()
+                    when (state.status()) {
+                        SplitInstallSessionStatus.INSTALLED -> {
+                            manager.unregisterListener(this)
+                            onInstalled()
+                        }
+                        // Terminal failures: unregister so we don't leak the
+                        // listener when the download fails or is canceled.
+                        SplitInstallSessionStatus.FAILED,
+                        SplitInstallSessionStatus.CANCELED -> {
+                            manager.unregisterListener(this)
+                        }
+                        else -> { /* PENDING / DOWNLOADING / INSTALLING — keep waiting */ }
                     }
                 }
             }
@@ -3555,7 +3564,11 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                         // CAMERA can't be requested over the keyguard.
                                         IntruderCameraLoader.requestInstall(applicationContext) {
                                             runOnUiThread {
-                                                if (ContextCompat.checkSelfPermission(
+                                                // The download is async — the activity may be gone
+                                                // by now; showing a rationale dialog on a dead
+                                                // window would crash (BadTokenException).
+                                                if (!isFinishing && !isDestroyed &&
+                                                    ContextCompat.checkSelfPermission(
                                                         this@MainActivity, Manifest.permission.CAMERA
                                                     ) != PackageManager.PERMISSION_GRANTED
                                                 ) {
@@ -10896,6 +10909,11 @@ dependencies {
     <!-- Lives here so the base install doesn't declare it. Merged into the app
          only once this module is downloaded. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- CAMERA implies android.hardware.camera (rear) is required on Play; we
+         only use the FRONT camera and degrade gracefully, so mark all camera
+         hardware optional to avoid filtering out devices with no rear/any camera. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 </manifest>
 
