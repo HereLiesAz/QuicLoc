@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    claude/debug-loc-messaging-u0p51l
-  Commit:    f800c7c6e2f38b19e8d86d2cd16b328ca3223d85
-  Timestamp: 2026-06-21 21:56:45 UTC
+  Commit:    e6b868c579db07cc2584d4cd967a8397b532290c
+  Timestamp: 2026-06-21 21:59:30 UTC
 ======================================================
 
 
@@ -3910,6 +3910,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
      * the in-UI card stays available for the user to come back to.
      */
     private fun checkFullScreenIntentPermission(forceShow: Boolean = false) {
+        // USE_FULL_SCREEN_INTENT ships only in the find-my-phone module; when
+        // that feature is disabled the permission isn't declared, so don't prompt
+        // for (or route the user to a Settings toggle for) a permission the app
+        // doesn't have. This also covers the first-launch onboarding chain
+        // (checkNotificationListenerPermission -> checkFullScreenIntentPermission).
+        if (!FindMyPhone.ENABLED) return
         if (canUseFullScreenIntent()) return
         if (!forceShow && AppSettings.wasFullScreenIntentPrompted(this)) return
         pendingRationaleState.value = RationaleDialogState(
