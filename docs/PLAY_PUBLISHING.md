@@ -123,13 +123,17 @@ or lower `versionCode`:
 ./gradlew bundleRelease -PversionBuild=$(git rev-list --count HEAD)
 ```
 
-When `-PversionBuild=<n>` is set, that value is used as the `versionCode` (and
-`versionName` becomes `A.B.C.<n>`) and **`version.properties` is not modified** — the build is
+When `-PversionBuild=<n>` is set, `versionCode` becomes `<n> + 1000` (see the offset note below)
+and `versionName` becomes `A.B.C.<n>`, and **`version.properties` is not modified** — the build is
 deterministic and the tree stays clean. The CI workflow does exactly this.
 
-> The commit count is larger than the current file-based code (52) — that one-time jump up is
-> fine. Once you publish using the commit-count scheme, keep using it: `versionCode` may only
-> ever increase.
+> **`+1000` offset.** Google Play already had `versionCode 255` (from an early/manual upload), but the
+> commit count (`git rev-list --count HEAD`) was *below* that (~193), so automated uploads were
+> rejected with `Version code N has already been used`. `app/build.gradle.kts` therefore adds a fixed
+> `versionCodeOffset = 1000` to the computed code, so the uploaded value (e.g. `193 → 1193`) sits
+> safely above any prior code and still strictly increases with each commit. The one-time jump is fine
+> — Play only requires `versionCode` to increase; gaps are allowed. `versionName` keeps the raw build
+> number. If you ever manually upload a code ≥ 1000, raise the offset accordingly.
 
 ## Running the workflow
 
