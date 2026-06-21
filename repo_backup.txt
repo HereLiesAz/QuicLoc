@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    d74c502cc0edb490cb29de22b83170a03d413391
-  Timestamp: 2026-06-21 20:54:44 UTC
+  Branch:    claude/debug-loc-messaging-u0p51l
+  Commit:    f800c7c6e2f38b19e8d86d2cd16b328ca3223d85
+  Timestamp: 2026-06-21 21:56:45 UTC
 ======================================================
 
 
@@ -554,13 +554,13 @@ No app needs to be open. No buttons need to be pressed.
 
 - **Homescreen Widget** — Tap twice to mark your parking spot (texts your own number `#Parking`), three times to alert up to 3 priority starred contacts (`#SafetyCheck`), or four times to alert your entire whitelist (`#Emergency`). A single tap opens the widget help screen.
 - **Master Enable/Disable Toggle** — A switch at the top of settings (mirrored in a persistent reminder notification) pauses all triggers without uninstalling.
-- **Real Device Lockdown** — Optional Device Admin grant lets the passphrase trigger actually lock the device via `DevicePolicyManager.lockNow()`. Without it, the lock screen only covers the display.
+- **Real Device Lockdown** *(temporarily disabled)* — Optional Device Admin grant lets the passphrase trigger actually lock the device via `DevicePolicyManager.lockNow()`. Without it, the lock screen only covers the display. _The find-my-phone / lockdown feature is currently turned off and not shipped — see [docs/LOCKDOWN.md](docs/LOCKDOWN.md)._
 - **Works across messaging apps** — responds to SMS, WhatsApp, Telegram, Signal, Google Messages, Messenger, and any app that supports notification inline replies.
 - **Encrypted whitelist & Priority Contacts** — trusted contacts, "My Phone Number", and up to 3 "starred" priority contacts are stored using AES-256-GCM encryption backed by the Android Keystore. The data never leaves your device.
 - **Biometric protection** — the app requires fingerprint, face unlock, or device PIN to open. Falls back to PIN/pattern if no biometric is enrolled.
 - **Reliable location** — uses a three-stage fallback (GPS fix → cached location → forced update) to ensure a location is returned even from a cold start.
 - **Fully background** — operates silently when the screen is off. Auto-replies work without the app being open or unlocked.
-- **Passphrase & Device Lock** — Set a 10-150 character single-use passphrase and a 6-digit PIN. Sending the passphrase starts a 5-minute location tracking interval and forces a lock screen on the device. Failing the PIN 3 times captures a photo of the intruder and escalates tracking to 1-minute intervals with MMS image updates.
+- **Passphrase & Device Lock** *(temporarily disabled)* — Set a 10-150 character single-use passphrase and a 6-digit PIN. Sending the passphrase starts a 5-minute location tracking interval and forces a lock screen on the device. Failing the PIN 3 times captures a photo of the intruder and escalates tracking to 1-minute intervals with MMS image updates. _Currently turned off and not shipped — see [docs/LOCKDOWN.md](docs/LOCKDOWN.md)._
 - **No data collection** — no analytics, no crash reporters, no servers. Nothing leaves your device except the location reply sent directly to the requesting contact.
 
 ---
@@ -766,12 +766,17 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // On-demand dynamic feature modules. The ENTIRE find-my-phone / lockdown
-    // feature (tracking service, lock screen, Device Admin receiver, intruder
-    // camera) lives in :feature_findmyphone, so the base install declares none
-    // of its sensitive surface until the user sets up find-my-phone (see
-    // FindMyPhone). The module fuses into sideload APKs (dist:fusing include).
-    dynamicFeatures += setOf(":feature_findmyphone")
+    // The ENTIRE find-my-phone / lockdown feature (tracking service, lock
+    // screen, Device Admin receiver, intruder camera) lives in the
+    // :feature_findmyphone dynamic feature module. It is currently DISABLED:
+    // the module is kept in the repo but excluded from the build (here and in
+    // settings.gradle.kts) so its manifest — and the CAMERA,
+    // USE_FULL_SCREEN_INTENT, and BIND_DEVICE_ADMIN permissions it declares —
+    // is NOT merged into the shipped app and those permissions need not be
+    // declared to Google Play. To re-enable: uncomment the line below, re-add
+    // include(":feature_findmyphone") in settings.gradle.kts, and flip
+    // FindMyPhone.ENABLED to true.
+    // dynamicFeatures += setOf(":feature_findmyphone")
 
     signingConfigs {
         if (hasReleaseSigning) {
@@ -1849,6 +1854,23 @@ import com.google.android.play.core.splitinstall.model.SplitInstallSessionStatus
  */
 object FindMyPhone {
 
+    /**
+     * Master kill switch for the entire find-my-phone / lockdown feature.
+     *
+     * When `false` (current state), every entry point below short-circuits, so
+     * the base never tries to install, trigger, or query the module — the
+     * passphrase trigger no-ops and the setup UI is hidden (see MainActivity).
+     *
+     * This flag is the *runtime* half of disabling the feature; the *packaging*
+     * half is that `:feature_findmyphone` is removed from `settings.gradle.kts`
+     * and the app's `dynamicFeatures`, so the module's manifest (CAMERA,
+     * USE_FULL_SCREEN_INTENT, the Device Admin receiver, the tracking service)
+     * is no longer merged into the shipped app and those permissions aren't
+     * declared. To re-enable find-my-phone, flip this to `true` AND re-add the
+     * module in both Gradle files. The module's code is kept intact in the repo.
+     */
+    const val ENABLED = false
+
     const val MODULE = "feature_findmyphone"
 
     private const val PKG = "com.hereliesaz.quicloc"
@@ -1863,11 +1885,14 @@ object FindMyPhone {
     const val EXTRA_SOURCE = "source"
 
     /** Whether the find-my-phone split is installed and its code is available. */
-    fun isInstalled(context: Context): Boolean = try {
-        SplitInstallManagerFactory.create(context.applicationContext)
-            .installedModules.contains(MODULE)
-    } catch (e: Throwable) {
-        false
+    fun isInstalled(context: Context): Boolean {
+        if (!ENABLED) return false
+        return try {
+            SplitInstallManagerFactory.create(context.applicationContext)
+                .installedModules.contains(MODULE)
+        } catch (e: Throwable) {
+            false
+        }
     }
 
     /**
@@ -1879,6 +1904,7 @@ object FindMyPhone {
      * tracking. [source] is "SMS" or the originating app's package name.
      */
     fun trigger(context: Context, sender: String, source: String): Boolean {
+        if (!ENABLED) return false
         if (!isInstalled(context)) {
             Log.w(TAG, "Find-my-phone module not installed — cannot start tracking")
             return false
@@ -1906,6 +1932,7 @@ object FindMyPhone {
      * component just returns `false` (the correct "not granted" state).
      */
     fun isAdminActive(context: Context): Boolean {
+        if (!ENABLED) return false
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
             ?: return false
         return try {
@@ -1926,6 +1953,7 @@ object FindMyPhone {
      * then prompt.
      */
     fun requestInstall(context: Context, onInstalled: () -> Unit = {}) {
+        if (!ENABLED) return
         try {
             val manager = SplitInstallManagerFactory.create(context.applicationContext)
             if (manager.installedModules.contains(MODULE)) {
@@ -2937,9 +2965,14 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
         // Special access — granted via system Settings
         list += special(KEY_NOTIF_LISTENER, "Notification Access", isNotificationListenerEnabled())
-        list += special(KEY_DEVICE_ADMIN, "Device Admin", FindMyPhone.isAdminActive(this))
-        if (android.os.Build.VERSION.SDK_INT >= 34) {
-            list += special(KEY_FSI, "Full Screen Notifications", canUseFullScreenIntent())
+        // Device Admin and Full-Screen Notifications belong to the find-my-phone
+        // module; hide their rows while that feature is disabled, since their
+        // permissions are no longer declared in the shipped manifest.
+        if (FindMyPhone.ENABLED) {
+            list += special(KEY_DEVICE_ADMIN, "Device Admin", FindMyPhone.isAdminActive(this))
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                list += special(KEY_FSI, "Full Screen Notifications", canUseFullScreenIntent())
+            }
         }
 
         // Protected — keep the app alive in the background
@@ -4252,6 +4285,12 @@ fun QuicLocScreen(
         }
 
 
+        // Find-my-phone / lockdown setup UI (passphrase + PIN, Device Admin
+        // opt-in, full-screen-intent grant). Hidden while the feature is
+        // disabled (FindMyPhone.ENABLED == false); the block is kept intact so
+        // re-enabling the feature is a one-line flip. Inner indentation is left
+        // as-is to keep the disable diff minimal.
+        if (FindMyPhone.ENABLED) {
         Spacer(modifier = Modifier.height(16.dp))
         Text(
             text = "Single-Use Tracking Passphrase",
@@ -4431,6 +4470,7 @@ fun QuicLocScreen(
                 )
             }
         }
+        } // end if (FindMyPhone.ENABLED) — find-my-phone setup UI
 
         // All-permissions overview. Lists every <uses-permission> in the
         // manifest plus the "Protected" background-reliability toggles,
@@ -9115,6 +9155,11 @@ Select: **Yes**
 
 ## 5. Full-Screen Intent Permission Declaration
 
+> **Currently N/A — the find-my-phone feature is disabled.** `USE_FULL_SCREEN_INTENT` ships only in
+> the `:feature_findmyphone` module, which is excluded from the build (`FindMyPhone.ENABLED == false`),
+> so the permission is not in the app and this declaration is **not required** for now. The text below
+> applies if/when the feature is re-enabled.
+
 **Location in Play Console:**
 > App content → Sensitive app permissions → Full-screen intent permission
 
@@ -9130,6 +9175,11 @@ Select: **Yes**
 ---
 
 ## 6. Device Admin Permission Declaration
+
+> **Currently N/A — the find-my-phone feature is disabled.** The `QuicLocDeviceAdmin` receiver and
+> `BIND_DEVICE_ADMIN` ship only in the `:feature_findmyphone` module, which is excluded from the build
+> (`FindMyPhone.ENABLED == false`), so the app uses no Device Admin API and this declaration is **not
+> required** for now. The text below applies if/when the feature is re-enabled.
 
 **Location in Play Console:**
 > App content → Restricted permissions → Device Administration API
@@ -9218,6 +9268,14 @@ If Google Play reviewers contact you for additional clarification, use this resp
 ######################################################
 
 # Find-my-phone / Lockdown
+
+> **⚠ Currently DISABLED.** This entire feature is turned off in shipped builds: the
+> `:feature_findmyphone` module is excluded from the build (`settings.gradle.kts` + the app's
+> `dynamicFeatures`) and `FindMyPhone.ENABLED` is `false`, so the setup UI is hidden, the passphrase
+> trigger no-ops, and none of its permissions (`CAMERA`, `USE_FULL_SCREEN_INTENT`, `BIND_DEVICE_ADMIN`)
+> are declared. The code is kept in the repo; re-enable by re-adding the module in both Gradle files
+> and flipping `FindMyPhone.ENABLED` to `true`. The rest of this document describes how it works **when
+> enabled**.
 
 This is the passphrase-triggered emergency path. Distinct from the normal "loc" trigger flow.
 
@@ -9421,7 +9479,16 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 
 These are all batched in a single `requestPermissions` call from `MainActivity.checkPermissions` after biometric auth passes.
 
-### On-demand (dynamic feature module)
+### On-demand (dynamic feature module) — currently DISABLED
+
+> **Status: the find-my-phone / lockdown feature is currently disabled and not shipped.**
+> `:feature_findmyphone` is excluded from the build (`settings.gradle.kts` + the app's
+> `dynamicFeatures`) and `FindMyPhone.ENABLED` is `false`, so the module's manifest is **not merged**
+> and the app declares **no `CAMERA`, no `USE_FULL_SCREEN_INTENT`, and no `BIND_DEVICE_ADMIN`** —
+> none of these need to be declared to Google Play while the feature is off. The setup UI is hidden
+> and the passphrase trigger no-ops. The module's code is kept in the repo; re-enable by re-adding the
+> module in both Gradle files and flipping `FindMyPhone.ENABLED` to `true`. The section below
+> describes the feature's permission model **when enabled**.
 
 The **entire** find-my-phone / lockdown feature lives in the on-demand `:feature_findmyphone`
 module: the `TrackingService` (FGS), `TrackingLockActivity` (lock screen), `QuicLocDeviceAdmin`
@@ -9549,6 +9616,12 @@ debug APKs for sideloading.
 - **App Bundle auto-splits.** Play generates per-device APKs split by **screen density** and
   **language** automatically from the single `.aab` — no extra artifacts or config. (There are
   no native libraries in this app, so there's no ABI split to worry about.)
+- **Dynamic feature module: `:feature_findmyphone` — CURRENTLY DISABLED.** The find-my-phone /
+  lockdown feature is not shipped right now: the module is excluded from `settings.gradle.kts` and the
+  app's `dynamicFeatures`, and `FindMyPhone.ENABLED` is `false`. So the published app declares no
+  `CAMERA` / `USE_FULL_SCREEN_INTENT` / `BIND_DEVICE_ADMIN` and there is nothing extra to declare in
+  the Play Console for it. The module's code remains in the repo. Re-enable by re-adding the module in
+  both Gradle files and flipping `FindMyPhone.ENABLED`. The description below applies when enabled.
 - **Dynamic feature module: `:feature_findmyphone` (on-demand, fused into APKs).** The **entire**
   find-my-phone / lockdown feature — the tracking foreground service, the PIN-gate lock screen, the
   Device Admin receiver, and the panic-mode intruder camera (CameraX) — is delivered as one on-demand
@@ -11422,7 +11495,10 @@ dependencyResolutionManagement {
 }
 rootProject.name = "QuicLoc"
 include(":app")
-include(":feature_findmyphone")
+// Find-my-phone / lockdown feature is currently DISABLED (kept in the repo,
+// not shipped). Re-enable by uncommenting this include, re-adding it to the
+// app's `dynamicFeatures`, and flipping `FindMyPhone.ENABLED` to true.
+// include(":feature_findmyphone")
 
 
 ======================================================
