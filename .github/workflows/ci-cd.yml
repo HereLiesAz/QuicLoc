@@ -35,6 +35,14 @@ jobs:
       - name: Build Release APK
         run: ./gradlew assembleRelease
         # Assuming you have set up signing or this is an unsigned release build
+      - name: Build Release Bundle (AAB)
+        run: ./gradlew bundleRelease
+        # Unsigned in PR CI (no keystore secrets — the signing config only
+        # attaches when keystore material is present). This exercises
+        # :app:packageReleaseBundle / bundletool, so dynamic-feature
+        # bundle-merge conflicts (e.g. clashing META-INF/*.version metadata
+        # between :app and :feature_findmyphone) are caught here instead of
+        # only surfacing later in the Release to Play workflow.
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
