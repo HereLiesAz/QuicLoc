@@ -72,6 +72,11 @@ Select: **Yes**
 
 ## 5. Full-Screen Intent Permission Declaration
 
+> **Currently N/A — the find-my-phone feature is disabled.** `USE_FULL_SCREEN_INTENT` ships only in
+> the `:feature_findmyphone` module, which is excluded from the build (`FindMyPhone.ENABLED == false`),
+> so the permission is not in the app and this declaration is **not required** for now. The text below
+> applies if/when the feature is re-enabled.
+
 **Location in Play Console:**
 > App content → Sensitive app permissions → Full-screen intent permission
 
@@ -87,6 +92,11 @@ Select: **Yes**
 ---
 
 ## 6. Device Admin Permission Declaration
+
+> **Currently N/A — the find-my-phone feature is disabled.** The `QuicLocDeviceAdmin` receiver and
+> `BIND_DEVICE_ADMIN` ship only in the `:feature_findmyphone` module, which is excluded from the build
+> (`FindMyPhone.ENABLED == false`), so the app uses no Device Admin API and this declaration is **not
+> required** for now. The text below applies if/when the feature is re-enabled.
 
 **Location in Play Console:**
 > App content → Restricted permissions → Device Administration API

@@ -17,6 +17,12 @@ debug APKs for sideloading.
 - **App Bundle auto-splits.** Play generates per-device APKs split by **screen density** and
   **language** automatically from the single `.aab` — no extra artifacts or config. (There are
   no native libraries in this app, so there's no ABI split to worry about.)
+- **Dynamic feature module: `:feature_findmyphone` — CURRENTLY DISABLED.** The find-my-phone /
+  lockdown feature is not shipped right now: the module is excluded from `settings.gradle.kts` and the
+  app's `dynamicFeatures`, and `FindMyPhone.ENABLED` is `false`. So the published app declares no
+  `CAMERA` / `USE_FULL_SCREEN_INTENT` / `BIND_DEVICE_ADMIN` and there is nothing extra to declare in
+  the Play Console for it. The module's code remains in the repo. Re-enable by re-adding the module in
+  both Gradle files and flipping `FindMyPhone.ENABLED`. The description below applies when enabled.
 - **Dynamic feature module: `:feature_findmyphone` (on-demand, fused into APKs).** The **entire**
   find-my-phone / lockdown feature — the tracking foreground service, the PIN-gate lock screen, the
   Device Admin receiver, and the panic-mode intruder camera (CameraX) — is delivered as one on-demand
