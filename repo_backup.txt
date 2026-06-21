@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    86a380235f4dd6641bee92a42bf753e2d08c9a18
-  Timestamp: 2026-06-21 20:41:45 UTC
+  Branch:    claude/debug-loc-messaging-u0p51l
+  Commit:    7c5d254acdc610d0c1b827f819cf8f07e6fa1bb4
+  Timestamp: 2026-06-21 20:54:00 UTC
 ======================================================
 
 
@@ -352,6 +352,82 @@ jobs:
 
       - name: Read application id
         run: echo "APP_ID=$(./gradlew -q :app:printApplicationId)" >> "$GITHUB_ENV"
+
+      # Preflight the Google Play Developer API before the upload step, because
+      # r0adkll/upload-google-play reports every API failure as a useless
+      # "Unknown error occurred." This authenticates with the service account
+      # and opens an edit (the same first call the upload makes), surfacing the
+      # real HTTP status + Google error message so failures are diagnosable:
+      #   401 -> bad/blocked credentials
+      #   403 -> service account lacks permission, or the Play Developer API
+      #          isn't enabled for its project
+      #   404 -> app/package not found, i.e. no manual first release exists yet
+      # Self-contained (jq + openssl + curl, all on ubuntu-latest); never prints
+      # the private key or access token. Only runs when actually publishing.
+      - name: Preflight Google Play API access
+        if: ${{ inputs.publish }}
+        env:
+          SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVICE_ACCOUNT_JSON:-}" ]; then
+            echo "::error::PLAY_SERVICE_ACCOUNT_JSON secret is empty or unset — set it to the full service-account JSON."
+            exit 1
+          fi
+          sa="$RUNNER_TEMP/sa.json"
+          printf '%s' "$SERVICE_ACCOUNT_JSON" > "$sa"
+          if ! jq -e . "$sa" >/dev/null 2>&1; then
+            echo "::error::PLAY_SERVICE_ACCOUNT_JSON is not valid JSON."
+            exit 1
+          fi
+          client_email=$(jq -r '.client_email // empty' "$sa")
+          token_uri=$(jq -r '.token_uri // "https://oauth2.googleapis.com/token"' "$sa")
+          if [ -z "$client_email" ]; then
+            echo "::error::Service-account JSON is missing client_email — the secret is malformed."
+            exit 1
+          fi
+          echo "Service account: $client_email"
+          echo "Package:         $APP_ID"
+
+          # Mint an RS256-signed JWT and exchange it for an androidpublisher access token.
+          b64url() { openssl base64 -e -A | tr '+/' '-_' | tr -d '='; }
+          now=$(date +%s); exp=$((now + 300))
+          header_b64=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)
+          claim_b64=$(jq -nc --arg iss "$client_email" --arg aud "$token_uri" \
+            --argjson iat "$now" --argjson exp "$exp" \
+            '{iss:$iss, scope:"https://www.googleapis.com/auth/androidpublisher", aud:$aud, iat:$iat, exp:$exp}' \
+            | b64url)
+          jq -r '.private_key' "$sa" > "$RUNNER_TEMP/key.pem"
+          sig=$(printf '%s' "$header_b64.$claim_b64" | openssl dgst -sha256 -sign "$RUNNER_TEMP/key.pem" | b64url)
+          jwt="$header_b64.$claim_b64.$sig"
+
+          access_token=$(curl -s -X POST "$token_uri" \
+            --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
+            --data-urlencode "assertion=$jwt" | jq -r '.access_token // empty')
+          if [ -z "$access_token" ]; then
+            echo "::error::Could not obtain an access token — the service-account credentials were rejected by $token_uri."
+            exit 1
+          fi
+
+          # Open (then abandon) an edit — exactly the first call the upload makes.
+          resp="$RUNNER_TEMP/edit.json"
+          http=$(curl -s -o "$resp" -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $access_token" \
+            "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}/edits")
+          echo "Play API edits.insert -> HTTP $http"
+          echo "Response body:"; cat "$resp"; echo
+          if [ "$http" = "200" ] || [ "$http" = "201" ]; then
+            edit_id=$(jq -r '.id // empty' "$resp")
+            if [ -n "$edit_id" ]; then
+              curl -s -o /dev/null -X DELETE \
+                -H "Authorization: Bearer $access_token" \
+                "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}/edits/${edit_id}" || true
+            fi
+            echo "Play API access OK — proceeding to upload."
+          else
+            echo "::error::Play Developer API rejected the request (HTTP $http). See the response body above for the exact cause (403=permission/API not enabled, 404=app or first release missing, 401=bad credentials)."
+            exit 1
+          fi
 
       - name: Build signed release bundle
         env:
