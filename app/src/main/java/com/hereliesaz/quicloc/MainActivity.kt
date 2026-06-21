@@ -1288,6 +1288,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
      * the in-UI card stays available for the user to come back to.
      */
     private fun checkFullScreenIntentPermission(forceShow: Boolean = false) {
+        // USE_FULL_SCREEN_INTENT ships only in the find-my-phone module; when
+        // that feature is disabled the permission isn't declared, so don't prompt
+        // for (or route the user to a Settings toggle for) a permission the app
+        // doesn't have. This also covers the first-launch onboarding chain
+        // (checkNotificationListenerPermission -> checkFullScreenIntentPermission).
+        if (!FindMyPhone.ENABLED) return
         if (canUseFullScreenIntent()) return
         if (!forceShow && AppSettings.wasFullScreenIntentPrompted(this)) return
         pendingRationaleState.value = RationaleDialogState(
