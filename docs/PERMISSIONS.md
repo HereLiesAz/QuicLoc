@@ -32,7 +32,16 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 
 These are all batched in a single `requestPermissions` call from `MainActivity.checkPermissions` after biometric auth passes.
 
-### On-demand (dynamic feature module)
+### On-demand (dynamic feature module) — currently DISABLED
+
+> **Status: the find-my-phone / lockdown feature is currently disabled and not shipped.**
+> `:feature_findmyphone` is excluded from the build (`settings.gradle.kts` + the app's
+> `dynamicFeatures`) and `FindMyPhone.ENABLED` is `false`, so the module's manifest is **not merged**
+> and the app declares **no `CAMERA`, no `USE_FULL_SCREEN_INTENT`, and no `BIND_DEVICE_ADMIN`** —
+> none of these need to be declared to Google Play while the feature is off. The setup UI is hidden
+> and the passphrase trigger no-ops. The module's code is kept in the repo; re-enable by re-adding the
+> module in both Gradle files and flipping `FindMyPhone.ENABLED` to `true`. The section below
+> describes the feature's permission model **when enabled**.
 
 The **entire** find-my-phone / lockdown feature lives in the on-demand `:feature_findmyphone`
 module: the `TrackingService` (FGS), `TrackingLockActivity` (lock screen), `QuicLocDeviceAdmin`

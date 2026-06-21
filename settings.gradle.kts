@@ -17,4 +17,7 @@ dependencyResolutionManagement {
 }
 rootProject.name = "QuicLoc"
 include(":app")
-include(":feature_findmyphone")
+// Find-my-phone / lockdown feature is currently DISABLED (kept in the repo,
+// not shipped). Re-enable by uncommenting this include, re-adding it to the
+// app's `dynamicFeatures`, and flipping `FindMyPhone.ENABLED` to true.
+// include(":feature_findmyphone")

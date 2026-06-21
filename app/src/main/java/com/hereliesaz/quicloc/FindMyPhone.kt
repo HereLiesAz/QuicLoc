@@ -28,6 +28,23 @@ import com.google.android.play.core.splitinstall.model.SplitInstallSessionStatus
  */
 object FindMyPhone {
 
+    /**
+     * Master kill switch for the entire find-my-phone / lockdown feature.
+     *
+     * When `false` (current state), every entry point below short-circuits, so
+     * the base never tries to install, trigger, or query the module — the
+     * passphrase trigger no-ops and the setup UI is hidden (see MainActivity).
+     *
+     * This flag is the *runtime* half of disabling the feature; the *packaging*
+     * half is that `:feature_findmyphone` is removed from `settings.gradle.kts`
+     * and the app's `dynamicFeatures`, so the module's manifest (CAMERA,
+     * USE_FULL_SCREEN_INTENT, the Device Admin receiver, the tracking service)
+     * is no longer merged into the shipped app and those permissions aren't
+     * declared. To re-enable find-my-phone, flip this to `true` AND re-add the
+     * module in both Gradle files. The module's code is kept intact in the repo.
+     */
+    const val ENABLED = false
+
     const val MODULE = "feature_findmyphone"
 
     private const val PKG = "com.hereliesaz.quicloc"
@@ -42,11 +59,14 @@ object FindMyPhone {
     const val EXTRA_SOURCE = "source"
 
     /** Whether the find-my-phone split is installed and its code is available. */
-    fun isInstalled(context: Context): Boolean = try {
-        SplitInstallManagerFactory.create(context.applicationContext)
-            .installedModules.contains(MODULE)
-    } catch (e: Throwable) {
-        false
+    fun isInstalled(context: Context): Boolean {
+        if (!ENABLED) return false
+        return try {
+            SplitInstallManagerFactory.create(context.applicationContext)
+                .installedModules.contains(MODULE)
+        } catch (e: Throwable) {
+            false
+        }
     }
 
     /**
@@ -58,6 +78,7 @@ object FindMyPhone {
      * tracking. [source] is "SMS" or the originating app's package name.
      */
     fun trigger(context: Context, sender: String, source: String): Boolean {
+        if (!ENABLED) return false
         if (!isInstalled(context)) {
             Log.w(TAG, "Find-my-phone module not installed — cannot start tracking")
             return false
@@ -85,6 +106,7 @@ object FindMyPhone {
      * component just returns `false` (the correct "not granted" state).
      */
     fun isAdminActive(context: Context): Boolean {
+        if (!ENABLED) return false
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
             ?: return false
         return try {
@@ -105,6 +127,7 @@ object FindMyPhone {
      * then prompt.
      */
     fun requestInstall(context: Context, onInstalled: () -> Unit = {}) {
+        if (!ENABLED) return
         try {
             val manager = SplitInstallManagerFactory.create(context.applicationContext)
             if (manager.installedModules.contains(MODULE)) {

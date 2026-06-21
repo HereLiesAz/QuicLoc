@@ -1,5 +1,13 @@
 # Find-my-phone / Lockdown
 
+> **⚠ Currently DISABLED.** This entire feature is turned off in shipped builds: the
+> `:feature_findmyphone` module is excluded from the build (`settings.gradle.kts` + the app's
+> `dynamicFeatures`) and `FindMyPhone.ENABLED` is `false`, so the setup UI is hidden, the passphrase
+> trigger no-ops, and none of its permissions (`CAMERA`, `USE_FULL_SCREEN_INTENT`, `BIND_DEVICE_ADMIN`)
+> are declared. The code is kept in the repo; re-enable by re-adding the module in both Gradle files
+> and flipping `FindMyPhone.ENABLED` to `true`. The rest of this document describes how it works **when
+> enabled**.
+
 This is the passphrase-triggered emergency path. Distinct from the normal "loc" trigger flow.
 
 > **Module boundary.** The entire lockdown feature — `TrackingService`, `TrackingLockActivity`,

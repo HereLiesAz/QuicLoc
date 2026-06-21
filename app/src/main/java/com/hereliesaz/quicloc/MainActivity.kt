@@ -343,9 +343,14 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
         // Special access — granted via system Settings
         list += special(KEY_NOTIF_LISTENER, "Notification Access", isNotificationListenerEnabled())
-        list += special(KEY_DEVICE_ADMIN, "Device Admin", FindMyPhone.isAdminActive(this))
-        if (android.os.Build.VERSION.SDK_INT >= 34) {
-            list += special(KEY_FSI, "Full Screen Notifications", canUseFullScreenIntent())
+        // Device Admin and Full-Screen Notifications belong to the find-my-phone
+        // module; hide their rows while that feature is disabled, since their
+        // permissions are no longer declared in the shipped manifest.
+        if (FindMyPhone.ENABLED) {
+            list += special(KEY_DEVICE_ADMIN, "Device Admin", FindMyPhone.isAdminActive(this))
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                list += special(KEY_FSI, "Full Screen Notifications", canUseFullScreenIntent())
+            }
         }
 
         // Protected — keep the app alive in the background
@@ -1283,6 +1288,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
      * the in-UI card stays available for the user to come back to.
      */
     private fun checkFullScreenIntentPermission(forceShow: Boolean = false) {
+        // USE_FULL_SCREEN_INTENT ships only in the find-my-phone module; when
+        // that feature is disabled the permission isn't declared, so don't prompt
+        // for (or route the user to a Settings toggle for) a permission the app
+        // doesn't have. This also covers the first-launch onboarding chain
+        // (checkNotificationListenerPermission -> checkFullScreenIntentPermission).
+        if (!FindMyPhone.ENABLED) return
         if (canUseFullScreenIntent()) return
         if (!forceShow && AppSettings.wasFullScreenIntentPrompted(this)) return
         pendingRationaleState.value = RationaleDialogState(
@@ -1658,6 +1669,12 @@ fun QuicLocScreen(
         }
 
 
+        // Find-my-phone / lockdown setup UI (passphrase + PIN, Device Admin
+        // opt-in, full-screen-intent grant). Hidden while the feature is
+        // disabled (FindMyPhone.ENABLED == false); the block is kept intact so
+        // re-enabling the feature is a one-line flip. Inner indentation is left
+        // as-is to keep the disable diff minimal.
+        if (FindMyPhone.ENABLED) {
         Spacer(modifier = Modifier.height(16.dp))
         Text(
             text = "Single-Use Tracking Passphrase",
@@ -1837,6 +1854,7 @@ fun QuicLocScreen(
                 )
             }
         }
+        } // end if (FindMyPhone.ENABLED) — find-my-phone setup UI
 
         // All-permissions overview. Lists every <uses-permission> in the
         // manifest plus the "Protected" background-reliability toggles,
