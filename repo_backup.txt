@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    4c0e4645bfca4318a0e4636de1e004c1238aa5c6
-  Timestamp: 2026-06-20 14:36:15 UTC
+  Branch:    claude/debug-loc-messaging-u0p51l
+  Commit:    91968040d2a73365a6d0900c570f9042907176fa
+  Timestamp: 2026-06-21 20:26:53 UTC
 ======================================================
 
 
@@ -253,6 +253,14 @@ jobs:
       - name: Build Release APK
         run: ./gradlew assembleRelease
         # Assuming you have set up signing or this is an unsigned release build
+      - name: Build Release Bundle (AAB)
+        run: ./gradlew bundleRelease
+        # Unsigned in PR CI (no keystore secrets — the signing config only
+        # attaches when keystore material is present). This exercises
+        # :app:packageReleaseBundle / bundletool, so dynamic-feature
+        # bundle-merge conflicts (e.g. clashing META-INF/*.version metadata
+        # between :app and :feature_findmyphone) are caught here instead of
+        # only surfacing later in the Release to Play workflow.
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -362,7 +370,7 @@ jobs:
 
       - name: Publish to Google Play
         if: ${{ inputs.publish }}
-        uses: r0adkll/upload-google-play@v1
+        uses: r0adkll/upload-google-play@v1.1.3
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: ${{ env.APP_ID }}
