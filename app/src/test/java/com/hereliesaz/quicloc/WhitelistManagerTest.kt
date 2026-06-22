@@ -153,6 +153,25 @@ class WhitelistManagerTest {
     }
 
     @Test
+    fun `isWhitelistedByName ignores a leading at-sign on either side`() {
+        // Stored without @, sender shows the handle with @ (and vice versa).
+        whitelist.addNumber("hereliesaz")
+        assertTrue(whitelist.isWhitelistedByName("@hereliesaz"))
+        assertTrue(whitelist.isWhitelistedByName("@HereLiesAz"))
+
+        whitelist.addNumber("@dril")
+        assertTrue(whitelist.isWhitelistedByName("dril"))
+        assertTrue(whitelist.isWhitelistedByName("@DRIL"))
+    }
+
+    @Test
+    fun `isWhitelistedByName collapses whitespace and trims handles`() {
+        whitelist.addNumber("@john doe")
+        assertTrue(whitelist.isWhitelistedByName("  John   Doe "))
+        assertFalse(whitelist.isWhitelistedByName("johndoe"))
+    }
+
+    @Test
     fun `isWhitelistedByName also matches numbers tolerating format`() {
         whitelist.addNumber("+15551234567")
         assertTrue(whitelist.isWhitelistedByName("+15551234567"))

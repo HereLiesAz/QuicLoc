@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    3fe1812223b312ab357541ec567085dc4b2e3796
-  Timestamp: 2026-06-22 03:21:36 UTC
+  Branch:    claude/debug-loc-messaging-u0p51l
+  Commit:    1df6d75e4b8649c3aebdc872d6cbd546581dfca7
+  Timestamp: 2026-06-22 03:26:13 UTC
 ======================================================
 
 
@@ -6915,6 +6915,9 @@ class WhitelistManager(context: Context) {
         private const val KEY_PASSPHRASE = "passphrase"
         private const val KEY_PIN = "pin"
         private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
+
+        // Compiled once and shared, rather than per normalizeName() call.
+        private val WHITESPACE_RUN = Regex("\\s+")
     }
 
     // Held so mutation methods can re-snapshot the PIN-encrypted backup
@@ -7105,17 +7108,20 @@ class WhitelistManager(context: Context) {
      * previous behavior).
      */
     fun isWhitelistedByName(displayName: String): Boolean {
-        val nameLower = displayName.trim().lowercase()
+        val nameNorm = normalizeName(displayName)
+        val cleanIncoming = cleanPhoneNumber(displayName)
         val numbers = getNumbers()
 
         // The user's own number is always allowed (covers a notification that
         // surfaces the raw number).
-        if (matchesMyNumber(cleanPhoneNumber(displayName))) return true
+        if (matchesMyNumber(cleanIncoming)) return true
 
         val directMatch = numbers.any { entry ->
-            val entryLower = entry.trim().lowercase()
-            entryLower == nameLower ||
-                PhoneNumberUtils.compare(cleanPhoneNumber(displayName), cleanPhoneNumber(entry))
+            // Username/handle match is format- and case-insensitive (so "@mom",
+            // "mom", and "Mom" all match), falling back to a phone-number compare
+            // for entries that are numbers.
+            normalizeName(entry) == nameNorm ||
+                PhoneNumberUtils.compare(cleanIncoming, cleanPhoneNumber(entry))
         }
         if (directMatch) return true
 
@@ -7187,6 +7193,18 @@ class WhitelistManager(context: Context) {
     private fun cleanPhoneNumber(number: String): String {
         return number.replace(Regex("[^0-9+]"), "")
     }
+
+    /**
+     * Normalizes a username / display name for case- and format-insensitive
+     * matching of chat/social senders: strips a single leading "@" (so
+     * "@hereliesaz" matches "hereliesaz"), collapses internal whitespace, trims,
+     * and lowercases. Applied to BOTH the stored entry and the incoming sender at
+     * match time, so it works for existing whitelist entries with no migration.
+     * Phone numbers are matched separately via [cleanPhoneNumber] /
+     * [PhoneNumberUtils.compare], so this only governs name matching.
+     */
+    private fun normalizeName(s: String): String =
+        s.trim().removePrefix("@").trim().replace(WHITESPACE_RUN, " ").lowercase()
 
     // -------------------------------------------------------------------------
     // Encryption setup
@@ -8795,6 +8813,25 @@ class WhitelistManagerTest {
         assertTrue(whitelist.isWhitelistedByName("ALICE"))
         assertTrue(whitelist.isWhitelistedByName("Alice"))
         assertFalse(whitelist.isWhitelistedByName("Alyssa"))
+    }
+
+    @Test
+    fun `isWhitelistedByName ignores a leading at-sign on either side`() {
+        // Stored without @, sender shows the handle with @ (and vice versa).
+        whitelist.addNumber("hereliesaz")
+        assertTrue(whitelist.isWhitelistedByName("@hereliesaz"))
+        assertTrue(whitelist.isWhitelistedByName("@HereLiesAz"))
+
+        whitelist.addNumber("@dril")
+        assertTrue(whitelist.isWhitelistedByName("dril"))
+        assertTrue(whitelist.isWhitelistedByName("@DRIL"))
+    }
+
+    @Test
+    fun `isWhitelistedByName collapses whitespace and trims handles`() {
+        whitelist.addNumber("@john doe")
+        assertTrue(whitelist.isWhitelistedByName("  John   Doe "))
+        assertFalse(whitelist.isWhitelistedByName("johndoe"))
     }
 
     @Test
