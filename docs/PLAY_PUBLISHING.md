@@ -86,12 +86,14 @@ debug APKs for sideloading.
 Signing is only attached to the `release` build type when this material is present, so an
 unsigned `assembleRelease` (e.g. a PR build with no secrets) still succeeds.
 
-| `keystore.properties` key | Environment variable        |
-|---------------------------|-----------------------------|
-| `storeFile`               | `QUICLOC_KEYSTORE_FILE`      |
-| `storePassword`           | `QUICLOC_KEYSTORE_PASSWORD`  |
-| `keyAlias`                | `QUICLOC_KEY_ALIAS`          |
-| `keyPassword`             | `QUICLOC_KEY_PASSWORD`       |
+| `keystore.properties` key | Gradle env var (CI sets it) | GitHub secret it comes from (CI) |
+|---------------------------|-----------------------------|----------------------------------|
+| `storeFile`               | `QUICLOC_KEYSTORE_FILE`      | `KEYSTORE_RAW` (base64 → decoded to `upload.jks`) |
+| `storePassword`           | `QUICLOC_KEYSTORE_PASSWORD`  | `KEYSTORE_SECRET`                |
+| `keyAlias`                | `QUICLOC_KEY_ALIAS`          | `KEY_ALIAS`                      |
+| `keyPassword`             | `QUICLOC_KEY_PASSWORD`       | `KEY_SECRET`                     |
+
+The Gradle env-var names are internal to the build; the workflows set them from the GitHub secrets in the third column.
 
 **Local `keystore.properties` template** (repo root — git-ignored, never commit it):
 
@@ -147,18 +149,19 @@ jarsigner -verify -verbose -certs app-release.aab   # or: bundletool validate --
 
 | Secret | Purpose |
 |--------|---------|
-| `UPLOAD_KEYSTORE_BASE64`    | `base64 -w0 upload.jks` — the upload keystore |
-| `UPLOAD_KEYSTORE_PASSWORD`  | keystore password |
-| `UPLOAD_KEY_ALIAS`          | key alias |
-| `UPLOAD_KEY_PASSWORD`       | key password |
+| `KEYSTORE_RAW`              | `base64 -w0 upload.jks` — the upload keystore, base64-encoded |
+| `KEYSTORE_SECRET`           | keystore (store) password |
+| `KEY_ALIAS`                 | key alias |
+| `KEY_SECRET`                | key password |
 | `PLAY_SERVICE_ACCOUNT_JSON` | Google Play service-account JSON (only needed when `publish=true`) |
 
-`base64 -w0 upload.jks | pbcopy` (macOS) or `base64 -w0 upload.jks` (Linux) to get the value.
+`base64 -w0 upload.jks | pbcopy` (macOS) or `base64 -w0 upload.jks` (Linux) to get the `KEYSTORE_RAW` value.
 
 ## One-time maintainer setup
 
 1. **Upload keystore** — generate it (above), keep it safe (losing it complicates updates
-   unless Play App Signing is enabled), and add the four `UPLOAD_*` secrets.
+   unless Play App Signing is enabled), and add the `KEYSTORE_RAW` / `KEYSTORE_SECRET` /
+   `KEY_ALIAS` / `KEY_SECRET` secrets.
 2. **Enable Play App Signing** for the app (recommended) so Google manages the app signing key
    and you only hold the upload key.
 3. **Service account** — in Google Cloud, create a service account; in the **Play Console →
