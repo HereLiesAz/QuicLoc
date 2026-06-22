@@ -175,7 +175,11 @@ class NotificationListener : NotificationListenerService() {
                 add(sender)
                 addAll(whitelist.numbersForName(sender))
             }
-            val hasNumber = candidates.any { c -> c.any(Char::isDigit) }
+            // Base this on the notification's sender identifier itself: when the
+            // sender is a contact *name* (no digits) we can't reliably
+            // number-match it, so the time fallback must apply even if contact
+            // resolution happened to add numbers that didn't match the SMS.
+            val hasNumber = sender.any { it.isDigit() }
             // Suppress if we can tie this notification to a number SmsReceiver
             // already handled. When the notification gives us only a contact name
             // we can't resolve to a number (no READ_CONTACTS), number matching is

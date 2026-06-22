@@ -679,7 +679,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                 val sm = getSystemService(android.telephony.SubscriptionManager::class.java)
                     ?: return ""
-                var subId = android.telephony.SubscriptionManager.getDefaultSmsSubscriptionId()
+                @Suppress("DEPRECATION")
+                var subId = android.telephony.SmsManager.getDefaultSmsSubscriptionId()
                 if (subId == android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
                     subId = android.telephony.SubscriptionManager.getDefaultSubscriptionId()
                 }
