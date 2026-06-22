@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    a6d6e5a818799df4e850500a3c8580060287c12e
-  Timestamp: 2026-06-22 00:42:31 UTC
+  Commit:    07564184b3845e36750cf7db17aaea5f4ea9bec4
+  Timestamp: 2026-06-22 02:12:55 UTC
 ======================================================
 
 
@@ -821,7 +821,7 @@ android {
     defaultConfig {
         applicationId = "com.hereliesaz.quicloc"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 37
         versionCode = finalVersionCode
         versionName = finalVersionName
 
@@ -865,12 +865,12 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
     kotlin {
         compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
         }
     }
     buildFeatures {
@@ -943,7 +943,8 @@ dependencies {
 ######################################################
 
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.SEND_SMS" />
@@ -955,6 +956,7 @@ dependencies {
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" tools:node="remove" />
     <!--
         The ENTIRE find-my-phone / lockdown feature lives in the on-demand
         :feature_findmyphone dynamic feature module: the tracking foreground
@@ -8734,11 +8736,11 @@ class WhitelistManagerTest {
 # FILE: app/version.properties
 ######################################################
 
-#Tue May 19 14:44:33 CDT 2026
+#Sun Jun 21 21:08:55 CDT 2026
 VERSION_A=1
-VERSION_B=2
-VERSION_C=10
-VERSION_D=52
+VERSION_B=3
+VERSION_C=5
+VERSION_D=57
 
 
 ######################################################
@@ -8747,8 +8749,8 @@ VERSION_D=52
 
 plugins {
     id("com.android.application") version "9.2.1" apply false
-    id("org.jetbrains.kotlin.android") version "2.3.21" apply false
-    id("org.jetbrains.kotlin.plugin.compose") version "2.3.21" apply false
+    id("org.jetbrains.kotlin.android") version "2.4.0" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.0" apply false
 }
 
 
@@ -11369,27 +11371,27 @@ android.newDsl=false
 [versions]
 activity-compose = "1.13.0"
 androidSmsmms = "5.2.6"
-composeBom = "2025.01.00"
-androidx-compose-ui = "1.11.1"
-androidx-compose-ui-tooling = "1.11.1"
-androidx-compose-ui-tooling-preview = "1.11.1"
+composeBom = "2026.06.00"
+androidx-compose-ui = "1.11.3"
+androidx-compose-ui-tooling = "1.11.3"
+androidx-compose-ui-tooling-preview = "1.11.3"
 appcompat = "1.7.1"
 biometric = "1.1.0"
 camera = "1.6.1"
 compose-material3 = "1.4.0"
 core-ktx = "1.7.0"
-core-ktx-version = "1.18.0"
+core-ktx-version = "1.19.0"
 espresso-core = "3.7.0"
 junit = "4.13.2"
 junitVersion = "1.3.0"
-lifecycle-viewmodel-compose = "2.10.0"
+lifecycle-viewmodel-compose = "2.11.0"
 material = "1.14.0"
 playServicesLocation = "21.3.0"
 robolectric = "4.16.1"
 security-crypto = "1.1.0"
 concurrent-futures = "1.3.0"
 guava-listenablefuture = "9999.0-empty-to-avoid-conflict-with-guava"
-playServicesAuth = "21.5.1"
+playServicesAuth = "21.6.0"
 playFeatureDelivery = "2.1.0"
 
 [libraries]
