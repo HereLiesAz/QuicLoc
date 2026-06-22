@@ -1560,7 +1560,7 @@ fun QuicLocScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(scrollState)
-            .padding(16.dp)
+            .padding(horizontal = 18.dp, vertical = 20.dp)
     ) {
         // Top-of-settings master toggle. Mirrors the reminder notification.
         Card(
@@ -1600,25 +1600,30 @@ fun QuicLocScreen(
 
         // Opt-in: show a persistent notification that mirrors the master
         // toggle and lets the user flip it without opening the app.
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Show reminder notification",
-                    style = MaterialTheme.typography.bodyLarge
-                )
-                Text(
-                    text = "Persistent notification with a one-tap enable/disable button.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Show reminder notification",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = "Persistent notification with a one-tap enable/disable button.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = reminderNotificationEnabled,
+                    onCheckedChange = onToggleReminderNotification
                 )
             }
-            Switch(
-                checked = reminderNotificationEnabled,
-                onCheckedChange = onToggleReminderNotification
-            )
         }
 
         Text(
@@ -1643,7 +1648,7 @@ fun QuicLocScreen(
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "Your Phone Number",
                     style = MaterialTheme.typography.titleSmall,
@@ -1707,7 +1712,7 @@ fun QuicLocScreen(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         text = "⚠ Notification Access Required",
                         style = MaterialTheme.typography.titleSmall,
@@ -1816,7 +1821,7 @@ fun QuicLocScreen(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         text = "⚠ Real lockdown not enabled",
                         style = MaterialTheme.typography.titleSmall,
@@ -1875,7 +1880,7 @@ fun QuicLocScreen(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         text = "⚠ Full Screen Notifications not enabled",
                         style = MaterialTheme.typography.titleSmall,
@@ -1945,7 +1950,7 @@ fun QuicLocScreen(
                 .clickable { permissionsExpanded = !permissionsExpanded },
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "All Permissions",
                     style = MaterialTheme.typography.titleSmall,
@@ -2075,7 +2080,7 @@ fun QuicLocScreen(
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "Backup & Restore",
                     style = MaterialTheme.typography.titleSmall,
@@ -2120,7 +2125,7 @@ fun QuicLocScreen(
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "Widget Tap Guide:",
                     style = MaterialTheme.typography.titleSmall,
@@ -2488,7 +2493,7 @@ fun DiagnosticsScreen(
                 containerColor = MaterialTheme.colorScheme.secondaryContainer
             )
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "Status",
                     style = MaterialTheme.typography.titleSmall,
@@ -2677,7 +2682,7 @@ fun HistoryScreen(
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "Request History Guide:",
                     style = MaterialTheme.typography.titleSmall,
