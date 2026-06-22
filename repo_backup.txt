@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    fecad16cf1c4b510924240385a3faaa162b8726e
-  Timestamp: 2026-06-22 12:47:06 UTC
+  Branch:    claude/debug-loc-messaging-u0p51l
+  Commit:    98e5026c86135c3f743c3a41d3017491aab69381
+  Timestamp: 2026-06-22 13:57:53 UTC
 ======================================================
 
 
@@ -155,8 +155,9 @@ name: Build and Publish QuicLoc APK
 #     artifact (CI sanity + a quick downloadable build). No release is created.
 #   • workflow_dispatch     -> "Run workflow" button. Builds a SIGNED RELEASE APK
 #     (same keystore secrets as the Play workflow) and publishes it to a GitHub
-#     Release tagged v<versionName>. Requires the UPLOAD_* secrets (see
-#     docs/PLAY_PUBLISHING.md) for the APK to be signed.
+#     Release tagged v<versionName>. Requires the KEYSTORE_RAW / KEYSTORE_SECRET
+#     / KEY_ALIAS / KEY_SECRET secrets (see docs/PLAY_PUBLISHING.md) for the
+#     APK to be signed.
 
 on:
   push:
@@ -203,16 +204,16 @@ jobs:
       - name: Decode upload keystore
         if: github.event_name == 'workflow_dispatch'
         env:
-          KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
-        run: echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+          KEYSTORE_RAW: ${{ secrets.KEYSTORE_RAW }}
+        run: echo "$KEYSTORE_RAW" | base64 --decode > "$RUNNER_TEMP/upload.jks"
 
       - name: Build signed Release APK
         if: github.event_name == 'workflow_dispatch'
         env:
           QUICLOC_KEYSTORE_FILE: ${{ runner.temp }}/upload.jks
-          QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
-          QUICLOC_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
-          QUICLOC_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+          QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_SECRET }}
+          QUICLOC_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          QUICLOC_KEY_PASSWORD: ${{ secrets.KEY_SECRET }}
         run: ./gradlew assembleRelease
 
       # ---- CI path (push / pull_request): DEBUG APK artifact only ----------
@@ -349,10 +350,10 @@ name: Release to Play
 # internal track, as a draft.
 #
 # Required repo secrets (see docs/PLAY_PUBLISHING.md):
-#   UPLOAD_KEYSTORE_BASE64     - base64 of the upload keystore (.jks)
-#   UPLOAD_KEYSTORE_PASSWORD   - keystore password
-#   UPLOAD_KEY_ALIAS           - key alias
-#   UPLOAD_KEY_PASSWORD        - key password
+#   KEYSTORE_RAW               - base64 of the upload keystore (.jks)
+#   KEYSTORE_SECRET            - keystore (store) password
+#   KEY_ALIAS                  - key alias
+#   KEY_SECRET                 - key password
 #   PLAY_SERVICE_ACCOUNT_JSON  - Google Play service-account JSON (publish only)
 
 on:
@@ -395,8 +396,8 @@ jobs:
 
       - name: Decode upload keystore
         env:
-          KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
-        run: echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+          KEYSTORE_RAW: ${{ secrets.KEYSTORE_RAW }}
+        run: echo "$KEYSTORE_RAW" | base64 --decode > "$RUNNER_TEMP/upload.jks"
 
       - name: Read application id
         run: echo "APP_ID=$(./gradlew -q :app:printApplicationId)" >> "$GITHUB_ENV"
@@ -480,9 +481,9 @@ jobs:
       - name: Build signed release bundle
         env:
           QUICLOC_KEYSTORE_FILE: ${{ runner.temp }}/upload.jks
-          QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
-          QUICLOC_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
-          QUICLOC_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+          QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_SECRET }}
+          QUICLOC_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          QUICLOC_KEY_PASSWORD: ${{ secrets.KEY_SECRET }}
         run: ./gradlew bundleRelease
 
       # Read AFTER bundleRelease so it reflects the version.properties value the
@@ -9991,12 +9992,14 @@ debug APKs for sideloading.
 Signing is only attached to the `release` build type when this material is present, so an
 unsigned `assembleRelease` (e.g. a PR build with no secrets) still succeeds.
 
-| `keystore.properties` key | Environment variable        |
-|---------------------------|-----------------------------|
-| `storeFile`               | `QUICLOC_KEYSTORE_FILE`      |
-| `storePassword`           | `QUICLOC_KEYSTORE_PASSWORD`  |
-| `keyAlias`                | `QUICLOC_KEY_ALIAS`          |
-| `keyPassword`             | `QUICLOC_KEY_PASSWORD`       |
+| `keystore.properties` key | Gradle env var (CI sets it) | GitHub secret it comes from (CI) |
+|---------------------------|-----------------------------|----------------------------------|
+| `storeFile`               | `QUICLOC_KEYSTORE_FILE`      | `KEYSTORE_RAW` (base64 → decoded to `upload.jks`) |
+| `storePassword`           | `QUICLOC_KEYSTORE_PASSWORD`  | `KEYSTORE_SECRET`                |
+| `keyAlias`                | `QUICLOC_KEY_ALIAS`          | `KEY_ALIAS`                      |
+| `keyPassword`             | `QUICLOC_KEY_PASSWORD`       | `KEY_SECRET`                     |
+
+The Gradle env-var names are internal to the build; the workflows set them from the GitHub secrets in the third column.
 
 **Local `keystore.properties` template** (repo root — git-ignored, never commit it):
 
@@ -10052,18 +10055,19 @@ jarsigner -verify -verbose -certs app-release.aab   # or: bundletool validate --
 
 | Secret | Purpose |
 |--------|---------|
-| `UPLOAD_KEYSTORE_BASE64`    | `base64 -w0 upload.jks` — the upload keystore |
-| `UPLOAD_KEYSTORE_PASSWORD`  | keystore password |
-| `UPLOAD_KEY_ALIAS`          | key alias |
-| `UPLOAD_KEY_PASSWORD`       | key password |
+| `KEYSTORE_RAW`              | `base64 -w0 upload.jks` — the upload keystore, base64-encoded |
+| `KEYSTORE_SECRET`           | keystore (store) password |
+| `KEY_ALIAS`                 | key alias |
+| `KEY_SECRET`                | key password |
 | `PLAY_SERVICE_ACCOUNT_JSON` | Google Play service-account JSON (only needed when `publish=true`) |
 
-`base64 -w0 upload.jks | pbcopy` (macOS) or `base64 -w0 upload.jks` (Linux) to get the value.
+`base64 -w0 upload.jks | pbcopy` (macOS) or `base64 -w0 upload.jks` (Linux) to get the `KEYSTORE_RAW` value.
 
 ## One-time maintainer setup
 
 1. **Upload keystore** — generate it (above), keep it safe (losing it complicates updates
-   unless Play App Signing is enabled), and add the four `UPLOAD_*` secrets.
+   unless Play App Signing is enabled), and add the `KEYSTORE_RAW` / `KEYSTORE_SECRET` /
+   `KEY_ALIAS` / `KEY_SECRET` secrets.
 2. **Enable Play App Signing** for the app (recommended) so Google manages the app signing key
    and you only hold the upload key.
 3. **Service account** — in Google Cloud, create a service account; in the **Play Console →
