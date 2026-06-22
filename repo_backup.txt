@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    8e1e3d078d6dd99b18c4a1b631ef9c7a54cf6df5
-  Timestamp: 2026-06-21 22:45:26 UTC
+  Branch:    claude/debug-loc-messaging-u0p51l
+  Commit:    307120fc3695e919effe721dec9df880b12d43d2
+  Timestamp: 2026-06-22 00:41:32 UTC
 ======================================================
 
 
@@ -150,15 +150,33 @@ jobs:
 
 name: Build and Publish QuicLoc APK
 
+# Two modes:
+#   • push / pull_request  -> build a DEBUG APK and upload it as a workflow
+#     artifact (CI sanity + a quick downloadable build). No release is created.
+#   • workflow_dispatch     -> "Run workflow" button. Builds a SIGNED RELEASE APK
+#     (same keystore secrets as the Play workflow) and publishes it to a GitHub
+#     Release tagged v<versionName>. Requires the UPLOAD_* secrets (see
+#     docs/PLAY_PUBLISHING.md) for the APK to be signed.
+
 on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: "Mark the GitHub Release as a pre-release"
+        type: boolean
+        default: false
+
+# Needed by softprops/action-gh-release to create the release. The default
+# GITHUB_TOKEN is read-only on many repos, which is why publishing a release
+# could fail with a 403 before.
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -168,9 +186,11 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so versionCode = commit count is correct
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -179,37 +199,69 @@ jobs:
       - name: Grant Execute Permission to Gradle Wrapper
         run: chmod +x gradlew
 
+      - name: Compute versionCode from commit count
+        run: echo "VERSION_BUILD=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+
+      # ---- Manual publish path: signed RELEASE APK -------------------------
+      - name: Decode upload keystore
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+        run: echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+
+      - name: Build signed Release APK
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          QUICLOC_KEYSTORE_FILE: ${{ runner.temp }}/upload.jks
+          QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
+          QUICLOC_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
+          QUICLOC_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease -PversionBuild=${{ env.VERSION_BUILD }}
+
+      # ---- CI path (push / pull_request): DEBUG APK artifact only ----------
       - name: Build Debug APK
-        run: ./gradlew assembleDebug
+        if: github.event_name != 'workflow_dispatch'
+        run: ./gradlew assembleDebug -PversionBuild=${{ env.VERSION_BUILD }}
 
       - name: Get App Version
-        id: version
-        run: |
-          VERSION_NAME=$(./gradlew -q :app:printVersionName)
-          echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_ENV
+        run: echo "VERSION_NAME=$(./gradlew -q :app:printVersionName -PversionBuild=${{ env.VERSION_BUILD }})" >> "$GITHUB_ENV"
 
-      - name: Rename APK
+      - name: Locate & rename APK
         run: |
-          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Signed -> app-release.apk; unsigned fallback -> app-release-unsigned.apk
+            SRC=$(find app/build/outputs/apk/release -name "*.apk" | head -n1)
+          else
+            SRC=app/build/outputs/apk/debug/app-debug.apk
+          fi
+          if [ -z "$SRC" ] || [ ! -f "$SRC" ]; then
+            echo "::error::No APK found to publish ($SRC)"; exit 1
+          fi
+          OUT="app/build/outputs/QuicLoc-v${VERSION_NAME}.apk"
+          mv "$SRC" "$OUT"
+          echo "APK_PATH=$OUT" >> "$GITHUB_ENV"
+
       - name: Sanitize branch name
         run: |
           SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
-          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
+          echo "SAFE_BRANCH=$SAFE_BRANCH" >> "$GITHUB_ENV"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: quicloc-apk-${{ env.SAFE_BRANCH }}-${{ github.sha }}
-          path: app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
+          path: ${{ env.APK_PATH }}
+          if-no-files-found: error
 
-
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v1
+      - name: Publish GitHub Release (signed APK)
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/debug/QuicLoc-v${{ env.VERSION_NAME }}.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: v${{ env.VERSION_NAME }}
+          name: QuicLoc v${{ env.VERSION_NAME }}
+          files: ${{ env.APK_PATH }}
+          prerelease: ${{ inputs.prerelease }}
+          fail_on_unmatched_files: true
 
 
 ######################################################
