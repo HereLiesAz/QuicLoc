@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    claude/debug-loc-messaging-u0p51l
-  Commit:    a032ed027c9e4c8582d5ae4dccd07b4805f8201f
-  Timestamp: 2026-06-22 03:11:18 UTC
+  Commit:    38cc1489d493dd17c745235f01fe78e373240a08
+  Timestamp: 2026-06-22 03:13:32 UTC
 ======================================================
 
 
@@ -3372,7 +3372,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
      * carrier didn't provision the number on the SIM (common) — callers fall back
      * to the Phone Number Hint sheet or manual entry.
      */
-    @SuppressLint("MissingPermission", "HardwareIds")
+    @android.annotation.SuppressLint("MissingPermission", "HardwareIds")
     private fun readSimPhoneNumber(): String {
         return try {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
