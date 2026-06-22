@@ -43,6 +43,9 @@ class WhitelistManager(context: Context) {
         private const val KEY_PASSPHRASE = "passphrase"
         private const val KEY_PIN = "pin"
         private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
+
+        // Compiled once and shared, rather than per normalizeName() call.
+        private val WHITESPACE_RUN = Regex("\\s+")
     }
 
     // Held so mutation methods can re-snapshot the PIN-encrypted backup
@@ -234,18 +237,19 @@ class WhitelistManager(context: Context) {
      */
     fun isWhitelistedByName(displayName: String): Boolean {
         val nameNorm = normalizeName(displayName)
+        val cleanIncoming = cleanPhoneNumber(displayName)
         val numbers = getNumbers()
 
         // The user's own number is always allowed (covers a notification that
         // surfaces the raw number).
-        if (matchesMyNumber(cleanPhoneNumber(displayName))) return true
+        if (matchesMyNumber(cleanIncoming)) return true
 
         val directMatch = numbers.any { entry ->
             // Username/handle match is format- and case-insensitive (so "@mom",
             // "mom", and "Mom" all match), falling back to a phone-number compare
             // for entries that are numbers.
             normalizeName(entry) == nameNorm ||
-                PhoneNumberUtils.compare(cleanPhoneNumber(displayName), cleanPhoneNumber(entry))
+                PhoneNumberUtils.compare(cleanIncoming, cleanPhoneNumber(entry))
         }
         if (directMatch) return true
 
@@ -328,7 +332,7 @@ class WhitelistManager(context: Context) {
      * [PhoneNumberUtils.compare], so this only governs name matching.
      */
     private fun normalizeName(s: String): String =
-        s.trim().removePrefix("@").trim().replace(Regex("\\s+"), " ").lowercase()
+        s.trim().removePrefix("@").trim().replace(WHITESPACE_RUN, " ").lowercase()
 
     // -------------------------------------------------------------------------
     // Encryption setup
