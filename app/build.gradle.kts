@@ -34,39 +34,19 @@ android {
     var vC = versionProps["VERSION_C"].toString().toInt()
     var vD = versionProps["VERSION_D"].toString().toInt()
 
-    // CI passes -PversionBuild=<n> (e.g. `git rev-list --count HEAD`) to force a
-    // deterministic, strictly-increasing versionCode for Play uploads. When the
-    // override is present we do NOT touch version.properties, so the build stays
-    // reproducible and the working tree clean. With no override, keep the local
-    // auto-increment behavior unchanged.
-    val versionOverride = (project.findProperty("versionBuild") as String?)?.toIntOrNull()
-
-    // Google Play already has versionCode 255 (from an early/manual upload), but
-    // the commit-count scheme (`git rev-list --count HEAD`, currently ~193) was
-    // below it, so automated uploads were rejected with "Version code N has
-    // already been used." Add a fixed base offset so the uploaded versionCode is
-    // always comfortably above any prior code and still strictly increases with
-    // each commit. The one-time jump (e.g. 193 -> 1193) is fine — Play only
-    // requires versionCode to increase, gaps are allowed. versionName keeps the
-    // raw build number for readability.
-    val versionCodeOffset = 1000
-
-    val finalVersionCode: Int
-    val finalVersionName: String
-    if (versionOverride != null) {
-        finalVersionCode = versionOverride + versionCodeOffset
-        finalVersionName = "${vA}.${vB}.${vC}.${versionOverride}"
-    } else {
-        if (isBuilding) {
-            vD += 1
-            vC += 1
-            versionProps["VERSION_D"] = vD.toString()
-            versionProps["VERSION_C"] = vC.toString()
-            versionProps.store(FileOutputStream(versionPropsFile), null)
-        }
-        finalVersionCode = vD + versionCodeOffset
-        finalVersionName = "${vA}.${vB}.${vC}.${vD}"
+    // versionCode and versionName are driven SOLELY by version.properties
+    // (A.B.C.D) — it is the single source of truth. On an assemble/bundle build
+    // the counter auto-increments and is written back, so each build bumps the
+    // version. There is no CI override: CI uses whatever version.properties says.
+    if (isBuilding) {
+        vD += 1
+        vC += 1
+        versionProps["VERSION_D"] = vD.toString()
+        versionProps["VERSION_C"] = vC.toString()
+        versionProps.store(FileOutputStream(versionPropsFile), null)
     }
+    val finalVersionCode = vD
+    val finalVersionName = "${vA}.${vB}.${vC}.${vD}"
 
     // ---- Release signing -------------------------------------------------
     // Reads a git-ignored keystore.properties (local dev) or environment
