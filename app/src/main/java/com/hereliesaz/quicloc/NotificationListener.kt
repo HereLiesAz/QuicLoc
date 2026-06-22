@@ -37,6 +37,12 @@ class NotificationListener : NotificationListenerService() {
         // processed for the same key+content within this window.
         private const val DEDUPE_WINDOW_MS = 60_000L
 
+        // How long after SmsReceiver handles a carrier trigger we treat the
+        // default SMS app's matching notification as that same (already-answered)
+        // message, when we can't number-match it. Comfortably covers the ~1-2s
+        // SMS→notification gap without spanning unrelated later messages.
+        private const val SMS_NOTIF_DEDUPE_WINDOW_MS = 10_000L
+
         /**
          * Whether a (lowercased) body is worth logging by default — i.e. it
          * contains the trigger word. Broader than the exact `== "loc"` match so
@@ -169,7 +175,22 @@ class NotificationListener : NotificationListenerService() {
                 add(sender)
                 addAll(whitelist.numbersForName(sender))
             }
-            if (TriggerDedupe.wasRecentlyHandled(candidates)) {
+            // Base this on the notification's sender identifier itself: when the
+            // sender is a contact *name* (no digits) we can't reliably
+            // number-match it, so the time fallback must apply even if contact
+            // resolution happened to add numbers that didn't match the SMS.
+            val hasNumber = sender.any { it.isDigit() }
+            // Suppress if we can tie this notification to a number SmsReceiver
+            // already handled. When the notification gives us only a contact name
+            // we can't resolve to a number (no READ_CONTACTS), number matching is
+            // impossible — fall back to: did SmsReceiver handle ANY carrier
+            // trigger in the last few seconds? The carrier SMS and its default-app
+            // notification always arrive within ~1-2s, so this reliably collapses
+            // the duplicate without needing contacts. (RCS / chat apps don't fire
+            // SmsReceiver, so there's no recent carrier trigger and they reply.)
+            val alreadyHandledViaSms = TriggerDedupe.wasRecentlyHandled(candidates) ||
+                (!hasNumber && TriggerDedupe.carrierTriggerHandledWithin(SMS_NOTIF_DEDUPE_WINDOW_MS))
+            if (alreadyHandledViaSms) {
                 Log.d(TAG, "Duplicate of an SMS already handled — skipping notification from $pkg")
                 recordDiag(pkg, sender, body, DiagOutcome.DUPLICATE_SUPPRESSED,
                     "Same request already handled via SMS — not replying twice",

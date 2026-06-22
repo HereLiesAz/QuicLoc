@@ -112,6 +112,10 @@ class SmsReceiver : BroadcastReceiver() {
                     continue
                 }
                 TriggerDedupe.markHandled(sender)
+                // Also record a number-independent signal so the default SMS
+                // app's notification echo of this same SMS gets suppressed even
+                // when it surfaces only a contact name we can't resolve.
+                TriggerDedupe.markCarrierTriggerHandled()
                 Log.d(TAG, "Trigger from $sender — starting LocationReplyService")
                 val diagId = java.util.UUID.randomUUID().toString()
                 diag.record(buildEvent(sender, body, DiagOutcome.DISPATCHED,

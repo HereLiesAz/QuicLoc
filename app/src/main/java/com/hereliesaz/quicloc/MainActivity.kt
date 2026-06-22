@@ -337,6 +337,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             list += runtime(Manifest.permission.CAMERA, "Camera")
         }
         list += runtime(Manifest.permission.READ_CONTACTS, "Read Contacts")
+        list += runtime(Manifest.permission.READ_PHONE_NUMBERS, "Read Phone Number")
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             list += runtime("android.permission.POST_NOTIFICATIONS", "Show Notifications")
         }
@@ -625,6 +626,78 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             }
     }
 
+    // Auto-detect "my number" — entry point for the "Auto-detect from this device"
+    // button and the first-show prompt. Prefers reading the SIM's own number
+    // (needs READ_PHONE_NUMBERS); falls back to the Google Phone Number Hint sheet
+    // when the permission is denied or the carrier didn't provision a number.
+    private fun autoDetectMyNumber() {
+        // Don't auto-prompt again on the next launch regardless of outcome.
+        AppSettings.markPhoneHintAutoPrompted(this)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_NUMBERS)
+            == PackageManager.PERMISSION_GRANTED
+        ) {
+            val sim = readSimPhoneNumber()
+            if (sim.isNotBlank()) {
+                applyDetectedNumber(sim)
+            } else {
+                // Permission held but no number available — try the hint sheet.
+                requestPhoneNumberHint()
+            }
+            return
+        }
+        phoneNumberPermissionLauncher.launch(Manifest.permission.READ_PHONE_NUMBERS)
+    }
+
+    private val phoneNumberPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val sim = if (granted) readSimPhoneNumber() else ""
+        if (sim.isNotBlank()) {
+            applyDetectedNumber(sim)
+        } else {
+            // Denied, or granted but the carrier didn't provision a number —
+            // fall back to the Google Phone Number Hint sheet.
+            requestPhoneNumberHint()
+        }
+    }
+
+    private fun applyDetectedNumber(number: String) {
+        whitelistManager.setMyNumber(number)
+        myNumberState.value = number
+        Toast.makeText(this, "Your number: $number", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Best-effort read of this device's own phone number from the SIM. Requires
+     * READ_PHONE_NUMBERS (caller ensures it's granted). Returns "" when the
+     * carrier didn't provision the number on the SIM (common) — callers fall back
+     * to the Phone Number Hint sheet or manual entry.
+     */
+    @android.annotation.SuppressLint("MissingPermission", "HardwareIds")
+    private fun readSimPhoneNumber(): String {
+        return try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                val sm = getSystemService(android.telephony.SubscriptionManager::class.java)
+                    ?: return ""
+                @Suppress("DEPRECATION")
+                var subId = android.telephony.SmsManager.getDefaultSmsSubscriptionId()
+                if (subId == android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                    subId = android.telephony.SubscriptionManager.getDefaultSubscriptionId()
+                }
+                if (subId == android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID) return ""
+                sm.getPhoneNumber(subId)?.takeIf { it.isNotBlank() } ?: ""
+            } else {
+                val tm = getSystemService(android.telephony.TelephonyManager::class.java)
+                    ?: return ""
+                @Suppress("DEPRECATION")
+                (tm.line1Number ?: "")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("QuicLoc", "Could not read SIM phone number", e)
+            ""
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Backup export / import (manual SAF flow)
     // -------------------------------------------------------------------------
@@ -701,7 +774,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         ReminderNotification.refresh(this)
 
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            QuicLocTheme {
                 val authenticated by authState
 
                 if (!authenticated) {
@@ -949,7 +1022,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     reminderNotifState.value = newState
                                     ReminderNotification.refresh(this@MainActivity)
                                 },
-                                onAutoDetectMyNumber = { requestPhoneNumberHint() },
+                                onAutoDetectMyNumber = { autoDetectMyNumber() },
                                 autoDetectMyNumberOnFirstShow = !AppSettings.wasPhoneHintAutoPrompted(this@MainActivity),
                                 onRequestDeviceAdmin = { requestDeviceAdmin() },
                                 backupAvailable = BackupVault.isAvailable(this@MainActivity),
@@ -1487,7 +1560,7 @@ fun QuicLocScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(scrollState)
-            .padding(16.dp)
+            .padding(horizontal = 18.dp, vertical = 20.dp)
     ) {
         // Top-of-settings master toggle. Mirrors the reminder notification.
         Card(
@@ -1527,25 +1600,30 @@ fun QuicLocScreen(
 
         // Opt-in: show a persistent notification that mirrors the master
         // toggle and lets the user flip it without opening the app.
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Show reminder notification",
-                    style = MaterialTheme.typography.bodyLarge
-                )
-                Text(
-                    text = "Persistent notification with a one-tap enable/disable button.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Show reminder notification",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = "Persistent notification with a one-tap enable/disable button.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = reminderNotificationEnabled,
+                    onCheckedChange = onToggleReminderNotification
                 )
             }
-            Switch(
-                checked = reminderNotificationEnabled,
-                onCheckedChange = onToggleReminderNotification
-            )
         }
 
         Text(
@@ -1570,7 +1648,7 @@ fun QuicLocScreen(
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "Your Phone Number",
                     style = MaterialTheme.typography.titleSmall,
@@ -1634,7 +1712,7 @@ fun QuicLocScreen(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         text = "⚠ Notification Access Required",
                         style = MaterialTheme.typography.titleSmall,
@@ -1743,7 +1821,7 @@ fun QuicLocScreen(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         text = "⚠ Real lockdown not enabled",
                         style = MaterialTheme.typography.titleSmall,
@@ -1802,7 +1880,7 @@ fun QuicLocScreen(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         text = "⚠ Full Screen Notifications not enabled",
                         style = MaterialTheme.typography.titleSmall,
@@ -1872,7 +1950,7 @@ fun QuicLocScreen(
                 .clickable { permissionsExpanded = !permissionsExpanded },
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "All Permissions",
                     style = MaterialTheme.typography.titleSmall,
@@ -2002,7 +2080,7 @@ fun QuicLocScreen(
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "Backup & Restore",
                     style = MaterialTheme.typography.titleSmall,
@@ -2047,7 +2125,7 @@ fun QuicLocScreen(
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "Widget Tap Guide:",
                     style = MaterialTheme.typography.titleSmall,
@@ -2415,7 +2493,7 @@ fun DiagnosticsScreen(
                 containerColor = MaterialTheme.colorScheme.secondaryContainer
             )
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "Status",
                     style = MaterialTheme.typography.titleSmall,
@@ -2604,7 +2682,7 @@ fun HistoryScreen(
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "Request History Guide:",
                     style = MaterialTheme.typography.titleSmall,
