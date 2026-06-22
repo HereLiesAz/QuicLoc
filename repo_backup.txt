@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    4c4480e73262b63893ef1f1726880a5bd26fae28
-  Timestamp: 2026-06-22 03:27:15 UTC
+  Branch:    claude/debug-loc-messaging-u0p51l
+  Commit:    edf86ac3cd70a11629b87675860005de212bfd0a
+  Timestamp: 2026-06-22 05:54:11 UTC
 ======================================================
 
 
@@ -199,9 +199,6 @@ jobs:
       - name: Grant Execute Permission to Gradle Wrapper
         run: chmod +x gradlew
 
-      - name: Compute versionCode from commit count
-        run: echo "VERSION_BUILD=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
-
       # ---- Manual publish path: signed RELEASE APK -------------------------
       - name: Decode upload keystore
         if: github.event_name == 'workflow_dispatch'
@@ -216,15 +213,17 @@ jobs:
           QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
           QUICLOC_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
           QUICLOC_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease -PversionBuild=${{ env.VERSION_BUILD }}
+        run: ./gradlew assembleRelease
 
       # ---- CI path (push / pull_request): DEBUG APK artifact only ----------
       - name: Build Debug APK
         if: github.event_name != 'workflow_dispatch'
-        run: ./gradlew assembleDebug -PversionBuild=${{ env.VERSION_BUILD }}
+        run: ./gradlew assembleDebug
 
+      # printVersionName runs AFTER the build, so it reads the version.properties
+      # value the build just incremented (i.e. it matches the built APK).
       - name: Get App Version
-        run: echo "VERSION_NAME=$(./gradlew -q :app:printVersionName -PversionBuild=${{ env.VERSION_BUILD }})" >> "$GITHUB_ENV"
+        run: echo "VERSION_NAME=$(./gradlew -q :app:printVersionName)" >> "$GITHUB_ENV"
 
       - name: Locate & rename APK
         run: |
@@ -399,9 +398,6 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
         run: echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
 
-      - name: Compute versionCode from commit count
-        run: echo "VERSION_BUILD=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
-
       - name: Read application id
         run: echo "APP_ID=$(./gradlew -q :app:printApplicationId)" >> "$GITHUB_ENV"
 
@@ -487,12 +483,17 @@ jobs:
           QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
           QUICLOC_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
           QUICLOC_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
-        run: ./gradlew bundleRelease -PversionBuild=${{ env.VERSION_BUILD }}
+        run: ./gradlew bundleRelease
+
+      # Read AFTER bundleRelease so it reflects the version.properties value the
+      # build just incremented (matches the .aab's versionName/versionCode).
+      - name: Get app version
+        run: echo "VERSION_NAME=$(./gradlew -q :app:printVersionName)" >> "$GITHUB_ENV"
 
       - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: quicloc-release-aab-${{ env.VERSION_BUILD }}
+          name: quicloc-release-aab-${{ env.VERSION_NAME }}
           path: app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
 
@@ -765,39 +766,19 @@ android {
     var vC = versionProps["VERSION_C"].toString().toInt()
     var vD = versionProps["VERSION_D"].toString().toInt()
 
-    // CI passes -PversionBuild=<n> (e.g. `git rev-list --count HEAD`) to force a
-    // deterministic, strictly-increasing versionCode for Play uploads. When the
-    // override is present we do NOT touch version.properties, so the build stays
-    // reproducible and the working tree clean. With no override, keep the local
-    // auto-increment behavior unchanged.
-    val versionOverride = (project.findProperty("versionBuild") as String?)?.toIntOrNull()
-
-    // Google Play already has versionCode 255 (from an early/manual upload), but
-    // the commit-count scheme (`git rev-list --count HEAD`, currently ~193) was
-    // below it, so automated uploads were rejected with "Version code N has
-    // already been used." Add a fixed base offset so the uploaded versionCode is
-    // always comfortably above any prior code and still strictly increases with
-    // each commit. The one-time jump (e.g. 193 -> 1193) is fine — Play only
-    // requires versionCode to increase, gaps are allowed. versionName keeps the
-    // raw build number for readability.
-    val versionCodeOffset = 1000
-
-    val finalVersionCode: Int
-    val finalVersionName: String
-    if (versionOverride != null) {
-        finalVersionCode = versionOverride + versionCodeOffset
-        finalVersionName = "${vA}.${vB}.${vC}.${versionOverride}"
-    } else {
-        if (isBuilding) {
-            vD += 1
-            vC += 1
-            versionProps["VERSION_D"] = vD.toString()
-            versionProps["VERSION_C"] = vC.toString()
-            versionProps.store(FileOutputStream(versionPropsFile), null)
-        }
-        finalVersionCode = vD + versionCodeOffset
-        finalVersionName = "${vA}.${vB}.${vC}.${vD}"
+    // versionCode and versionName are driven SOLELY by version.properties
+    // (A.B.C.D) — it is the single source of truth. On an assemble/bundle build
+    // the counter auto-increments and is written back, so each build bumps the
+    // version. There is no CI override: CI uses whatever version.properties says.
+    if (isBuilding) {
+        vD += 1
+        vC += 1
+        versionProps["VERSION_D"] = vD.toString()
+        versionProps["VERSION_C"] = vC.toString()
+        versionProps.store(FileOutputStream(versionPropsFile), null)
     }
+    val finalVersionCode = vD
+    val finalVersionName = "${vA}.${vB}.${vC}.${vD}"
 
     // ---- Release signing -------------------------------------------------
     // Reads a git-ignored keystore.properties (local dev) or environment
@@ -9335,7 +9316,7 @@ Scheme is `A.B.C.D`:
 - **C** — Build count within current `B`. Auto-incremented on each `assemble*`.
 - **D** — Absolute total build count. Auto-incremented on each `assemble*`. Also serves as `versionCode`.
 
-Manual bumps: edit `app/version.properties` directly. The one exception is CI Play builds, which pass `-PversionBuild=<n>` (the git commit count) to force a deterministic, strictly-increasing `versionCode` **without** rewriting `version.properties`. See [PLAY_PUBLISHING.md](PLAY_PUBLISHING.md).
+Manual bumps: edit `app/version.properties` directly — it is the single source of truth for `versionCode`/`versionName`. CI builds (including Play) use exactly what `version.properties` says; there is no `-PversionBuild` override. See [PLAY_PUBLISHING.md](PLAY_PUBLISHING.md).
 
 ## Code style
 
@@ -10037,27 +10018,18 @@ Then `./gradlew bundleRelease` → signed bundle at `app/build/outputs/bundle/re
 
 ## versionCode
 
-Locally, `versionCode`/`versionName` come from `app/version.properties` (`A.B.C.D`), with the
-counter auto-incrementing on `assemble*`/`bundle*` — unchanged.
+`versionCode`/`versionName` are driven **solely by `app/version.properties`** (`A.B.C.D`) — it is the
+single source of truth. `versionCode = VERSION_D`, `versionName = A.B.C.D`. The counter
+auto-increments on `assemble*`/`bundle*` (and writes `version.properties` back); no other task bumps
+it. **There is no `-PversionBuild` override and no offset** — CI builds use exactly what
+`version.properties` says.
 
-For Play, **pass an explicit, monotonic code** so uploads are never rejected for a duplicate
-or lower `versionCode`:
+To set the version, edit `app/version.properties` directly (e.g. bump `VERSION_D`) and commit it.
 
-```bash
-./gradlew bundleRelease -PversionBuild=$(git rev-list --count HEAD)
-```
-
-When `-PversionBuild=<n>` is set, `versionCode` becomes `<n> + 1000` (see the offset note below)
-and `versionName` becomes `A.B.C.<n>`, and **`version.properties` is not modified** — the build is
-deterministic and the tree stays clean. The CI workflow does exactly this.
-
-> **`+1000` offset.** Google Play already had `versionCode 255` (from an early/manual upload), but the
-> commit count (`git rev-list --count HEAD`) was *below* that (~193), so automated uploads were
-> rejected with `Version code N has already been used`. `app/build.gradle.kts` therefore adds a fixed
-> `versionCodeOffset = 1000` to the computed code, so the uploaded value (e.g. `193 → 1193`) sits
-> safely above any prior code and still strictly increases with each commit. The one-time jump is fine
-> — Play only requires `versionCode` to increase; gaps are allowed. `versionName` keeps the raw build
-> number. If you ever manually upload a code ≥ 1000, raise the offset accordingly.
+> **Play requires a strictly increasing `versionCode`.** Whatever `VERSION_D` you ship must be higher
+> than the highest code Google Play has already accepted for the app. If a release is rejected with
+> `Version code N has already been used`, raise `VERSION_D` in `version.properties` above that number
+> and commit it. (For example, if Play already has `255`, set `VERSION_D` so the built code clears it.)
 
 ## Running the workflow
 
