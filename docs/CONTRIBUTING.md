@@ -52,7 +52,7 @@ Scheme is `A.B.C.D`:
 - **C** — Build count within current `B`. Auto-incremented on each `assemble*`.
 - **D** — Absolute total build count. Auto-incremented on each `assemble*`. Also serves as `versionCode`.
 
-Manual bumps: edit `app/version.properties` directly. The one exception is CI Play builds, which pass `-PversionBuild=<n>` (the git commit count) to force a deterministic, strictly-increasing `versionCode` **without** rewriting `version.properties`. See [PLAY_PUBLISHING.md](PLAY_PUBLISHING.md).
+Manual bumps: edit `app/version.properties` directly — it is the single source of truth for `versionCode`/`versionName`. CI builds (including Play) use exactly what `version.properties` says; there is no `-PversionBuild` override. See [PLAY_PUBLISHING.md](PLAY_PUBLISHING.md).
 
 ## Code style
 

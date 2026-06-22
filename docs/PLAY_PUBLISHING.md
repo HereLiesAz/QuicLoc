@@ -113,27 +113,18 @@ Then `./gradlew bundleRelease` → signed bundle at `app/build/outputs/bundle/re
 
 ## versionCode
 
-Locally, `versionCode`/`versionName` come from `app/version.properties` (`A.B.C.D`), with the
-counter auto-incrementing on `assemble*`/`bundle*` — unchanged.
+`versionCode`/`versionName` are driven **solely by `app/version.properties`** (`A.B.C.D`) — it is the
+single source of truth. `versionCode = VERSION_D`, `versionName = A.B.C.D`. The counter
+auto-increments on `assemble*`/`bundle*` (and writes `version.properties` back); no other task bumps
+it. **There is no `-PversionBuild` override and no offset** — CI builds use exactly what
+`version.properties` says.
 
-For Play, **pass an explicit, monotonic code** so uploads are never rejected for a duplicate
-or lower `versionCode`:
+To set the version, edit `app/version.properties` directly (e.g. bump `VERSION_D`) and commit it.
 
-```bash
-./gradlew bundleRelease -PversionBuild=$(git rev-list --count HEAD)
-```
-
-When `-PversionBuild=<n>` is set, `versionCode` becomes `<n> + 1000` (see the offset note below)
-and `versionName` becomes `A.B.C.<n>`, and **`version.properties` is not modified** — the build is
-deterministic and the tree stays clean. The CI workflow does exactly this.
-
-> **`+1000` offset.** Google Play already had `versionCode 255` (from an early/manual upload), but the
-> commit count (`git rev-list --count HEAD`) was *below* that (~193), so automated uploads were
-> rejected with `Version code N has already been used`. `app/build.gradle.kts` therefore adds a fixed
-> `versionCodeOffset = 1000` to the computed code, so the uploaded value (e.g. `193 → 1193`) sits
-> safely above any prior code and still strictly increases with each commit. The one-time jump is fine
-> — Play only requires `versionCode` to increase; gaps are allowed. `versionName` keeps the raw build
-> number. If you ever manually upload a code ≥ 1000, raise the offset accordingly.
+> **Play requires a strictly increasing `versionCode`.** Whatever `VERSION_D` you ship must be higher
+> than the highest code Google Play has already accepted for the app. If a release is rejected with
+> `Version code N has already been used`, raise `VERSION_D` in `version.properties` above that number
+> and commit it. (For example, if Play already has `255`, set `VERSION_D` so the built code clears it.)
 
 ## Running the workflow
 
