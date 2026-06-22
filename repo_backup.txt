@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    1c491e55b51f7b3f8e4b018b3d3f32d3577055be
-  Timestamp: 2026-06-22 02:17:46 UTC
+  Branch:    claude/debug-loc-messaging-u0p51l
+  Commit:    da0c43a08974b3dd3656f4face0da94f5526f4a7
+  Timestamp: 2026-06-22 03:06:08 UTC
 ======================================================
 
 
@@ -956,6 +956,9 @@ dependencies {
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Optional: only used to auto-detect the user's own number for the
+         2-tap widget "send to myself" shortcut. Requested on demand. -->
+    <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" tools:node="remove" />
     <!--
         The ENTIRE find-my-phone / lockdown feature lives in the on-demand
@@ -2477,18 +2480,19 @@ class LocationReplyService : Service() {
             1 -> "Help"
             2 -> "Parking"
             3 -> "Safety Check"
-            4 -> "Emergency"
+            in 4..Int.MAX_VALUE -> "Emergency"
             else -> null
         }
 
         if (statusText != null) {
             performActionHapticFeedback()
             updateWidgetStatus(this, statusText)
-            // Fade away after 3 seconds
-            widgetTapHandler.postDelayed({
-                updateWidgetStatus(this, null)
-                stopSelf(startId)
-            }, 3000)
+            // Clear the on-widget status after a few seconds. VISUAL ONLY — do
+            // NOT stop the service here. The location fetch + reply below can
+            // take up to 30s; stopping at 3s would tear the service down before
+            // the SMS is sent (this was the "widget shows status but never sends"
+            // bug). The service is stopped only once the reply completes.
+            widgetTapHandler.postDelayed({ updateWidgetStatus(this, null) }, 3000)
         }
 
         if (count == 1) {
@@ -2496,14 +2500,23 @@ class LocationReplyService : Service() {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
             startActivity(intent)
-            // Will be stopped by the fade-away runnable
+            // A single tap only opens help — there's no location reply, so stop
+            // the service once the status has faded.
+            widgetTapHandler.postDelayed({ stopSelf(startId) }, 3000)
             return@Runnable
         }
 
+        if (count < 2) {
+            stopSelf(startId)
+            return@Runnable
+        }
+
+        // Counts >= 2: fetch the location (up to 30s) and send, THEN stop the
+        // service and clear the status — so the send always completes.
         LocationHelper.handleWidgetTaps(this, count) { succeeded ->
             RequestHistoryManager(this).record("Widget ($count taps)", "Widget", succeeded)
-            // Only stopSelf if not waiting for fade-away
-            if (statusText == null) stopSelf(startId)
+            updateWidgetStatus(this, null)
+            stopSelf(startId)
         }
     }
 
@@ -3023,6 +3036,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             list += runtime(Manifest.permission.CAMERA, "Camera")
         }
         list += runtime(Manifest.permission.READ_CONTACTS, "Read Contacts")
+        list += runtime(Manifest.permission.READ_PHONE_NUMBERS, "Read Phone Number")
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             list += runtime("android.permission.POST_NOTIFICATIONS", "Show Notifications")
         }
@@ -3309,6 +3323,77 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 // Silently fall back to manual entry.
                 android.util.Log.d("QuicLoc", "Phone number hint unavailable", e)
             }
+    }
+
+    // Auto-detect "my number" — entry point for the "Auto-detect from this device"
+    // button and the first-show prompt. Prefers reading the SIM's own number
+    // (needs READ_PHONE_NUMBERS); falls back to the Google Phone Number Hint sheet
+    // when the permission is denied or the carrier didn't provision a number.
+    private fun autoDetectMyNumber() {
+        // Don't auto-prompt again on the next launch regardless of outcome.
+        AppSettings.markPhoneHintAutoPrompted(this)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_NUMBERS)
+            == PackageManager.PERMISSION_GRANTED
+        ) {
+            val sim = readSimPhoneNumber()
+            if (sim.isNotBlank()) {
+                applyDetectedNumber(sim)
+            } else {
+                // Permission held but no number available — try the hint sheet.
+                requestPhoneNumberHint()
+            }
+            return
+        }
+        phoneNumberPermissionLauncher.launch(Manifest.permission.READ_PHONE_NUMBERS)
+    }
+
+    private val phoneNumberPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val sim = if (granted) readSimPhoneNumber() else ""
+        if (sim.isNotBlank()) {
+            applyDetectedNumber(sim)
+        } else {
+            // Denied, or granted but the carrier didn't provision a number —
+            // fall back to the Google Phone Number Hint sheet.
+            requestPhoneNumberHint()
+        }
+    }
+
+    private fun applyDetectedNumber(number: String) {
+        whitelistManager.setMyNumber(number)
+        myNumberState.value = number
+        Toast.makeText(this, "Your number: $number", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Best-effort read of this device's own phone number from the SIM. Requires
+     * READ_PHONE_NUMBERS (caller ensures it's granted). Returns "" when the
+     * carrier didn't provision the number on the SIM (common) — callers fall back
+     * to the Phone Number Hint sheet or manual entry.
+     */
+    @SuppressLint("MissingPermission", "HardwareIds")
+    private fun readSimPhoneNumber(): String {
+        return try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                val sm = getSystemService(android.telephony.SubscriptionManager::class.java)
+                    ?: return ""
+                var subId = android.telephony.SubscriptionManager.getDefaultSmsSubscriptionId()
+                if (subId == android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                    subId = android.telephony.SubscriptionManager.getDefaultSubscriptionId()
+                }
+                if (subId == android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID) return ""
+                sm.getPhoneNumber(subId)?.takeIf { it.isNotBlank() } ?: ""
+            } else {
+                val tm = getSystemService(android.telephony.TelephonyManager::class.java)
+                    ?: return ""
+                @Suppress("DEPRECATION")
+                (tm.line1Number ?: "")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("QuicLoc", "Could not read SIM phone number", e)
+            ""
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -3635,7 +3720,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     reminderNotifState.value = newState
                                     ReminderNotification.refresh(this@MainActivity)
                                 },
-                                onAutoDetectMyNumber = { requestPhoneNumberHint() },
+                                onAutoDetectMyNumber = { autoDetectMyNumber() },
                                 autoDetectMyNumberOnFirstShow = !AppSettings.wasPhoneHintAutoPrompted(this@MainActivity),
                                 onRequestDeviceAdmin = { requestDeviceAdmin() },
                                 backupAvailable = BackupVault.isAvailable(this@MainActivity),
@@ -5403,6 +5488,12 @@ class NotificationListener : NotificationListenerService() {
         // processed for the same key+content within this window.
         private const val DEDUPE_WINDOW_MS = 60_000L
 
+        // How long after SmsReceiver handles a carrier trigger we treat the
+        // default SMS app's matching notification as that same (already-answered)
+        // message, when we can't number-match it. Comfortably covers the ~1-2s
+        // SMS→notification gap without spanning unrelated later messages.
+        private const val SMS_NOTIF_DEDUPE_WINDOW_MS = 10_000L
+
         /**
          * Whether a (lowercased) body is worth logging by default — i.e. it
          * contains the trigger word. Broader than the exact `== "loc"` match so
@@ -5535,7 +5626,18 @@ class NotificationListener : NotificationListenerService() {
                 add(sender)
                 addAll(whitelist.numbersForName(sender))
             }
-            if (TriggerDedupe.wasRecentlyHandled(candidates)) {
+            val hasNumber = candidates.any { c -> c.any(Char::isDigit) }
+            // Suppress if we can tie this notification to a number SmsReceiver
+            // already handled. When the notification gives us only a contact name
+            // we can't resolve to a number (no READ_CONTACTS), number matching is
+            // impossible — fall back to: did SmsReceiver handle ANY carrier
+            // trigger in the last few seconds? The carrier SMS and its default-app
+            // notification always arrive within ~1-2s, so this reliably collapses
+            // the duplicate without needing contacts. (RCS / chat apps don't fire
+            // SmsReceiver, so there's no recent carrier trigger and they reply.)
+            val alreadyHandledViaSms = TriggerDedupe.wasRecentlyHandled(candidates) ||
+                (!hasNumber && TriggerDedupe.carrierTriggerHandledWithin(SMS_NOTIF_DEDUPE_WINDOW_MS))
+            if (alreadyHandledViaSms) {
                 Log.d(TAG, "Duplicate of an SMS already handled — skipping notification from $pkg")
                 recordDiag(pkg, sender, body, DiagOutcome.DUPLICATE_SUPPRESSED,
                     "Same request already handled via SMS — not replying twice",
@@ -6139,6 +6241,10 @@ class SmsReceiver : BroadcastReceiver() {
                     continue
                 }
                 TriggerDedupe.markHandled(sender)
+                // Also record a number-independent signal so the default SMS
+                // app's notification echo of this same SMS gets suppressed even
+                // when it surfaces only a contact name we can't resolve.
+                TriggerDedupe.markCarrierTriggerHandled()
                 Log.d(TAG, "Trigger from $sender — starting LocationReplyService")
                 val diagId = java.util.UUID.randomUUID().toString()
                 diag.record(buildEvent(sender, body, DiagOutcome.DISPATCHED,
@@ -6240,6 +6346,29 @@ object TriggerDedupe {
 
     // Normalized-ish number string -> last-handled timestamp.
     private val handled = ConcurrentHashMap<String, Long>()
+
+    // Timestamp of the most recent carrier-SMS trigger handled by SmsReceiver.
+    // The default SMS app posts a notification for that same carrier SMS, which
+    // NotificationListener also sees. When that notification only carries a
+    // contact *name* and READ_CONTACTS isn't granted to resolve it to a number,
+    // the number-based dedupe above can't match — so this coarse time signal is
+    // the fallback that still collapses the duplicate (the SMS and its
+    // default-app notification always arrive within a second or two of each
+    // other). Chat apps / RCS never fire SmsReceiver, so they leave this stale
+    // and still get a reply.
+    @Volatile
+    private var lastCarrierTriggerAt = 0L
+
+    /** Record that [SmsReceiver] just dispatched a reply for a carrier SMS. */
+    fun markCarrierTriggerHandled() {
+        lastCarrierTriggerAt = System.currentTimeMillis()
+    }
+
+    /** True if a carrier-SMS trigger was handled within the last [windowMs]. */
+    fun carrierTriggerHandledWithin(windowMs: Long): Boolean {
+        val t = lastCarrierTriggerAt
+        return t != 0L && System.currentTimeMillis() - t < windowMs
+    }
 
     /**
      * Records that a `loc` reply was just dispatched for [number]. Non-numeric
