@@ -26,6 +26,29 @@ object TriggerDedupe {
     // Normalized-ish number string -> last-handled timestamp.
     private val handled = ConcurrentHashMap<String, Long>()
 
+    // Timestamp of the most recent carrier-SMS trigger handled by SmsReceiver.
+    // The default SMS app posts a notification for that same carrier SMS, which
+    // NotificationListener also sees. When that notification only carries a
+    // contact *name* and READ_CONTACTS isn't granted to resolve it to a number,
+    // the number-based dedupe above can't match — so this coarse time signal is
+    // the fallback that still collapses the duplicate (the SMS and its
+    // default-app notification always arrive within a second or two of each
+    // other). Chat apps / RCS never fire SmsReceiver, so they leave this stale
+    // and still get a reply.
+    @Volatile
+    private var lastCarrierTriggerAt = 0L
+
+    /** Record that [SmsReceiver] just dispatched a reply for a carrier SMS. */
+    fun markCarrierTriggerHandled() {
+        lastCarrierTriggerAt = System.currentTimeMillis()
+    }
+
+    /** True if a carrier-SMS trigger was handled within the last [windowMs]. */
+    fun carrierTriggerHandledWithin(windowMs: Long): Boolean {
+        val t = lastCarrierTriggerAt
+        return t != 0L && System.currentTimeMillis() - t < windowMs
+    }
+
     /**
      * Records that a `loc` reply was just dispatched for [number]. Non-numeric
      * inputs (e.g. a contact display name that a caller passes through) are

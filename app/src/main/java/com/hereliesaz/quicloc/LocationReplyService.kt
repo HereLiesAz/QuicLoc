@@ -107,18 +107,19 @@ class LocationReplyService : Service() {
             1 -> "Help"
             2 -> "Parking"
             3 -> "Safety Check"
-            4 -> "Emergency"
+            in 4..Int.MAX_VALUE -> "Emergency"
             else -> null
         }
 
         if (statusText != null) {
             performActionHapticFeedback()
             updateWidgetStatus(this, statusText)
-            // Fade away after 3 seconds
-            widgetTapHandler.postDelayed({
-                updateWidgetStatus(this, null)
-                stopSelf(startId)
-            }, 3000)
+            // Clear the on-widget status after a few seconds. VISUAL ONLY — do
+            // NOT stop the service here. The location fetch + reply below can
+            // take up to 30s; stopping at 3s would tear the service down before
+            // the SMS is sent (this was the "widget shows status but never sends"
+            // bug). The service is stopped only once the reply completes.
+            widgetTapHandler.postDelayed({ updateWidgetStatus(this, null) }, 3000)
         }
 
         if (count == 1) {
@@ -126,14 +127,23 @@ class LocationReplyService : Service() {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
             startActivity(intent)
-            // Will be stopped by the fade-away runnable
+            // A single tap only opens help — there's no location reply, so stop
+            // the service once the status has faded.
+            widgetTapHandler.postDelayed({ stopSelf(startId) }, 3000)
             return@Runnable
         }
 
+        if (count < 2) {
+            stopSelf(startId)
+            return@Runnable
+        }
+
+        // Counts >= 2: fetch the location (up to 30s) and send, THEN stop the
+        // service and clear the status — so the send always completes.
         LocationHelper.handleWidgetTaps(this, count) { succeeded ->
             RequestHistoryManager(this).record("Widget ($count taps)", "Widget", succeeded)
-            // Only stopSelf if not waiting for fade-away
-            if (statusText == null) stopSelf(startId)
+            updateWidgetStatus(this, null)
+            stopSelf(startId)
         }
     }
 

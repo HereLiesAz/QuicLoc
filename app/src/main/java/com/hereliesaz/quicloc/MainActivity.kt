@@ -337,6 +337,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             list += runtime(Manifest.permission.CAMERA, "Camera")
         }
         list += runtime(Manifest.permission.READ_CONTACTS, "Read Contacts")
+        list += runtime(Manifest.permission.READ_PHONE_NUMBERS, "Read Phone Number")
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             list += runtime("android.permission.POST_NOTIFICATIONS", "Show Notifications")
         }
@@ -623,6 +624,77 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 // Silently fall back to manual entry.
                 android.util.Log.d("QuicLoc", "Phone number hint unavailable", e)
             }
+    }
+
+    // Auto-detect "my number" — entry point for the "Auto-detect from this device"
+    // button and the first-show prompt. Prefers reading the SIM's own number
+    // (needs READ_PHONE_NUMBERS); falls back to the Google Phone Number Hint sheet
+    // when the permission is denied or the carrier didn't provision a number.
+    private fun autoDetectMyNumber() {
+        // Don't auto-prompt again on the next launch regardless of outcome.
+        AppSettings.markPhoneHintAutoPrompted(this)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_NUMBERS)
+            == PackageManager.PERMISSION_GRANTED
+        ) {
+            val sim = readSimPhoneNumber()
+            if (sim.isNotBlank()) {
+                applyDetectedNumber(sim)
+            } else {
+                // Permission held but no number available — try the hint sheet.
+                requestPhoneNumberHint()
+            }
+            return
+        }
+        phoneNumberPermissionLauncher.launch(Manifest.permission.READ_PHONE_NUMBERS)
+    }
+
+    private val phoneNumberPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val sim = if (granted) readSimPhoneNumber() else ""
+        if (sim.isNotBlank()) {
+            applyDetectedNumber(sim)
+        } else {
+            // Denied, or granted but the carrier didn't provision a number —
+            // fall back to the Google Phone Number Hint sheet.
+            requestPhoneNumberHint()
+        }
+    }
+
+    private fun applyDetectedNumber(number: String) {
+        whitelistManager.setMyNumber(number)
+        myNumberState.value = number
+        Toast.makeText(this, "Your number: $number", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Best-effort read of this device's own phone number from the SIM. Requires
+     * READ_PHONE_NUMBERS (caller ensures it's granted). Returns "" when the
+     * carrier didn't provision the number on the SIM (common) — callers fall back
+     * to the Phone Number Hint sheet or manual entry.
+     */
+    @SuppressLint("MissingPermission", "HardwareIds")
+    private fun readSimPhoneNumber(): String {
+        return try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                val sm = getSystemService(android.telephony.SubscriptionManager::class.java)
+                    ?: return ""
+                var subId = android.telephony.SubscriptionManager.getDefaultSmsSubscriptionId()
+                if (subId == android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                    subId = android.telephony.SubscriptionManager.getDefaultSubscriptionId()
+                }
+                if (subId == android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID) return ""
+                sm.getPhoneNumber(subId)?.takeIf { it.isNotBlank() } ?: ""
+            } else {
+                val tm = getSystemService(android.telephony.TelephonyManager::class.java)
+                    ?: return ""
+                @Suppress("DEPRECATION")
+                (tm.line1Number ?: "")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("QuicLoc", "Could not read SIM phone number", e)
+            ""
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -949,7 +1021,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     reminderNotifState.value = newState
                                     ReminderNotification.refresh(this@MainActivity)
                                 },
-                                onAutoDetectMyNumber = { requestPhoneNumberHint() },
+                                onAutoDetectMyNumber = { autoDetectMyNumber() },
                                 autoDetectMyNumberOnFirstShow = !AppSettings.wasPhoneHintAutoPrompted(this@MainActivity),
                                 onRequestDeviceAdmin = { requestDeviceAdmin() },
                                 backupAvailable = BackupVault.isAvailable(this@MainActivity),
