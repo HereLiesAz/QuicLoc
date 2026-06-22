@@ -774,7 +774,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         ReminderNotification.refresh(this)
 
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            QuicLocTheme {
                 val authenticated by authState
 
                 if (!authenticated) {
