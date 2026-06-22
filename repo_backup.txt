@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    claude/debug-loc-messaging-u0p51l
-  Commit:    93885b8daa17d3a20be50c7a6464422afe66f042
-  Timestamp: 2026-06-22 03:23:36 UTC
+  Commit:    1df6d75e4b8649c3aebdc872d6cbd546581dfca7
+  Timestamp: 2026-06-22 03:26:13 UTC
 ======================================================
 
 
@@ -6915,6 +6915,9 @@ class WhitelistManager(context: Context) {
         private const val KEY_PASSPHRASE = "passphrase"
         private const val KEY_PIN = "pin"
         private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
+
+        // Compiled once and shared, rather than per normalizeName() call.
+        private val WHITESPACE_RUN = Regex("\\s+")
     }
 
     // Held so mutation methods can re-snapshot the PIN-encrypted backup
@@ -7106,18 +7109,19 @@ class WhitelistManager(context: Context) {
      */
     fun isWhitelistedByName(displayName: String): Boolean {
         val nameNorm = normalizeName(displayName)
+        val cleanIncoming = cleanPhoneNumber(displayName)
         val numbers = getNumbers()
 
         // The user's own number is always allowed (covers a notification that
         // surfaces the raw number).
-        if (matchesMyNumber(cleanPhoneNumber(displayName))) return true
+        if (matchesMyNumber(cleanIncoming)) return true
 
         val directMatch = numbers.any { entry ->
             // Username/handle match is format- and case-insensitive (so "@mom",
             // "mom", and "Mom" all match), falling back to a phone-number compare
             // for entries that are numbers.
             normalizeName(entry) == nameNorm ||
-                PhoneNumberUtils.compare(cleanPhoneNumber(displayName), cleanPhoneNumber(entry))
+                PhoneNumberUtils.compare(cleanIncoming, cleanPhoneNumber(entry))
         }
         if (directMatch) return true
 
@@ -7200,7 +7204,7 @@ class WhitelistManager(context: Context) {
      * [PhoneNumberUtils.compare], so this only governs name matching.
      */
     private fun normalizeName(s: String): String =
-        s.trim().removePrefix("@").trim().replace(Regex("\\s+"), " ").lowercase()
+        s.trim().removePrefix("@").trim().replace(WHITESPACE_RUN, " ").lowercase()
 
     // -------------------------------------------------------------------------
     // Encryption setup
