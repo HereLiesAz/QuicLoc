@@ -673,7 +673,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
      * carrier didn't provision the number on the SIM (common) — callers fall back
      * to the Phone Number Hint sheet or manual entry.
      */
-    @SuppressLint("MissingPermission", "HardwareIds")
+    @android.annotation.SuppressLint("MissingPermission", "HardwareIds")
     private fun readSimPhoneNumber(): String {
         return try {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
