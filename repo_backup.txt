@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    1922189a96cc3d1442a1c5238c89ab30175b8938
-  Timestamp: 2026-06-22 13:58:20 UTC
+  Commit:    3204098fee4b6446f6529013b4b66ae5a29fbf0e
+  Timestamp: 2026-07-09 11:06:11 UTC
 ======================================================
 
 
@@ -336,6 +336,49 @@ jobs:
           files: |
             **/debug/*.apk
             **/release/*.apk
+
+
+######################################################
+# FILE: .github/workflows/deploy-sftp.yml
+######################################################
+
+name: Deploy Webpage over FTP
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: sftp-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Deploy via lftp (SFTP)
+        env:
+          HOST: ${{ secrets.FTP_SERVER }}
+          USERNAME: ${{ secrets.FTP_USERNAME }}
+          PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          PORT: ${{ vars.SFTP_PORT || '22' }}
+          REMOTE_DIR: '/quicloc'
+        run: |
+          set -e
+          sudo apt-get install -y lftp
+
+          USER_TRIMMED=$(printf '%s' "$USERNAME" | tr -d ' \t\r\n')
+          PW_TRIMMED=$(printf '%s' "$PASSWORD" | tr -d '\r\n')
+
+          # Mirror the docs directory to /quicloc
+          lftp -u "$USER_TRIMMED","$PW_TRIMMED" \
+            -p "$PORT" \
+            -e "set sftp:auto-confirm yes; set ssl:verify-certificate no; mirror -R --verbose ./docs/ $REMOTE_DIR; quit" \
+            sftp://"$HOST"
 
 
 ######################################################
