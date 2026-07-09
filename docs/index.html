@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuicLoc - Your Location, On Demand</title>
+    <meta name="description" content="QuicLoc is a background utility that automatically replies to trusted contacts with your GPS location. No taps required.">
+    
+    <!-- Google Fonts: Outfit -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- Parallax Background Elements -->
+    <div class="parallax-bg" data-speed="0.2">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="glass-nav">
+        <div class="nav-content">
+            <div class="logo">
+                <img src="assets/icon.webp" alt="QuicLoc Logo">
+                <span>QuicLoc</span>
+            </div>
+            <a href="https://github.com/HereLiesAz/QuicLoc/releases" class="btn btn-primary">Download APK</a>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <header class="hero">
+        <div class="hero-content parallax-element" data-speed="0.5">
+            <h1 class="glow-text">Your Location,<br>On Demand.</h1>
+            <p>A silent background utility that replies to your trusted contacts with your real-time GPS location via SMS or WhatsApp. <strong>No taps required.</strong></p>
+            <div class="hero-actions">
+                <a href="https://github.com/HereLiesAz/QuicLoc/releases" class="btn btn-primary btn-large">Get QuicLoc Now</a>
+                <a href="https://github.com/HereLiesAz/QuicLoc" class="btn btn-secondary btn-large">View Source</a>
+            </div>
+        </div>
+        <div class="hero-visual parallax-element" data-speed="0.8">
+            <img src="assets/hero.png" alt="QuicLoc App Interface Mockup" class="floating-mockup">
+        </div>
+    </header>
+
+    <!-- Features Section -->
+    <section class="features">
+        <h2 class="section-title parallax-element" data-speed="0.3">Why QuicLoc?</h2>
+        
+        <div class="feature-grid">
+            <div class="feature-card glass-card parallax-element" data-speed="0.4">
+                <div class="feature-icon">🛡️</div>
+                <h3>Biometric Protection</h3>
+                <p>Secured by your fingerprint or face unlock. Your settings and whitelist stay locked down.</p>
+            </div>
+            
+            <div class="feature-card glass-card parallax-element" data-speed="0.5">
+                <div class="feature-icon">🔒</div>
+                <h3>Encrypted Whitelist</h3>
+                <p>Only contacts you explicitly trust can request your location. Data is protected by AES-256-GCM encryption.</p>
+            </div>
+            
+            <div class="feature-card glass-card parallax-element" data-speed="0.6">
+                <div class="feature-icon">💬</div>
+                <h3>Cross-App Support</h3>
+                <p>Responds to triggers from SMS, WhatsApp, Telegram, Signal, and more—straight from the background.</p>
+            </div>
+            
+            <div class="feature-card glass-card parallax-element" data-speed="0.7">
+                <div class="feature-icon">🔋</div>
+                <h3>Battery Friendly</h3>
+                <p>Zero tracking until requested. Designed to have almost no impact on your daily battery life.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="glass-footer parallax-element" data-speed="0.2">
+        <div class="footer-content">
+            <div class="footer-logo">
+                <img src="assets/icon.webp" alt="QuicLoc Icon">
+                <span>QuicLoc</span>
+            </div>
+            <div class="footer-links">
+                <a href="PRIVACY_POLICY.md">Privacy Policy</a>
+                <a href="ARCHITECTURE.md">Architecture</a>
+                <a href="https://github.com/HereLiesAz/QuicLoc">GitHub</a>
+            </div>
+        </div>
+        <p class="copyright">&copy; 2026 QuicLoc. Free and open source.</p>
+    </footer>
+
+    <!-- Parallax Script -->
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const parallaxElements = document.querySelectorAll('.parallax-element');
+            const parallaxBg = document.querySelector('.parallax-bg');
+
+            window.addEventListener('scroll', () => {
+                let scrollY = window.scrollY;
+
+                // Move background blobs slower
+                if (parallaxBg) {
+                    let speed = parallaxBg.getAttribute('data-speed');
+                    parallaxBg.style.transform = `translateY(${scrollY * speed}px)`;
+                }
+
+                // Move other elements at different speeds
+                parallaxElements.forEach(el => {
+                    let speed = el.getAttribute('data-speed');
+                    // Add subtle scale to certain elements for extra depth
+                    let scale = el.classList.contains('floating-mockup') ? 1 + (scrollY * 0.0002) : 1;
+                    el.style.transform = `translateY(${scrollY * speed}px) scale(${scale})`;
+                });
+            });
+        });
+    </script>
+</body>
+</html>
