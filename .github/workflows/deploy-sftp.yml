@@ -1,0 +1,37 @@
+name: Deploy Webpage over FTP
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: sftp-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Deploy via lftp (SFTP)
+        env:
+          HOST: ${{ secrets.FTP_SERVER }}
+          USERNAME: ${{ secrets.FTP_USERNAME }}
+          PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          PORT: ${{ vars.SFTP_PORT || '22' }}
+          REMOTE_DIR: '/quicloc'
+        run: |
+          set -e
+          sudo apt-get install -y lftp
+
+          USER_TRIMMED=$(printf '%s' "$USERNAME" | tr -d ' \t\r\n')
+          PW_TRIMMED=$(printf '%s' "$PASSWORD" | tr -d '\r\n')
+
+          # Mirror the docs directory to /quicloc
+          lftp -u "$USER_TRIMMED","$PW_TRIMMED" \
+            -p "$PORT" \
+            -e "set sftp:auto-confirm yes; set ssl:verify-certificate no; mirror -R --verbose ./docs/ $REMOTE_DIR; quit" \
+            sftp://"$HOST"
