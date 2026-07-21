@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    0d2f7930f0adb7766fae4bfab2f75a106c8c25ab
-  Timestamp: 2026-07-09 11:13:17 UTC
+  Commit:    0685efb7b1a12cfbd4f647f39a85bfdd0ae7ef59
+  Timestamp: 2026-07-21 07:20:02 UTC
 ======================================================
 
 
@@ -10679,6 +10679,7 @@ If all stages fail, we send an error SMS/reply back to the requester *("QuicLoc 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QuicLoc - Your Location, On Demand</title>
+    <base href="/quicloc/" />
     <meta name="description" content="QuicLoc is a background utility that automatically replies to trusted contacts with your GPS location. No taps required.">
     
     <!-- Google Fonts: Outfit -->
