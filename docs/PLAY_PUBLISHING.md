@@ -152,7 +152,36 @@ To set the version, edit `app/version.properties` directly (e.g. bump `VERSION_D
 > **Play requires a strictly increasing `versionCode`.** Whatever `VERSION_D` you ship must be higher
 > than the highest code Google Play has already accepted for the app. If a release is rejected with
 > `Version code N has already been used`, raise `VERSION_D` in `version.properties` above that number
-> and commit it. (For example, if Play already has `255`, set `VERSION_D` so the built code clears it.)
+> and commit it.
+
+### Two ways this bites, and what the workflow does about it
+
+A `versionCode` that is **equal** to one Play has seen is rejected at upload with a message that says
+so: *"Version code N has already been used."* A `versionCode` that is merely **lower** than the live
+one is accepted at upload and then rejected at rollout with something far less obvious:
+
+> You cannot rollout this release because it does not allow any existing users to upgrade to the
+> newly added APKs.
+
+That is a version-code problem wearing a disguise — nobody on the higher code can "upgrade" to a
+lower one. It is easy to hit after any change to how the code is computed. This repo has hit it
+once already: Play held `255` from an early manual upload, a `+1000` offset was added to clear it
+(uploads went out at ~`1193`), and when the offset was later removed in favour of `version.properties`
+the counter dropped back to the 250s — below what was already live.
+
+The publish workflow now asks Play directly rather than assuming:
+
+1. **Preflight** lists every bundle and APK Play holds and records the highest `versionCode`.
+2. **Before building**, it compares that against what `version.properties` would produce. `strict`
+   (the default) fails with the exact number to set; `version_code_mode: auto` raises `VERSION_D` for
+   that build only and prints the value to commit.
+3. **After building**, it re-checks the actual built code and refuses to upload if it can't clear
+   Play.
+4. **After publishing**, it warns — in the job summary and the log — that `version.properties` in git
+   is now behind what was published, with the value to commit. The build increments the counter on
+   the runner, and nothing commits that back, so without this step the next publish rebuilds the same
+   number and hits *"already used"*. `version.properties` ships alongside the `.aab` artifact so the
+   bump can be copied straight in.
 
 ## Running the workflow
 
@@ -164,6 +193,7 @@ from the checked-out commit's history). Inputs:
 | `track`   | `internal` | `internal` / `alpha` / `beta` / `production` |
 | `status`  | `draft`    | `draft` (review in console before going live) / `completed` |
 | `publish` | `false`    | **off** = build + upload the `.aab` as a workflow artifact only; **on** = also upload to Play |
+| `version_code_mode` | `strict` | `strict` = fail if the `versionCode` can't clear Play, naming the value to set; `auto` = raise it for this build and print what to commit |
 
 The workflow verifies the bundle's signature itself before the artifact is uploaded, and fails if it
 is unsigned or signed by an unexpected certificate — so a green run means a correctly signed bundle.
