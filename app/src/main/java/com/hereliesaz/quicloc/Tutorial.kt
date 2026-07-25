@@ -5,12 +5,18 @@ package com.hereliesaz.quicloc
  * Bodies are plain text with `•` bullets and blank lines for paragraph breaks;
  * the renderer just shows them in a Text composable so no markdown processing
  * is needed.
+ *
+ * @param requiresFindMyPhone true for tutorials that document the on-demand
+ *   find-my-phone / lockdown feature. Those are filtered out of [Tutorials.visible]
+ *   while [FindMyPhone.ENABLED] is false, so the hub never explains a feature
+ *   that isn't in the shipped app.
  */
 data class Tutorial(
     val id: String,
     val title: String,
     val summary: String,
     val body: String,
+    val requiresFindMyPhone: Boolean = false,
 )
 
 object Tutorials {
@@ -40,9 +46,52 @@ That means:
 
 • Battery: zero overhead between requests. The GPS only turns on for the few seconds it takes to answer a request.
 • Privacy: your contacts know where you are when they ask, not where you've been. There's no log on any server. If you uninstall QuicLoc, there's nothing left to delete.
-• Safety: works in emergencies too. Set a single-use passphrase, and a wrong-PIN intruder is photographed and located in real time.
+• Safety: it works when you're the one who needs help, too. The home-screen widget sends your location to your starred contacts, or to everyone on your list, without you having to unlock anything or type a word.
 
 The trade-off: someone has to actively ask. QuicLoc isn't for "let's see who's closer to the meeting spot in real time" — that's still Google Maps' job. It's for "answer when asked, otherwise stay invisible."
+
+To set it up, read "Getting started in 5 minutes" next — or just follow the checklist at the top of the settings screen, which tracks the same steps live.
+""".trim(),
+    )
+
+    /**
+     * The do-this-now companion to [why] — the shortest path from "installed"
+     * to "a contact texts loc and it answers".
+     */
+    private val gettingStarted = Tutorial(
+        id = "getting-started",
+        title = "Getting started in 5 minutes",
+        summary = "The four things to do before QuicLoc will answer anyone.",
+        body = """
+QuicLoc does nothing until four things are true. The checklist at the top of the settings screen tracks all of them live — this is the same list, with the reasoning.
+
+1. QuicLoc is switched ON.
+
+The master switch is the first thing on the settings screen. While it's off, every trigger is ignored — texts, chat apps, and the widget.
+
+2. Permissions are granted.
+
+• Text messages: QuicLoc reads incoming texts to spot the trigger word, and sends the reply back by text.
+• Location, set to "Allow all the time": this is the one people miss. Android asks twice — once for location, then again for background access. If you only grant "While using the app", QuicLoc can answer only while you happen to be looking at it, which defeats the point.
+• Notifications (Android 13+): QuicLoc posts a short-lived notification while a reply is being sent. Without permission, Android kills the reply halfway.
+
+If you tap Skip on any of these, nothing is lost — go to the checklist and tap the button on that row to be asked again.
+
+3. At least one trusted contact is on your list.
+
+Nobody who isn't on the list can trigger anything. With an empty list, QuicLoc ignores the entire world. Use "Pick from Contacts" — it adds the person's name *and* their numbers, which covers texts and chat apps in one go.
+
+4. Test it.
+
+Get someone on the list to text you "loc". You should get a Google Maps link back within a few seconds — no prompt, no sound, nothing to tap.
+
+If nothing comes back, open Diagnostics (in Help & troubleshooting). It shows the message arriving and the exact reason QuicLoc did or didn't act — no guessing.
+
+Worth doing next:
+
+• Notification Access, if your people use WhatsApp / Telegram / Signal / Messenger rather than plain texts.
+• Battery optimisation exemption, so a request at 3am isn't slept through.
+• Your own phone number and the home-screen widget, if you want the parking / safety-check / emergency shortcuts.
 """.trim(),
     )
 
@@ -118,6 +167,7 @@ If someone enters the wrong PIN 3 times:
 
 The passphrase is single-use — once triggered, it's cleared. Set a new one before the next emergency.
 """.trim(),
+        requiresFindMyPhone = true,
     )
 
     private val realLockdown = Tutorial(
@@ -142,6 +192,7 @@ What QuicLoc cannot do, ever:
 
 You can revoke admin rights at any time in Settings → Security → Device admin apps. Granting it is optional — but the find-my-phone feature is much weaker without it.
 """.trim(),
+        requiresFindMyPhone = true,
     )
 
     private val widget = Tutorial(
@@ -149,18 +200,22 @@ You can revoke admin rights at any time in Settings → Security → Device admi
         title = "Homescreen Widget",
         summary = "Tap counts for parking, safety check, and emergency.",
         body = """
-Add the QuicLoc widget to your home screen for one-handed quick sharing.
+The widget is the other direction: it sends your location because YOU decided to, without anyone asking.
 
-Tap pattern (all within ~1.5 seconds):
+To add it: long-press an empty spot on your home screen, choose "Widgets", find QuicLoc, and drag it out.
 
-• 1 tap — opens the widget help screen
-• 2 taps — Parking: sends your location with #Parking to your own number (set "My Phone Number" in settings)
-• 3 taps — Safety Check: sends your location with #SafetyCheck to your starred contacts (up to 3)
-• 4 taps — Emergency: sends your location with #Emergency to every whitelisted contact
+Tap pattern — each tap has to land within about half a second of the last one, so tap briskly:
 
-The widget vibrates on each tap to confirm, and shows the action label briefly when the timer expires.
+• 1 tap — opens the widget help screen. Nothing is sent.
+• 2 taps — Parking: texts your location with #Parking to your own number (set "Your own phone number" in section 3 of settings)
+• 3 taps — Safety Check: texts your location with #SafetyCheck to your starred contacts (up to 3)
+• 4 taps — Emergency: texts your location with #Emergency to every trusted contact
+
+The widget vibrates on each tap to confirm, and shows the action label briefly once the taps stop.
 
 Each pattern fetches a fresh GPS fix before sending — even if you're indoors with poor signal, the three-stage fallback (cached → fresh → forced) usually gets a position within 15 seconds.
+
+If a tap count has nothing to send to — no own number, no starred contacts, no trusted contacts — nothing is sent. The widget help screen (1 tap) shows which of the four are ready.
 """.trim(),
     )
 
@@ -169,7 +224,7 @@ Each pattern fetches a fresh GPS fix before sending — even if you're indoors w
         title = "Enable/Disable Toggle",
         summary = "Pause all triggers without uninstalling.",
         body = """
-The master switch at the top of settings pauses every QuicLoc trigger:
+The master switch in the first card of the settings screen pauses every QuicLoc trigger:
 
 • SMS triggers are ignored.
 • Notification triggers are ignored.
@@ -181,9 +236,35 @@ Use this when:
 • You're in a meeting and don't want noise from a #Parking tap.
 • You're traveling somewhere you don't want even trusted contacts pinging you.
 
-For one-tap access without opening the app, turn on "Show reminder notification" — a persistent silent notification with an Enable/Disable button appears in the shade. It's opt-in (off by default).
+For one-tap access without opening the app, turn on "Reminder notification" under "App access & notifications" in settings — a permanent silent notification with an Enable/Disable button appears in the shade. It's opt-in (off by default).
 
 The setting persists across reboots.
+""".trim(),
+    )
+
+    private val appLock = Tutorial(
+        id = "app-lock",
+        title = "Unlocking the app (fingerprint or PIN)",
+        summary = "Two ways in, and why the background half isn't locked at all.",
+        body = """
+Opening QuicLoc's settings requires proof it's you. Answering a location request does not — that has to keep working while the phone is locked in your pocket, which is the entire point of the app.
+
+There are two ways in, and you can use either:
+
+• Your phone's own lock — fingerprint, face, or the device PIN/pattern. This is the default when your phone has a lock screen set up.
+• Your QuicLoc PIN — a 6-digit PIN that belongs to this app. Set it under "App access & notifications" in settings.
+
+Why bother with a QuicLoc PIN?
+
+• Fingerprints fail. Wet hands, cold weather, a cracked sensor. The PIN is always available as a fallback — tap "Use QuicLoc PIN instead" on the unlock screen.
+• Some phones have no lock screen at all. Without a QuicLoc PIN, QuicLoc has nothing to check and simply lets whoever is holding the phone straight into your trusted-contact list. With one, it doesn't.
+• The same PIN encrypts your backup. No PIN means no backup, and no way to carry your contacts to a new phone.
+
+Things to know:
+
+• There is no reset. Nobody — not us, not Google — can recover a forgotten QuicLoc PIN. If you forget it and your phone has a lock screen, you can still get in with your fingerprint and change it.
+• Removing the PIN deletes the encrypted backup along with it, because the PIN is the only key it has.
+• The background components — the SMS receiver, the notification listener, the reply service — are deliberately not gated by any of this. They answer whether the app is locked, closed, or has never been opened today.
 """.trim(),
     )
 
@@ -194,7 +275,7 @@ The setting persists across reboots.
         body = """
 Your settings (whitelist, starred contacts, PIN, passphrase, your number) are stored encrypted on-device using a key held in the Android Keystore. That key does not transfer to a new phone — so an extra layer is needed for backups to work.
 
-QuicLoc solves this by writing a second copy of your settings, encrypted with your PIN, into a file at app data. That file is included in Android's automatic backup (Google Drive) and in device-to-device transfer (Pixel Switch, Smart Switch, Quick Start).
+QuicLoc solves this by writing a second copy of your settings, encrypted with your QuicLoc PIN (set under "App access & notifications" in settings), into a file at app data. That file is included in Android's automatic backup (Google Drive) and in device-to-device transfer (Pixel Switch, Smart Switch, Quick Start).
 
 How restore works:
 
@@ -295,17 +376,71 @@ Nothing in this list is sent to any server. No analytics, no crash reporters, no
 """.trim(),
     )
 
+    private val notWorking = Tutorial(
+        id = "not-working",
+        title = "It isn't answering — what to check",
+        summary = "The five reasons a request goes unanswered, in order.",
+        body = """
+Someone texted you "loc" and nothing came back. Work down this list — it's ordered by how often each one is the culprit.
+
+First, open Diagnostics (Help & troubleshooting, at the bottom of the settings screen). It logs every message QuicLoc saw and the exact decision it made. If the message isn't in the log at all, it never reached the app — that's causes 1, 2 or 5. If it IS in the log, the log states the reason outright.
+
+1. The sender isn't on your trusted list — or is listed differently than they appear.
+
+The most common failure by a distance. Texts arrive as a phone number; chat apps arrive as the display name shown at the top of the notification. A contact added as "+1 555 0100" will not match a WhatsApp message that shows "Mum". Add both. "Pick from Contacts" does this in one tap.
+
+2. The message wasn't exactly the trigger word.
+
+It has to be "loc" or "quicloc" and nothing else. "loc?" doesn't count. "hey send me your loc" doesn't count. Case doesn't matter.
+
+3. Location isn't set to "Allow all the time".
+
+If location is set to "While using the app", QuicLoc can only answer while the app is on screen. Android splits this into two separate grants, and the second one is easy to miss. The setup checklist shows it as its own line.
+
+4. Notification Access is off, and they used a chat app.
+
+Plain texts work without it. WhatsApp, Telegram, Signal, Messenger and the rest do not — that path exists only through Notification Access.
+
+Some apps can't work even with it: anything that hides message text in its notifications (Signal in private-notification mode, Telegram secret chats) never shows QuicLoc the message to begin with.
+
+5. The phone put QuicLoc to sleep.
+
+Battery optimisation, and on Xiaomi / Huawei / Oppo / Vivo devices a separate "autostart" or "protected apps" list, can stop QuicLoc being woken for an incoming message. Both are in the setup checklist under Recommended. QuicLoc does no background work of its own, so exempting it costs no battery.
+
+Still stuck?
+
+• Check the master switch is on — it's the first thing on the settings screen.
+• Check Request History: a ✗ entry means QuicLoc tried and failed (usually a location timeout indoors), which is a completely different problem from never having been triggered.
+• Turn on "Capture all notifications" in Diagnostics, have them send the message again, then turn it back off. Every notification QuicLoc saw is logged, so you can see exactly how their name and message text reached the app.
+""".trim(),
+    )
+
+    /**
+     * Everything in the catalogue, including tutorials for features that
+     * aren't currently shipped. [visible] is what the hub renders.
+     */
     val all: List<Tutorial> = listOf(
         why,
+        gettingStarted,
         trustedContacts,
         trigger,
-        findMyPhone,
-        realLockdown,
         widget,
         toggle,
+        appLock,
+        notWorking,
+        findMyPhone,
+        realLockdown,
         backup,
         permissions,
     )
+
+    /**
+     * The hub's list — [all] minus anything documenting the find-my-phone
+     * feature while it's disabled. Explaining a feature the user can't find
+     * anywhere in the app is worse than not mentioning it.
+     */
+    val visible: List<Tutorial>
+        get() = all.filter { FindMyPhone.ENABLED || !it.requiresFindMyPhone }
 
     fun byId(id: String): Tutorial? = all.firstOrNull { it.id == id }
 }
