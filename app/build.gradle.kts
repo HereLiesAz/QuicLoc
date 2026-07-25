@@ -164,6 +164,15 @@ tasks.register("printVersionName") {
     }
 }
 
+// The versionCode that was (or would be) built, for CI to compare against what
+// Google Play already holds. Reading it from Gradle rather than parsing
+// version.properties keeps the two from drifting.
+tasks.register("printVersionCode") {
+    doLast {
+        println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.versionCode)
+    }
+}
+
 tasks.register("printApplicationId") {
     doLast {
         println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.applicationId)
