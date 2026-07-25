@@ -50,21 +50,47 @@ class TutorialsTest {
     }
 
     @Test
-    fun `the catalog has at least the eight core tutorials`() {
+    fun `the catalog has exactly the expected tutorials`() {
         // The hub is small enough that we can name them. If you add or
         // remove tutorials intentionally, update this list.
         val expected = setOf(
             "why-quicloc",
+            "getting-started",
             "trusted-contacts",
             "trigger-word",
             "find-my-phone",
             "real-lockdown",
             "widget",
             "toggle",
+            "app-lock",
+            "not-working",
             "backup-restore",
             "permissions",
         )
         val actual = Tutorials.all.map { it.id }.toSet()
         assertEquals(expected, actual)
+    }
+
+    @Test
+    fun `visible list hides find-my-phone tutorials while the feature is off`() {
+        val visibleIds = Tutorials.visible.map { it.id }
+        if (FindMyPhone.ENABLED) {
+            assertEquals(Tutorials.all.map { it.id }, visibleIds)
+        } else {
+            assertTrue(
+                "find-my-phone tutorials must not be listed while the feature is disabled",
+                visibleIds.none { it == "find-my-phone" || it == "real-lockdown" }
+            )
+            // Everything else still shows.
+            assertEquals(
+                Tutorials.all.filterNot { it.requiresFindMyPhone }.map { it.id },
+                visibleIds
+            )
+        }
+    }
+
+    @Test
+    fun `the first-launch tutorial is always visible`() {
+        assertTrue(Tutorials.visible.any { it.id == Tutorials.MAIN_ID })
     }
 }

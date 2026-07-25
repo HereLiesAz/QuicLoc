@@ -30,7 +30,16 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 | `ACCESS_COARSE_LOCATION` | Fallback when fine location unavailable | Same |
 | `POST_NOTIFICATIONS` (API 33+) | All our notifications: FGS, tracking, reminder | Same |
 
-These are all batched in a single `requestPermissions` call from `MainActivity.checkPermissions` after biometric auth passes.
+`MainActivity.checkPermissions` walks these one at a time (`runPermissionChain`) after the unlock gate passes — never a batch. Each one is preceded by a rationale dialog built from the same four fixed slots, so no permission is ever requested without an explanation:
+
+| Slot | Content |
+|---|---|
+| `whatFor` | One line: what this permission lets QuicLoc do |
+| `ifSkipped` | One line: exactly what stops working if it's denied |
+| `limits` | What QuicLoc will never do with it (omitted when there's nothing to reassure about) |
+| `nextStep` | What system screen the user is about to see |
+
+The dialog is also labelled `Step N of M` against the length of the chain, and its dismiss button reads "Not now" — skipping is always allowed, and the setup checklist on the settings screen lets the user come back to any skipped row. Copy lives in `MainActivity.RATIONALES`, keyed by permission; the special-access flows (background location, notification access, Device Admin, battery, full-screen intent) build the same `RationaleDialogState` inline.
 
 ### On-demand (dynamic feature module) — currently DISABLED
 
@@ -79,6 +88,14 @@ Code: `MainActivity.checkBackgroundLocationPermission` → `backgroundLocationLa
 
 Requested on demand (when the user taps "Pick from Contacts") — `MainActivity.launchContactPicker`. If denied, the picker still opens via `ActivityResultContracts.PickContact()`; we just won't be able to enumerate the contact's phone numbers, only their display name.
 
+### Own phone number
+
+| Permission | Why |
+|---|---|
+| `READ_PHONE_NUMBERS` | Optional — auto-fills the user's own number (for the widget's 2-tap parking reminder) from the SIM |
+
+Requested from `MainActivity.autoDetectMyNumber`, through the same rationale dialog as every other runtime permission. If it's denied, or the carrier never provisioned a number on the SIM, we fall back to the Google Phone Number Hint sheet (`play-services-auth`), which needs no permission at all — and failing that, manual entry.
+
 ## Special-access settings (must be granted in system Settings, no runtime API)
 
 ### Notification Access
@@ -86,7 +103,7 @@ Requested on demand (when the user taps "Pick from Contacts") — `MainActivity.
 `android.permission.BIND_NOTIFICATION_LISTENER_SERVICE` is system-only; the user grants it via Settings → Apps → Special access → Notification access. We:
 
 - Detect grant state via `Settings.Secure.getString(contentResolver, "enabled_notification_listeners")`.
-- Show a prominent "Notification Access Required" banner with a "Grant Notification Access" button that opens `Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS`.
+- Show a "Chat apps are off" card inside settings section 2 (The trigger word) with a "Turn on Notification Access" button that routes through the rationale dialog and then opens `Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS`. The same grant is offered as a Recommended row on the setup checklist and from the Diagnostics screen.
 
 Without this grant, the app still works for SMS but doesn't trigger from any chat app.
 

@@ -19,11 +19,25 @@ What QuicLoc explicitly does **not** defend against:
 
 | Boundary | Mechanism | Bypassed by |
 |---|---|---|
-| UI access | `BiometricPrompt` with `BIOMETRIC_STRONG \| DEVICE_CREDENTIAL` | Successful biometric / device PIN |
+| UI access | `BiometricPrompt` with `BIOMETRIC_STRONG \| DEVICE_CREDENTIAL`, **or** the QuicLoc PIN | Successful biometric / device credential / QuicLoc PIN |
 | Background work (receivers, services) | None — runs without app auth | N/A by design — must work when phone is locked |
-| Find-my-phone unlock | 6-digit PIN | 3 wrong attempts → photo capture + panic mode |
+| Find-my-phone unlock | The same QuicLoc PIN | 3 wrong attempts → photo capture + panic mode |
 
 The background components (`SmsReceiver`, `NotificationListener`, `LocationReplyService`) do *not* require app auth. This is deliberate: the entire point is to answer location requests while the device is locked. Authentication only gates the **configuration UI**.
+
+### The QuicLoc PIN as a second unlock method
+
+There is one 6-digit QuicLoc PIN (`WhitelistManager.getPin`/`setPin`), and it does three jobs: it unlocks the settings UI, it is the PBKDF2 input for the backup blob, and — when find-my-phone is enabled — it stops tracking.
+
+`MainActivity.promptBiometric` picks the gate:
+
+| Device state | Gate |
+|---|---|
+| Has a lock screen | System prompt, with "Use QuicLoc PIN instead" as a fallback when a PIN is set |
+| No lock screen, QuicLoc PIN set | The PIN, checked by `submitAppPin` (constant-time `MessageDigest.isEqual`) |
+| No lock screen, no PIN | None — the user is let straight in, and the settings screen says so in as many words |
+
+That last row is a deliberate non-lockout, unchanged from before; what *is* new is that a user on a phone without a lock screen now has a way out of it. The PIN is stored in `EncryptedSharedPreferences` rather than hashed, because `BackupVault` needs the raw value to derive the backup key — so its at-rest protection is the Keystore-backed master key, and its threat model is the same as the whitelist it protects. There is no reset path: forgetting the PIN on a device with no lock screen means reinstalling.
 
 ## On-device storage encryption
 

@@ -63,9 +63,9 @@
 
 | Activity | File | Role |
 |---|---|---|
-| `MainActivity` | [MainActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt) | Single-activity Compose app. Navigation is a `sealed class MainView` (Config / History / TutorialsHub / TutorialDetail). Biometric gate on resume. |
+| `MainActivity` | [MainActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt) | Single-activity Compose app. Navigation is a `sealed class MainView` (Config / History / Diagnostics / TutorialsHub / TutorialDetail). Unlock gate on resume: biometric / device credential, or the QuicLoc PIN. The Config screen is a purpose card, then the [Readiness](../app/src/main/java/com/hereliesaz/quicloc/Readiness.kt) setup checklist, then one collapsible `SectionCard` per app function. |
 | `TrackingLockActivity` | [TrackingLockActivity.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/TrackingLockActivity.kt) | In the on-demand `:feature_findmyphone` module. Fallback cover-screen when Device Admin isn't granted. After 3 wrong PINs, captures an intruder photo via the module-internal [IntruderCamera](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/IntruderCamera.kt) (no photo if CAMERA wasn't granted); otherwise locks without a photo. |
-| `WidgetHelpActivity` | [WidgetHelpActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/WidgetHelpActivity.kt) | Transparent activity that pops up when the widget is tapped exactly once. Three-step "tap-to-advance" hint. |
+| `WidgetHelpActivity` | [WidgetHelpActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/WidgetHelpActivity.kt) | Transparent activity that pops up when the widget is tapped exactly once. Lists all four tap counts with a live ✓/✗ for whether each one has somewhere to send to. |
 
 ### Data layer
 
@@ -80,8 +80,9 @@
 
 | Helper | File | Role |
 |---|---|---|
+| `Readiness` | [Readiness.kt](../app/src/main/java/com/hereliesaz/quicloc/Readiness.kt) | Pure Kotlin (no `android.*`): turns the live permission snapshot plus whitelist/own-number state into the ordered setup checklist. Shares its `PermissionStatus` input with the All Permissions table, so the two views can't disagree. Unit-tested without Robolectric. |
 | `LocationHelper` | [LocationHelper.kt](../app/src/main/java/com/hereliesaz/quicloc/LocationHelper.kt) | Three-stage GPS fetch (current → cached → forced) with a single 30 s deadline. Also has the SMS-send and notification-reply primitives. |
-| `BiometricHelper` | [BiometricHelper-1.kt](../app/src/main/java/com/hereliesaz/quicloc/BiometricHelper-1.kt) | Wraps `BiometricPrompt`. Falls back to device credential if no biometric is enrolled. |
+| `BiometricHelper` | [BiometricHelper-1.kt](../app/src/main/java/com/hereliesaz/quicloc/BiometricHelper-1.kt) | Wraps `BiometricPrompt`. Falls back to device credential if no biometric is enrolled. When the device has no lock screen at all, `MainActivity` gates on the QuicLoc PIN instead (and only lets the user straight through when neither exists). |
 | `FindMyPhone` | [FindMyPhone.kt](../app/src/main/java/com/hereliesaz/quicloc/FindMyPhone.kt) | The base→module bridge for `:feature_findmyphone`. Addresses the module by `ComponentName` string: `requestInstall` (SplitInstall download), `trigger` (start `TrackingService`), `isAdminActive`/`adminComponent` (Device Admin status without referencing the receiver class). Degrades gracefully when the split isn't installed. |
 | `LockdownController` | [LockdownController.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/LockdownController.kt) | In `:feature_findmyphone`. Single decision point: `DevicePolicyManager.lockNow()` if Device Admin is granted, otherwise let the caller fall back to `TrackingLockActivity`. |
 | `QuicLocDeviceAdmin` | [QuicLocDeviceAdmin.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/QuicLocDeviceAdmin.kt) | In `:feature_findmyphone`. `DeviceAdminReceiver` registered with `force-lock` policy only. |
