@@ -1,5 +1,20 @@
 name: CI/CD
 
+# Two shapes, deliberately separated by whether this run can produce something
+# a human installs:
+#
+#   • push to main / pull_request -> test + build, nothing published. The
+#     release build here is UNSIGNED on purpose: fork PRs can't read secrets,
+#     and building it still exercises packaging/bundletool.
+#   • push of a v* tag            -> test + build a SIGNED release APK and AAB,
+#     verify the signature, then attach them to a GitHub Release. If the
+#     keystore secrets are missing or wrong, the job fails; it never falls back
+#     to publishing an unsigned artifact.
+#
+# Signing secrets (see docs/PLAY_PUBLISHING.md): KEYSTORE_RAW, KEYSTORE_PASSWORD,
+# KEY_ALIAS, KEY_PASSWORD, plus the optional KEYSTORE_SHA256 / KEYSTORE_SHA1 /
+# KEYSTORE_OWNER identity checks.
+
 on:
   push:
     branches: [ main ]
@@ -25,30 +40,107 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
+
       - name: Build Debug APK
         run: ./gradlew assembleDebug
-      - name: Build Release APK
-        run: ./gradlew assembleRelease
-        # Assuming you have set up signing or this is an unsigned release build
-      - name: Build Release Bundle (AAB)
-        run: ./gradlew bundleRelease
-        # Unsigned in PR CI (no keystore secrets — the signing config only
-        # attaches when keystore material is present). This exercises
+
+      # ---- Non-tag runs: unsigned, never published ------------------------
+      - name: Build Release APK + Bundle (unsigned CI check)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: ./gradlew assembleRelease bundleRelease
+        # Unsigned by design — no keystore secrets are wired in here, and fork
+        # PRs couldn't read them anyway. This still exercises
         # :app:packageReleaseBundle / bundletool, so dynamic-feature
         # bundle-merge conflicts (e.g. clashing META-INF/*.version metadata
-        # between :app and :feature_findmyphone) are caught here instead of
-        # only surfacing later in the Release to Play workflow.
-      - name: Upload Artifacts
+        # between :app and :feature_findmyphone) are caught in PR CI rather
+        # than at release time. Nothing from this step is ever published.
+
+      # ---- Tag runs: signed, and proven signed before publishing ----------
+      - name: Prepare signing keystore
+        id: keystore
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: ./.github/actions/android-keystore
+        with:
+          keystore-raw: ${{ secrets.KEYSTORE_RAW }}
+          keystore-private: ${{ secrets.KEYSTORE_PRIVATE }}
+          keystore-rsa: ${{ secrets.KEYSTORE_RSA }}
+          keystore-public: ${{ secrets.KEYSTORE_PUBLIC }}
+          keystore-chain: ${{ secrets.KEYSTORE_CHAIN }}
+          keystore-password: ${{ secrets.KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.KEY_ALIAS }}
+          key-password: ${{ secrets.KEY_PASSWORD }}
+          expected-sha256: ${{ secrets.KEYSTORE_SHA256 }}
+          expected-sha1: ${{ secrets.KEYSTORE_SHA1 }}
+          expected-owner: ${{ secrets.KEYSTORE_OWNER }}
+
+      - name: Build signed Release APK + Bundle
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          QUICLOC_KEYSTORE_FILE: ${{ steps.keystore.outputs.keystore-path }}
+          QUICLOC_KEYSTORE_TYPE: ${{ steps.keystore.outputs.store-type }}
+          QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          QUICLOC_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          QUICLOC_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          QUICLOC_REQUIRE_SIGNING: 'true'
+        run: ./gradlew assembleRelease bundleRelease
+
+      - name: Collect signed artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          mkdir -p signed
+          apk=$(find app/build/outputs/apk/release -name "*.apk" ! -name "*-unsigned.apk" | head -n1)
+          aab=$(find app/build/outputs/bundle/release -name "*.aab" | head -n1)
+          if [ -z "$apk" ] || [ -z "$aab" ]; then
+            echo "::error::Expected a signed APK and an AAB. Found apk='$apk' aab='$aab'."
+            find app/build/outputs -name "*.apk" -o -name "*.aab" || true
+            exit 1
+          fi
+          version=$(./gradlew -q :app:printVersionName)
+          cp "$apk" "signed/QuicLoc-v${version}.apk"
+          cp "$aab" "signed/QuicLoc-v${version}.aab"
+          echo "SIGNED_APK=signed/QuicLoc-v${version}.apk" >> "$GITHUB_ENV"
+          echo "SIGNED_AAB=signed/QuicLoc-v${version}.aab" >> "$GITHUB_ENV"
+
+      - name: Verify APK signature
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: ./.github/actions/verify-android-signature
+        with:
+          artifact: ${{ env.SIGNED_APK }}
+          expected-sha256: ${{ steps.keystore.outputs.sha256 }}
+
+      - name: Verify bundle signature
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: ./.github/actions/verify-android-signature
+        with:
+          artifact: ${{ env.SIGNED_AAB }}
+          expected-sha256: ${{ steps.keystore.outputs.sha256 }}
+
+      - name: Upload debug artifact
         uses: actions/upload-artifact@v4
         with:
           name: apks
-          path: app/build/outputs/apk/
-          
+          path: app/build/outputs/apk/debug/*.apk
+
+      # Only the verified, signed artifacts reach the release job — the debug
+      # APK is deliberately not among them. It carries Android's shared debug
+      # signature, so shipping it alongside a real release gives users an APK
+      # they can install but never upgrade from.
+      - name: Upload signed release artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-release
+          path: signed/*
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
@@ -56,13 +148,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download Artifacts
+      - name: Download signed artifacts
         uses: actions/download-artifact@v4
         with:
-          name: apks
+          name: signed-release
+          path: signed
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            **/debug/*.apk
-            **/release/*.apk
+          files: signed/*
+          fail_on_unmatched_files: true

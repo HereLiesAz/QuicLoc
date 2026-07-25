@@ -88,12 +88,38 @@ unsigned `assembleRelease` (e.g. a PR build with no secrets) still succeeds.
 
 | `keystore.properties` key | Gradle env var (CI sets it) | GitHub secret it comes from (CI) |
 |---------------------------|-----------------------------|----------------------------------|
-| `storeFile`               | `QUICLOC_KEYSTORE_FILE`      | `KEYSTORE_RAW` (base64 → decoded to `upload.jks`) |
-| `storePassword`           | `QUICLOC_KEYSTORE_PASSWORD`  | `KEYSTORE_SECRET`                |
+| `storeFile`               | `QUICLOC_KEYSTORE_FILE`      | `KEYSTORE_RAW` (or rebuilt from `KEYSTORE_PRIVATE`/`KEYSTORE_PUBLIC`) |
+| `storePassword`           | `QUICLOC_KEYSTORE_PASSWORD`  | `KEYSTORE_PASSWORD`              |
 | `keyAlias`                | `QUICLOC_KEY_ALIAS`          | `KEY_ALIAS`                      |
-| `keyPassword`             | `QUICLOC_KEY_PASSWORD`       | `KEY_SECRET`                     |
+| `keyPassword`             | `QUICLOC_KEY_PASSWORD`       | `KEY_PASSWORD`                   |
+| `storeType`               | `QUICLOC_KEYSTORE_TYPE`      | — (detected from the keystore's magic bytes) |
 
 The Gradle env-var names are internal to the build; the workflows set them from the GitHub secrets in the third column.
+
+There is one more env var with no `keystore.properties` equivalent: **`QUICLOC_REQUIRE_SIGNING=true`**.
+Set it and an incomplete signing config becomes a build failure instead of an unsigned artifact. Every
+publishing job sets it. Do not set it for PR CI, where unsigned is the correct outcome — fork PRs
+cannot read secrets at all.
+
+### How the keystore reaches the build
+
+Two composite actions do this work, so all three workflows behave identically:
+
+- **`.github/actions/android-keystore`** materialises the keystore, then proves it is the right one
+  *before* anything is signed. It accepts the keystore whole (`KEYSTORE_RAW`, base64 or raw; JKS,
+  JCEKS and PKCS#12 are detected from their magic bytes) or assembles a PKCS#12 from
+  `KEYSTORE_PRIVATE`/`KEYSTORE_RSA` (private key) plus `KEYSTORE_PUBLIC` (certificate) and optionally
+  `KEYSTORE_CHAIN`, in PEM or base64-wrapped PEM. It then reads the certificate back out with
+  `keytool` and compares it against `KEYSTORE_SHA256` / `KEYSTORE_SHA1` / `KEYSTORE_OWNER`. A
+  fingerprint mismatch fails the job: signing with the wrong key produces an APK that no existing
+  install can upgrade to, and that cannot be undone after publication.
+- **`.github/actions/verify-android-signature`** runs after the build and before anything is
+  published. It runs `apksigner verify --print-certs` on an APK, or reads the signer certificate out
+  of the `META-INF/*.RSA` block of an AAB, and fails if the artifact is unsigned or carries an
+  unexpected certificate.
+
+Together they close the gap that let an unsigned artifact reach a GitHub Release: Gradle silently
+skips signing when the config is incomplete, so nothing downstream used to notice.
 
 **Local `keystore.properties` template** (repo root — git-ignored, never commit it):
 
@@ -139,7 +165,9 @@ from the checked-out commit's history). Inputs:
 | `status`  | `draft`    | `draft` (review in console before going live) / `completed` |
 | `publish` | `false`    | **off** = build + upload the `.aab` as a workflow artifact only; **on** = also upload to Play |
 
-Recommended first run: leave `publish` off, download the artifact, and confirm it's signed:
+The workflow verifies the bundle's signature itself before the artifact is uploaded, and fails if it
+is unsigned or signed by an unexpected certificate — so a green run means a correctly signed bundle.
+To check by hand anyway:
 
 ```bash
 jarsigner -verify -verbose -certs app-release.aab   # or: bundletool validate --bundle=...
@@ -150,9 +178,28 @@ jarsigner -verify -verbose -certs app-release.aab   # or: bundletool validate --
 | Secret | Purpose |
 |--------|---------|
 | `KEYSTORE_RAW`              | `base64 -w0 upload.jks` — the upload keystore, base64-encoded |
-| `KEYSTORE_SECRET`           | keystore (store) password |
+| `KEYSTORE_PASSWORD`         | keystore (store) password |
 | `KEY_ALIAS`                 | key alias |
-| `KEY_SECRET`                | key password |
+| `KEY_PASSWORD`              | key password (leave unset if it is the same as the store password) |
+
+Optional, and worth setting — they are what turns "the build signed something" into "the build signed
+it with *our* key":
+
+| Secret | Value |
+|---|---|
+| `KEYSTORE_SHA256`           | `keytool -list -v -keystore upload.jks -alias <alias>` → the `SHA256:` line. Checked before signing and again after. |
+| `KEYSTORE_SHA1`             | the `SHA1:` line from the same output |
+| `KEYSTORE_OWNER`            | the `Owner:` DN from the same output (mismatch warns rather than fails — the fingerprints are authoritative) |
+
+Optional, only needed if you would rather store the key material split up than as a whole keystore.
+`KEYSTORE_RAW` takes precedence when it is set:
+
+| Secret | Value |
+|---|---|
+| `KEYSTORE_PRIVATE`          | the private key, PEM (`-----BEGIN PRIVATE KEY-----`) or base64-wrapped PEM or DER |
+| `KEYSTORE_RSA`              | an alternative private-key source, used when `KEYSTORE_PRIVATE` is empty |
+| `KEYSTORE_PUBLIC`           | the signing certificate, PEM |
+| `KEYSTORE_CHAIN`            | any intermediate/root certificates, PEM |
 | `PLAY_SERVICE_ACCOUNT_JSON` | Google Play service-account JSON (only needed when `publish=true`) |
 
 `base64 -w0 upload.jks | pbcopy` (macOS) or `base64 -w0 upload.jks` (Linux) to get the `KEYSTORE_RAW` value.
@@ -160,8 +207,8 @@ jarsigner -verify -verbose -certs app-release.aab   # or: bundletool validate --
 ## One-time maintainer setup
 
 1. **Upload keystore** — generate it (above), keep it safe (losing it complicates updates
-   unless Play App Signing is enabled), and add the `KEYSTORE_RAW` / `KEYSTORE_SECRET` /
-   `KEY_ALIAS` / `KEY_SECRET` secrets.
+   unless Play App Signing is enabled), and add the `KEYSTORE_RAW` / `KEYSTORE_PASSWORD` /
+   `KEY_ALIAS` / `KEY_PASSWORD` secrets.
 2. **Enable Play App Signing** for the app (recommended) so Google manages the app signing key
    and you only hold the upload key.
 3. **Service account** — in Google Cloud, create a service account; in the **Play Console →

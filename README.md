@@ -160,7 +160,7 @@ Versions follow **A.B.C.D**, tracked in `app/version.properties`:
 
 ### CI/CD
 
-GitHub Actions builds and tests every push to `main`. Pushing a version tag (`v1.0.0`) publishes a release APK to GitHub Releases.
+GitHub Actions builds and tests every push to `main`. Pushing a version tag (`v1.0.0`) builds a **signed** release APK and AAB, verifies the signature against the expected certificate, and publishes them to GitHub Releases. PR builds are unsigned by design (fork PRs can't read secrets); no unsigned artifact is ever published — the publishing jobs fail instead. Secrets and the signing flow: [docs/PLAY_PUBLISHING.md](docs/PLAY_PUBLISHING.md).
 
 ### Google Play
 

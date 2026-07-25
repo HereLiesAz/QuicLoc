@@ -6,11 +6,16 @@ name: Release to Play
 # internal track, as a draft.
 #
 # Required repo secrets (see docs/PLAY_PUBLISHING.md):
-#   KEYSTORE_RAW               - base64 of the upload keystore (.jks)
-#   KEYSTORE_SECRET            - keystore (store) password
+#   KEYSTORE_RAW               - base64 of the upload keystore (.jks / .p12)
+#   KEYSTORE_PASSWORD          - keystore (store) password
 #   KEY_ALIAS                  - key alias
-#   KEY_SECRET                 - key password
+#   KEY_PASSWORD               - key password
 #   PLAY_SERVICE_ACCOUNT_JSON  - Google Play service-account JSON (publish only)
+#
+# Optional, used to prove the right key was loaded before anything is signed:
+#   KEYSTORE_SHA256 / KEYSTORE_SHA1 / KEYSTORE_OWNER
+# Optional, used to rebuild the keystore if KEYSTORE_RAW isn't set:
+#   KEYSTORE_PRIVATE / KEYSTORE_RSA / KEYSTORE_PUBLIC / KEYSTORE_CHAIN
 
 on:
   workflow_dispatch:
@@ -50,10 +55,21 @@ jobs:
       - name: Grant execute permission to Gradle wrapper
         run: chmod +x gradlew
 
-      - name: Decode upload keystore
-        env:
-          KEYSTORE_RAW: ${{ secrets.KEYSTORE_RAW }}
-        run: echo "$KEYSTORE_RAW" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+      - name: Prepare signing keystore
+        id: keystore
+        uses: ./.github/actions/android-keystore
+        with:
+          keystore-raw: ${{ secrets.KEYSTORE_RAW }}
+          keystore-private: ${{ secrets.KEYSTORE_PRIVATE }}
+          keystore-rsa: ${{ secrets.KEYSTORE_RSA }}
+          keystore-public: ${{ secrets.KEYSTORE_PUBLIC }}
+          keystore-chain: ${{ secrets.KEYSTORE_CHAIN }}
+          keystore-password: ${{ secrets.KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.KEY_ALIAS }}
+          key-password: ${{ secrets.KEY_PASSWORD }}
+          expected-sha256: ${{ secrets.KEYSTORE_SHA256 }}
+          expected-sha1: ${{ secrets.KEYSTORE_SHA1 }}
+          expected-owner: ${{ secrets.KEYSTORE_OWNER }}
 
       - name: Read application id
         run: echo "APP_ID=$(./gradlew -q :app:printApplicationId)" >> "$GITHUB_ENV"
@@ -136,11 +152,28 @@ jobs:
 
       - name: Build signed release bundle
         env:
-          QUICLOC_KEYSTORE_FILE: ${{ runner.temp }}/upload.jks
-          QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_SECRET }}
+          QUICLOC_KEYSTORE_FILE: ${{ steps.keystore.outputs.keystore-path }}
+          QUICLOC_KEYSTORE_TYPE: ${{ steps.keystore.outputs.store-type }}
+          QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           QUICLOC_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          QUICLOC_KEY_PASSWORD: ${{ secrets.KEY_SECRET }}
+          QUICLOC_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          # Play rejects an unsigned bundle anyway; fail here with a clear
+          # message instead of at upload time with an opaque one.
+          QUICLOC_REQUIRE_SIGNING: 'true'
         run: ./gradlew bundleRelease
+
+      - name: Verify the bundle is signed by the expected key
+        run: |
+          set -euo pipefail
+          aab=$(find app/build/outputs/bundle/release -name "*.aab" | head -n1)
+          [ -n "$aab" ] || { echo "::error::No .aab was produced."; exit 1; }
+          echo "AAB_PATH=$aab" >> "$GITHUB_ENV"
+
+      - name: Check bundle signature
+        uses: ./.github/actions/verify-android-signature
+        with:
+          artifact: ${{ env.AAB_PATH }}
+          expected-sha256: ${{ steps.keystore.outputs.sha256 }}
 
       # Read AFTER bundleRelease so it reflects the version.properties value the
       # build just incremented (matches the .aab's versionName/versionCode).
