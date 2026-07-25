@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    c0d0457b09cb49add4ed43ea4bfce1c3ec912793
-  Timestamp: 2026-07-25 20:21:31 UTC
+  Branch:    claude/app-clarity-setup-audit-8z78ae
+  Commit:    56ab62663291a8bf93e5647e5a7800c39d46ee7c
+  Timestamp: 2026-07-25 20:36:09 UTC
 ======================================================
 
 
@@ -926,6 +926,14 @@ on:
         description: "Publish to Play (off = build + upload the .aab artifact only)"
         type: boolean
         default: false
+      version_code_mode:
+        description: >
+          What to do when app/version.properties would build a versionCode Play
+          can't accept. strict = fail and tell you what to set; auto = raise it
+          for this build only (then commit the printed value).
+        type: choice
+        options: [strict, auto]
+        default: strict
 
 jobs:
   build-publish:
@@ -1022,23 +1030,68 @@ jobs:
             exit 1
           fi
 
-          # Open (then abandon) an edit — exactly the first call the upload makes.
+          # Open an edit — exactly the first call the upload makes.
           resp="$RUNNER_TEMP/edit.json"
           http=$(curl -s -o "$resp" -w "%{http_code}" -X POST \
             -H "Authorization: Bearer $access_token" \
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}/edits")
           echo "Play API edits.insert -> HTTP $http"
           echo "Response body:"; cat "$resp"; echo
-          if [ "$http" = "200" ] || [ "$http" = "201" ]; then
-            edit_id=$(jq -r '.id // empty' "$resp")
-            if [ -n "$edit_id" ]; then
-              curl -s -o /dev/null -X DELETE \
-                -H "Authorization: Bearer $access_token" \
-                "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}/edits/${edit_id}" || true
-            fi
-            echo "Play API access OK — proceeding to upload."
-          else
+          if [ "$http" != "200" ] && [ "$http" != "201" ]; then
             echo "::error::Play Developer API rejected the request (HTTP $http). See the response body above for the exact cause (403=permission/API not enabled, 404=app or first release missing, 401=bad credentials)."
+            exit 1
+          fi
+          edit_id=$(jq -r '.id // empty' "$resp")
+
+          # While the edit is open, ask Play what it already holds. A versionCode
+          # at or below the highest existing one uploads fine and then fails at
+          # rollout with "does not allow any existing users to upgrade" — an
+          # error that says nothing about version codes and is easy to misread.
+          # Better to know the number now than to find out in the console.
+          play_max=0
+          for kind in bundles apks; do
+            list="$RUNNER_TEMP/$kind.json"
+            lh=$(curl -s -o "$list" -w "%{http_code}" \
+              -H "Authorization: Bearer $access_token" \
+              "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}/edits/${edit_id}/${kind}")
+            if [ "$lh" = "200" ]; then
+              m=$(jq -r "[.${kind}[]?.versionCode // 0] | max // 0" "$list")
+              [ "$m" -gt "$play_max" ] && play_max=$m
+            else
+              echo "::warning::Could not list $kind (HTTP $lh) — that source won't be considered."
+            fi
+          done
+
+          if [ -n "$edit_id" ]; then
+            curl -s -o /dev/null -X DELETE \
+              -H "Authorization: Bearer $access_token" \
+              "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}/edits/${edit_id}" || true
+          fi
+          echo "Highest versionCode already on Play: $play_max"
+          echo "PLAY_MAX_VERSION_CODE=$play_max" >> "$GITHUB_ENV"
+          echo "Play API access OK — proceeding to upload."
+
+      # Gradle increments VERSION_D during the build, so the code this run will
+      # produce is the committed value + 1. Check that against Play *before*
+      # spending a build on it.
+      - name: Check the versionCode can clear Play
+        if: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          committed=$(grep -E '^VERSION_D=' app/version.properties | cut -d= -f2 | tr -d '[:space:]')
+          will_build=$((committed + 1))
+          play_max=${PLAY_MAX_VERSION_CODE:-0}
+          echo "version.properties VERSION_D=$committed -> this build produces versionCode $will_build"
+          echo "Play's highest versionCode: $play_max"
+          if [ "$will_build" -gt "$play_max" ]; then
+            echo "versionCode $will_build clears Play. Continuing."
+            exit 0
+          fi
+          if [ "${{ inputs.version_code_mode }}" = "auto" ]; then
+            sed -i "s/^VERSION_D=.*/VERSION_D=$play_max/" app/version.properties
+            echo "::warning::Raised VERSION_D to $play_max for this build only — it produces versionCode $((play_max + 1)). Commit VERSION_D=$((play_max + 1)) to app/version.properties so the repo matches what was published."
+          else
+            echo "::error::versionCode $will_build would not clear Play, which already has $play_max. Play would accept the upload and then refuse the rollout with \"does not allow any existing users to upgrade\". Set VERSION_D=$play_max in app/version.properties and commit (the build adds 1, giving $((play_max + 1))) — or re-run this workflow with version_code_mode=auto."
             exit 1
           fi
 
@@ -1070,13 +1123,50 @@ jobs:
       # Read AFTER bundleRelease so it reflects the version.properties value the
       # build just incremented (matches the .aab's versionName/versionCode).
       - name: Get app version
-        run: echo "VERSION_NAME=$(./gradlew -q :app:printVersionName)" >> "$GITHUB_ENV"
+        run: |
+          echo "VERSION_NAME=$(./gradlew -q :app:printVersionName)" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$(./gradlew -q :app:printVersionCode)" >> "$GITHUB_ENV"
+
+      # The pre-build check used the committed VERSION_D; this one uses what was
+      # actually built. Belt and braces, because the cost of getting it wrong is
+      # a rejected rollout and a burned versionCode.
+      - name: Confirm the built versionCode clears Play
+        if: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          play_max=${PLAY_MAX_VERSION_CODE:-0}
+          echo "Built versionCode $VERSION_CODE; Play's highest is $play_max."
+          if [ "$VERSION_CODE" -le "$play_max" ]; then
+            echo "::error::The built bundle is versionCode $VERSION_CODE but Play already has $play_max. Refusing to upload — it could not be rolled out to any existing user. Set VERSION_D=$play_max in app/version.properties and commit."
+            exit 1
+          fi
+
+      # Publishing consumes a versionCode, but the increment only happened on the
+      # runner. Without this, the next run rebuilds the same number and Play
+      # rejects it with "Version code N has already been used". Surface what to
+      # commit; the artifact carries the file so it can just be copied in.
+      - name: Report the versionCode that was consumed
+        if: ${{ inputs.publish }}
+        run: |
+          committed=$(git show HEAD:app/version.properties | grep -E '^VERSION_D=' | cut -d= -f2 | tr -d '[:space:]')
+          if [ "$committed" != "$VERSION_CODE" ]; then
+            {
+              echo "### Commit this version bump"
+              echo ""
+              echo "Published versionCode **$VERSION_CODE** (versionName $VERSION_NAME), but \`app/version.properties\` in git still says \`VERSION_D=$committed\`."
+              echo ""
+              echo "Set \`VERSION_D=$VERSION_CODE\` and commit, or the next publish rebuilds a code Play has already used."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Commit VERSION_D=$VERSION_CODE to app/version.properties — git still has $committed, and the next publish would rebuild $((committed + 1))."
+          fi
 
       - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
           name: quicloc-release-aab-${{ env.VERSION_NAME }}
-          path: app/build/outputs/bundle/release/*.aab
+          path: |
+            app/build/outputs/bundle/release/*.aab
+            app/version.properties
           if-no-files-found: error
 
       - name: Publish to Google Play
@@ -1511,6 +1601,15 @@ android {
 tasks.register("printVersionName") {
     doLast {
         println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.versionName)
+    }
+}
+
+// The versionCode that was (or would be) built, for CI to compare against what
+// Google Play already holds. Reading it from Gradle rather than parsing
+// version.properties keeps the two from drifting.
+tasks.register("printVersionCode") {
+    doLast {
+        println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.versionCode)
     }
 }
 
@@ -11428,11 +11527,11 @@ class WhitelistManagerTest {
 # FILE: app/version.properties
 ######################################################
 
-#Sun Jun 21 21:14:25 CDT 2026
+#Sat Jul 25 20:30:00 UTC 2026
 VERSION_A=1
 VERSION_B=3
 VERSION_C=6
-VERSION_D=258
+VERSION_D=2000
 
 
 ######################################################
@@ -12531,7 +12630,36 @@ To set the version, edit `app/version.properties` directly (e.g. bump `VERSION_D
 > **Play requires a strictly increasing `versionCode`.** Whatever `VERSION_D` you ship must be higher
 > than the highest code Google Play has already accepted for the app. If a release is rejected with
 > `Version code N has already been used`, raise `VERSION_D` in `version.properties` above that number
-> and commit it. (For example, if Play already has `255`, set `VERSION_D` so the built code clears it.)
+> and commit it.
+
+### Two ways this bites, and what the workflow does about it
+
+A `versionCode` that is **equal** to one Play has seen is rejected at upload with a message that says
+so: *"Version code N has already been used."* A `versionCode` that is merely **lower** than the live
+one is accepted at upload and then rejected at rollout with something far less obvious:
+
+> You cannot rollout this release because it does not allow any existing users to upgrade to the
+> newly added APKs.
+
+That is a version-code problem wearing a disguise — nobody on the higher code can "upgrade" to a
+lower one. It is easy to hit after any change to how the code is computed. This repo has hit it
+once already: Play held `255` from an early manual upload, a `+1000` offset was added to clear it
+(uploads went out at ~`1193`), and when the offset was later removed in favour of `version.properties`
+the counter dropped back to the 250s — below what was already live.
+
+The publish workflow now asks Play directly rather than assuming:
+
+1. **Preflight** lists every bundle and APK Play holds and records the highest `versionCode`.
+2. **Before building**, it compares that against what `version.properties` would produce. `strict`
+   (the default) fails with the exact number to set; `version_code_mode: auto` raises `VERSION_D` for
+   that build only and prints the value to commit.
+3. **After building**, it re-checks the actual built code and refuses to upload if it can't clear
+   Play.
+4. **After publishing**, it warns — in the job summary and the log — that `version.properties` in git
+   is now behind what was published, with the value to commit. The build increments the counter on
+   the runner, and nothing commits that back, so without this step the next publish rebuilds the same
+   number and hits *"already used"*. `version.properties` ships alongside the `.aab` artifact so the
+   bump can be copied straight in.
 
 ## Running the workflow
 
@@ -12543,6 +12671,7 @@ from the checked-out commit's history). Inputs:
 | `track`   | `internal` | `internal` / `alpha` / `beta` / `production` |
 | `status`  | `draft`    | `draft` (review in console before going live) / `completed` |
 | `publish` | `false`    | **off** = build + upload the `.aab` as a workflow artifact only; **on** = also upload to Play |
+| `version_code_mode` | `strict` | `strict` = fail if the `versionCode` can't clear Play, naming the value to set; `auto` = raise it for this build and print what to commit |
 
 The workflow verifies the bundle's signature itself before the artifact is uploaded, and fails if it
 is unsigned or signed by an unexpected certificate — so a green run means a correctly signed bundle.
