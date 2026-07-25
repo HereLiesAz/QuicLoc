@@ -62,10 +62,33 @@ android {
     val releaseStorePassword = signingProp("storePassword", "QUICLOC_KEYSTORE_PASSWORD")
     val releaseKeyAlias = signingProp("keyAlias", "QUICLOC_KEY_ALIAS")
     val releaseKeyPassword = signingProp("keyPassword", "QUICLOC_KEY_PASSWORD")
+    // JKS, JCEKS or PKCS12. Only needed when the keystore was assembled from
+    // key + certificate secrets (PKCS12); a .jks is detected automatically.
+    val releaseStoreType = signingProp("storeType", "QUICLOC_KEYSTORE_TYPE")
     // Only sign when every credential is present; otherwise fall back to an
     // unsigned release build rather than failing with a half-configured config.
     val hasReleaseSigning = releaseStoreFile != null && releaseStorePassword != null &&
         releaseKeyAlias != null && releaseKeyPassword != null
+
+    // An unsigned release build is the right outcome for PR CI (no secrets, and
+    // fork PRs can't have them) but a silent disaster for a publish job — an
+    // unsigned APK attached to a Release installs on nobody's phone. Publish
+    // workflows set QUICLOC_REQUIRE_SIGNING=true so a missing or half-configured
+    // secret fails the build here instead of producing something unusable.
+    val requireSigning = System.getenv("QUICLOC_REQUIRE_SIGNING")?.equals("true", ignoreCase = true) == true
+    if (requireSigning && !hasReleaseSigning) {
+        val missing = buildList {
+            if (releaseStoreFile == null) add("QUICLOC_KEYSTORE_FILE")
+            if (releaseStorePassword == null) add("QUICLOC_KEYSTORE_PASSWORD")
+            if (releaseKeyAlias == null) add("QUICLOC_KEY_ALIAS")
+            if (releaseKeyPassword == null) add("QUICLOC_KEY_PASSWORD")
+        }
+        throw GradleException(
+            "QUICLOC_REQUIRE_SIGNING is set but the release signing config is incomplete — " +
+                "missing: ${missing.joinToString(", ")}. Refusing to produce an unsigned release " +
+                "artifact. Check that the repository secrets are set and are readable by this job."
+        )
+    }
 
     defaultConfig {
         applicationId = "com.hereliesaz.quicloc"
@@ -98,6 +121,11 @@ android {
                 storePassword = releaseStorePassword
                 keyAlias = releaseKeyAlias
                 keyPassword = releaseKeyPassword
+                if (releaseStoreType != null) storeType = releaseStoreType
+                // Both signature schemes: v1 keeps API 26-23 installs working,
+                // v2/v3 are what modern Android verifies (and what Play expects).
+                enableV1Signing = true
+                enableV2Signing = true
             }
         }
     }

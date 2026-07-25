@@ -5,9 +5,9 @@ name: Build and Publish QuicLoc APK
 #     artifact (CI sanity + a quick downloadable build). No release is created.
 #   • workflow_dispatch     -> "Run workflow" button. Builds a SIGNED RELEASE APK
 #     (same keystore secrets as the Play workflow) and publishes it to a GitHub
-#     Release tagged v<versionName>. Requires the KEYSTORE_RAW / KEYSTORE_SECRET
-#     / KEY_ALIAS / KEY_SECRET secrets (see docs/PLAY_PUBLISHING.md) for the
-#     APK to be signed.
+#     Release tagged v<versionName>. Requires the KEYSTORE_RAW / KEYSTORE_PASSWORD
+#     / KEY_ALIAS / KEY_PASSWORD secrets (see docs/PLAY_PUBLISHING.md); the job
+#     fails rather than publishing anything unsigned if they're missing.
 
 on:
   push:
@@ -51,19 +51,33 @@ jobs:
         run: chmod +x gradlew
 
       # ---- Manual publish path: signed RELEASE APK -------------------------
-      - name: Decode upload keystore
+      - name: Prepare signing keystore
+        id: keystore
         if: github.event_name == 'workflow_dispatch'
-        env:
-          KEYSTORE_RAW: ${{ secrets.KEYSTORE_RAW }}
-        run: echo "$KEYSTORE_RAW" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+        uses: ./.github/actions/android-keystore
+        with:
+          keystore-raw: ${{ secrets.KEYSTORE_RAW }}
+          keystore-private: ${{ secrets.KEYSTORE_PRIVATE }}
+          keystore-rsa: ${{ secrets.KEYSTORE_RSA }}
+          keystore-public: ${{ secrets.KEYSTORE_PUBLIC }}
+          keystore-chain: ${{ secrets.KEYSTORE_CHAIN }}
+          keystore-password: ${{ secrets.KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.KEY_ALIAS }}
+          key-password: ${{ secrets.KEY_PASSWORD }}
+          expected-sha256: ${{ secrets.KEYSTORE_SHA256 }}
+          expected-sha1: ${{ secrets.KEYSTORE_SHA1 }}
+          expected-owner: ${{ secrets.KEYSTORE_OWNER }}
 
       - name: Build signed Release APK
         if: github.event_name == 'workflow_dispatch'
         env:
-          QUICLOC_KEYSTORE_FILE: ${{ runner.temp }}/upload.jks
-          QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_SECRET }}
+          QUICLOC_KEYSTORE_FILE: ${{ steps.keystore.outputs.keystore-path }}
+          QUICLOC_KEYSTORE_TYPE: ${{ steps.keystore.outputs.store-type }}
+          QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           QUICLOC_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          QUICLOC_KEY_PASSWORD: ${{ secrets.KEY_SECRET }}
+          QUICLOC_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          # Fail the build rather than emit app-release-unsigned.apk.
+          QUICLOC_REQUIRE_SIGNING: 'true'
         run: ./gradlew assembleRelease
 
       # ---- CI path (push / pull_request): DEBUG APK artifact only ----------
@@ -79,8 +93,14 @@ jobs:
       - name: Locate & rename APK
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Signed -> app-release.apk; unsigned fallback -> app-release-unsigned.apk
-            SRC=$(find app/build/outputs/apk/release -name "*.apk" | head -n1)
+            # Signing is mandatory on this path, so an *-unsigned.apk here means
+            # something went wrong upstream — refuse it rather than ship it.
+            SRC=$(find app/build/outputs/apk/release -name "*.apk" ! -name "*-unsigned.apk" | head -n1)
+            if [ -z "$SRC" ]; then
+              echo "::error::No signed release APK was produced. Only these exist:"
+              find app/build/outputs/apk/release -name "*.apk" || true
+              exit 1
+            fi
           else
             SRC=app/build/outputs/apk/debug/app-debug.apk
           fi
@@ -90,6 +110,13 @@ jobs:
           OUT="app/build/outputs/QuicLoc-v${VERSION_NAME}.apk"
           mv "$SRC" "$OUT"
           echo "APK_PATH=$OUT" >> "$GITHUB_ENV"
+
+      - name: Verify the APK is signed by the expected key
+        if: github.event_name == 'workflow_dispatch'
+        uses: ./.github/actions/verify-android-signature
+        with:
+          artifact: ${{ env.APK_PATH }}
+          expected-sha256: ${{ steps.keystore.outputs.sha256 }}
 
       - name: Sanitize branch name
         run: |
