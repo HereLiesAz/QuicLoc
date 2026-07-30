@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    d18dac888b4cbfc6efcfe2b8a6a0e80a68823732
-  Timestamp: 2026-07-30 12:07:35 UTC
+  Commit:    ad40abffd03c67c15ea372b3b01007e1084481f9
+  Timestamp: 2026-07-30 12:27:06 UTC
 ======================================================
 
 
@@ -466,6 +466,7 @@ runs:
   using: "composite"
   steps:
     - name: Ensure publish script is executable
+      shell: bash
       run: |
         chmod +x ./.github/actions/play-publish/publish.sh || true
 
