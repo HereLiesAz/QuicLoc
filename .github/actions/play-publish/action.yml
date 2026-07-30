@@ -1,1 +1,42 @@
-[REPLACE_CONTENT]
+name: "play-publish"
+description: "Publish AAB to Google Play (composite action)"
+inputs:
+  service_account_json:
+    description: "Service account JSON (full text)"
+    required: true
+  aab_path:
+    description: "Path to built .aab"
+    required: true
+  track:
+    description: "Release track (production, beta, internal)"
+    required: true
+    default: "internal"
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Prepare service account
+      shell: bash
+      run: |
+        set -euo pipefail
+        sa="$RUNNER_TEMP/sa.json"
+        umask 077
+        printf '%s' "${{ inputs.service_account_json }}" > "$sa"
+        if ! jq -e . "$sa" >/dev/null 2>&1; then
+          echo "::error::Service account JSON is not valid JSON."
+          exit 1
+        fi
+
+    - name: Run publish script
+      shell: bash
+      run: |
+        set -euo pipefail
+        script="./.github/actions/play-publish/publish.sh"
+        if [ -f "$script" ]; then
+          bash "$script" "${{ inputs.aab_path }}" "${{ inputs.track }}"
+        else
+          echo "::error::publish.sh not found in play-publish action directory"
+          exit 1
+        fi
