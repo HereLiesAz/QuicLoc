@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    37d46e3b0ed678daefbff483c98b3def75713d17
-  Timestamp: 2026-07-30 03:59:07 UTC
+  Branch:    claude/app-clarity-setup-audit-8z78ae
+  Commit:    a22c38bac809439a5de9bdeabdca201d0b0be298
+  Timestamp: 2026-07-30 05:45:01 UTC
 ======================================================
 
 
@@ -315,6 +315,335 @@ runs:
 
         rm -f "$work/cert.err"
         echo "Keystore ready ($store_type), alias '$KEY_ALIAS' verified."
+
+
+######################################################
+# FILE: .github/actions/play-api-token/action.yml
+######################################################
+
+name: Mint a Google Play API access token
+description: >
+  Exchange the service-account JSON for an androidpublisher OAuth token, and
+  write it to a file. Used by both the preflight and the publish step.
+
+# Self-contained: jq + openssl + curl, all present on ubuntu-latest. No
+# third-party action gets to see the key.
+#
+# The token lands in a file rather than a step output because outputs are
+# easy to leak into logs by accident, and this is a bearer credential for the
+# app's Play listing. It is also masked, belt and braces.
+#
+# Tokens are minted with a 5-minute life. Mint one immediately before the calls
+# that need it — don't mint before a build and use it after.
+
+inputs:
+  service-account-json:
+    description: The PLAY_SERVICE_ACCOUNT_JSON secret, verbatim.
+    required: true
+
+outputs:
+  token-file:
+    description: Path to a file containing the bearer token (no trailing newline).
+    value: ${{ steps.mint.outputs.token-file }}
+  client-email:
+    description: The service account's email, for logging.
+    value: ${{ steps.mint.outputs.client-email }}
+
+runs:
+  using: composite
+  steps:
+    - id: mint
+      shell: bash
+      env:
+        SERVICE_ACCOUNT_JSON: ${{ inputs.service-account-json }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${SERVICE_ACCOUNT_JSON:-}" ]; then
+          echo "::error::PLAY_SERVICE_ACCOUNT_JSON secret is empty or unset — set it to the full service-account JSON."
+          exit 1
+        fi
+        sa="$RUNNER_TEMP/sa.json"
+        umask 077
+        printf '%s' "$SERVICE_ACCOUNT_JSON" > "$sa"
+        if ! jq -e . "$sa" >/dev/null 2>&1; then
+          echo "::error::PLAY_SERVICE_ACCOUNT_JSON is not valid JSON."
+          exit 1
+        fi
+        client_email=$(jq -r '.client_email // empty' "$sa")
+        token_uri=$(jq -r '.token_uri // "https://oauth2.googleapis.com/token"' "$sa")
+        if [ -z "$client_email" ]; then
+          echo "::error::Service-account JSON is missing client_email — the secret is malformed."
+          exit 1
+        fi
+        echo "Service account: $client_email"
+
+        # RS256-signed JWT, exchanged for an androidpublisher access token.
+        b64url() { openssl base64 -e -A | tr '+/' '-_' | tr -d '='; }
+        now=$(date +%s); exp=$((now + 300))
+        header_b64=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)
+        claim_b64=$(jq -nc --arg iss "$client_email" --arg aud "$token_uri" \
+          --argjson iat "$now" --argjson exp "$exp" \
+          '{iss:$iss, scope:"https://www.googleapis.com/auth/androidpublisher", aud:$aud, iat:$iat, exp:$exp}' \
+          | b64url)
+        jq -r '.private_key' "$sa" > "$RUNNER_TEMP/key.pem"
+        sig=$(printf '%s' "$header_b64.$claim_b64" | openssl dgst -sha256 -sign "$RUNNER_TEMP/key.pem" | b64url)
+        jwt="$header_b64.$claim_b64.$sig"
+        rm -f "$RUNNER_TEMP/key.pem"
+
+        resp="$RUNNER_TEMP/token.json"
+        curl -s -o "$resp" -X POST "$token_uri" \
+          --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
+          --data-urlencode "assertion=$jwt"
+        access_token=$(jq -r '.access_token // empty' "$resp")
+        if [ -z "$access_token" ]; then
+          echo "::error::Could not obtain an access token — $token_uri rejected the service-account credentials."
+          echo "Error from the token endpoint: $(jq -r '.error_description // .error // "no detail"' "$resp")"
+          exit 1
+        fi
+        echo "::add-mask::$access_token"
+
+        token_file="$RUNNER_TEMP/play-token"
+        printf '%s' "$access_token" > "$token_file"
+        chmod 600 "$token_file"
+        rm -f "$resp"
+
+        {
+          echo "token-file=$token_file"
+          echo "client-email=$client_email"
+        } >> "$GITHUB_OUTPUT"
+
+
+######################################################
+# FILE: .github/actions/play-publish/action.yml
+######################################################
+
+name: Publish an AAB to every Play track
+description: >
+  Upload the bundle once and assign that same versionCode to every track in a
+  single Play edit — rolled out on one track, staged as a draft on the rest.
+
+# Why this is hand-rolled rather than r0adkll/upload-google-play: that action
+# creates its own edit and uploads the .aab per invocation, so "same bundle in
+# four tracks" would mean four uploads of the same versionCode — and Play
+# rejects a versionCode it has already seen. The API is built for this: one
+# edit, one bundles.upload, N tracks.update, one commit. Every track ends up
+# pointing at the identical artifact, bit for bit.
+#
+# Track behaviour:
+#   completed-track -> status "completed", i.e. actually rolled out
+#   draft-tracks    -> status "draft", staged in the console for a human to
+#                      review and roll out later. Nothing reaches users.
+#
+# A track that Play refuses (not configured for this app, or not available on
+# the account) is warned about and skipped — one awkward track must not throw
+# away a good internal rollout.
+
+inputs:
+  package-name:
+    description: applicationId, e.g. com.hereliesaz.quicloc.
+    required: true
+  aab:
+    description: Path to the signed .aab to upload.
+    required: true
+  token-file:
+    description: File holding a Play API bearer token (from the play-api-token action).
+    required: true
+  expected-version-code:
+    description: >
+      The versionCode the build produced. The upload's reported code is checked
+      against it, so a stale artifact can't be published by mistake.
+    required: false
+    default: ''
+  completed-track:
+    description: Track to actually roll out to.
+    required: false
+    default: internal
+  draft-tracks:
+    description: Space-separated tracks to stage a draft release in.
+    required: false
+    default: alpha beta production
+  release-name:
+    description: Release name shown in the console, e.g. the versionName.
+    required: false
+    default: ''
+  release-notes:
+    description: Optional en-US release notes attached to every track's release.
+    required: false
+    default: ''
+
+outputs:
+  version-code:
+    description: The versionCode Play recorded for the uploaded bundle.
+    value: ${{ steps.publish.outputs.version-code }}
+  rolled-out:
+    description: Track that received a completed release (empty if it failed).
+    value: ${{ steps.publish.outputs.rolled-out }}
+  drafted:
+    description: Space-separated tracks that received a draft release.
+    value: ${{ steps.publish.outputs.drafted }}
+
+runs:
+  using: composite
+  steps:
+    - id: publish
+      shell: bash
+      env:
+        PKG: ${{ inputs.package-name }}
+        AAB: ${{ inputs.aab }}
+        TOKEN_FILE: ${{ inputs.token-file }}
+        EXPECTED_VERSION_CODE: ${{ inputs.expected-version-code }}
+        COMPLETED_TRACK: ${{ inputs.completed-track }}
+        DRAFT_TRACKS: ${{ inputs.draft-tracks }}
+        RELEASE_NAME: ${{ inputs.release-name }}
+        RELEASE_NOTES: ${{ inputs.release-notes }}
+      run: |
+        set -euo pipefail
+
+        [ -f "$AAB" ] || { echo "::error::No bundle at $AAB."; exit 1; }
+        token=$(cat "$TOKEN_FILE")
+        api="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PKG"
+        upload_api="https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/$PKG"
+        tmp="$RUNNER_TEMP/play"
+        mkdir -p "$tmp"
+
+        # curl wrapper: body to $1, prints the HTTP status.
+        call() {
+          local out="$1"; shift
+          curl -sS -o "$out" -w "%{http_code}" -H "Authorization: Bearer $token" "$@"
+        }
+
+        # ---- one edit for everything ---------------------------------------
+        http=$(call "$tmp/edit.json" -X POST "$api/edits")
+        if [ "$http" != "200" ] && [ "$http" != "201" ]; then
+          echo "::error::Could not open a Play edit (HTTP $http)."
+          cat "$tmp/edit.json"; exit 1
+        fi
+        edit=$(jq -r '.id' "$tmp/edit.json")
+        echo "Edit $edit opened."
+
+        # Abandon the edit on any failure from here on, so a half-built release
+        # isn't left sitting in the console.
+        cleanup() {
+          if [ "${committed:-0}" != "1" ] && [ -n "${edit:-}" ]; then
+            echo "Abandoning edit $edit (nothing was committed)."
+            curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" \
+              "$api/edits/$edit" || true
+          fi
+        }
+        trap cleanup EXIT
+
+        # ---- upload the bundle exactly once --------------------------------
+        echo "Uploading $(basename "$AAB") ($(du -h "$AAB" | cut -f1))…"
+        http=$(call "$tmp/bundle.json" -X POST \
+          -H "Content-Type: application/octet-stream" \
+          --data-binary "@$AAB" \
+          "$upload_api/edits/$edit/bundles?uploadType=media")
+        if [ "$http" != "200" ]; then
+          echo "::error::Bundle upload failed (HTTP $http)."
+          cat "$tmp/bundle.json"
+          echo "A 403 usually means the service account can't manage this app; a 400 mentioning the version code means Play already has it."
+          exit 1
+        fi
+        version_code=$(jq -r '.versionCode' "$tmp/bundle.json")
+        echo "Play accepted the bundle as versionCode $version_code."
+
+        if [ -n "${EXPECTED_VERSION_CODE:-}" ] && [ "$version_code" != "$EXPECTED_VERSION_CODE" ]; then
+          echo "::error::Play recorded versionCode $version_code but this run built $EXPECTED_VERSION_CODE. Refusing to continue — the artifact and the build have diverged."
+          exit 1
+        fi
+
+        # ---- release payload, shared by every track ------------------------
+        # Identical versionCodes everywhere is the whole point: whatever gets
+        # promoted later is the exact artifact that was tested on internal.
+        notes_json='[]'
+        if [ -n "${RELEASE_NOTES:-}" ]; then
+          notes_json=$(jq -nc --arg t "$RELEASE_NOTES" '[{language:"en-US", text:$t}]')
+        fi
+        release_body() { # $1 = status
+          jq -nc \
+            --arg name "${RELEASE_NAME:-}" \
+            --arg status "$1" \
+            --arg vc "$version_code" \
+            --argjson notes "$notes_json" \
+            '{releases: [
+                ({versionCodes: [$vc], status: $status}
+                 + (if $name == "" then {} else {name: $name} end)
+                 + (if ($notes | length) == 0 then {} else {releaseNotes: $notes} end))
+             ]}'
+        }
+
+        set_track() { # $1 = track, $2 = status ; 0 on success
+          local track="$1" status="$2" body code
+          body=$(release_body "$status")
+          code=$(curl -sS -o "$tmp/track-$track.json" -w "%{http_code}" \
+            -X PUT \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -d "$body" \
+            "$api/edits/$edit/tracks/$track")
+          if [ "$code" = "200" ]; then
+            echo "  $track -> $status"
+            return 0
+          fi
+          echo "::warning::Could not set the $track track to $status (HTTP $code): $(jq -r '.error.message // "no message"' "$tmp/track-$track.json")"
+          return 1
+        }
+
+        # ---- roll out on one track, stage drafts on the others -------------
+        rolled_out=""
+        if set_track "$COMPLETED_TRACK" completed; then
+          rolled_out="$COMPLETED_TRACK"
+        else
+          echo "::error::The $COMPLETED_TRACK track could not be set to completed — that is the one track this workflow must land. Nothing has been committed."
+          exit 1
+        fi
+
+        drafted=""
+        for track in $DRAFT_TRACKS; do
+          [ "$track" = "$COMPLETED_TRACK" ] && continue
+          if set_track "$track" draft; then
+            drafted="${drafted:+$drafted }$track"
+          fi
+        done
+
+        # ---- commit ---------------------------------------------------------
+        # Apps whose changes can't be auto-submitted for review need
+        # changesNotSentForReview=true; Play says so in the error rather than
+        # accepting it silently, so retry once that way.
+        http=$(call "$tmp/commit.json" -X POST "$api/edits/$edit:commit")
+        if [ "$http" != "200" ]; then
+          msg=$(jq -r '.error.message // ""' "$tmp/commit.json")
+          if printf '%s' "$msg" | grep -qi "changesNotSentForReview"; then
+            echo "Play asked for changesNotSentForReview — retrying commit with it."
+            http=$(call "$tmp/commit.json" -X POST "$api/edits/$edit:commit?changesNotSentForReview=true")
+          fi
+        fi
+        if [ "$http" != "200" ]; then
+          echo "::error::Committing the edit failed (HTTP $http). Nothing was published."
+          cat "$tmp/commit.json"; exit 1
+        fi
+        committed=1
+        echo "Edit committed."
+
+        {
+          echo "version-code=$version_code"
+          echo "rolled-out=$rolled_out"
+          echo "drafted=$drafted"
+        } >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### Published to Google Play"
+          echo ""
+          echo "| | |"
+          echo "|---|---|"
+          echo "| versionCode | \`$version_code\` |"
+          echo "| Release name | ${RELEASE_NAME:-—} |"
+          echo "| Rolled out (completed) | **$rolled_out** |"
+          echo "| Staged as draft | ${drafted:-none} |"
+          echo ""
+          echo "Every track points at the same bundle, so promoting a draft ships the exact artifact that went to $rolled_out."
+        } >> "$GITHUB_STEP_SUMMARY"
 
 
 ######################################################
@@ -892,10 +1221,17 @@ jobs:
 
 name: Release to Play
 
-# Manual, signed Android App Bundle build + (optional) Google Play upload.
-# Defaults are deliberately safe: builds the .aab and uploads it as a workflow
-# artifact, and only pushes to Play when `publish` is explicitly enabled, to the
-# internal track, as a draft.
+# Signed Android App Bundle build + Google Play publish.
+#
+# One build, one upload, every track: the bundle is rolled out (status
+# "completed") on internal testing, and the *same* versionCode is staged as a
+# draft on closed testing, open testing and production. Promoting any of those
+# drafts later ships the exact artifact internal testers used — no rebuild, no
+# re-sign, no second versionCode.
+#
+# Nothing reaches the public: drafts sit in the console until a human rolls them
+# out. `publish: false` builds and uploads the artifact here without touching
+# Play at all.
 #
 # Required repo secrets (see docs/PLAY_PUBLISHING.md):
 #   KEYSTORE_RAW               - base64 of the upload keystore (.jks / .p12)
@@ -912,20 +1248,23 @@ name: Release to Play
 on:
   workflow_dispatch:
     inputs:
-      track:
-        description: "Play track"
+      publish:
+        description: "Publish to Play (off = build the .aab and upload it as a workflow artifact only)"
+        type: boolean
+        default: true
+      completed_track:
+        description: "Track to actually roll out to"
         type: choice
         options: [internal, alpha, beta, production]
         default: internal
-      status:
-        description: "Release status"
-        type: choice
-        options: [draft, completed]
-        default: draft
-      publish:
-        description: "Publish to Play (off = build + upload the .aab artifact only)"
-        type: boolean
-        default: false
+      draft_tracks:
+        description: "Tracks to stage the same bundle in as a draft (space-separated)"
+        type: string
+        default: alpha beta production
+      release_notes:
+        description: "Optional en-US release notes attached to every track's release"
+        type: string
+        default: ''
       version_code_mode:
         description: >
           What to do when app/version.properties would build a versionCode Play
@@ -974,67 +1313,38 @@ jobs:
       - name: Read application id
         run: echo "APP_ID=$(./gradlew -q :app:printApplicationId)" >> "$GITHUB_ENV"
 
-      # Preflight the Google Play Developer API before the upload step, because
-      # r0adkll/upload-google-play reports every API failure as a useless
-      # "Unknown error occurred." This authenticates with the service account
-      # and opens an edit (the same first call the upload makes), surfacing the
-      # real HTTP status + Google error message so failures are diagnosable:
+      # Everything Play-related is hand-rolled against the API (curl + jq +
+      # openssl, all on ubuntu-latest) rather than delegated to a third-party
+      # action: it is the only way to get one upload into several tracks, and it
+      # means the signing key and the service account never leave this repo's
+      # own actions.
+      - name: Mint a Play API token (preflight)
+        id: preflight-token
+        if: ${{ inputs.publish }}
+        uses: ./.github/actions/play-api-token
+        with:
+          service-account-json: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+
+      # Fail early and legibly. r0adkll/upload-google-play used to report every
+      # API problem as "Unknown error occurred."; opening an edit here surfaces
+      # the real status instead:
       #   401 -> bad/blocked credentials
       #   403 -> service account lacks permission, or the Play Developer API
       #          isn't enabled for its project
       #   404 -> app/package not found, i.e. no manual first release exists yet
-      # Self-contained (jq + openssl + curl, all on ubuntu-latest); never prints
-      # the private key or access token. Only runs when actually publishing.
+      # It also reads back the highest versionCode Play holds, which is the
+      # number the next step needs.
       - name: Preflight Google Play API access
         if: ${{ inputs.publish }}
-        env:
-          SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
         run: |
           set -euo pipefail
-          if [ -z "${SERVICE_ACCOUNT_JSON:-}" ]; then
-            echo "::error::PLAY_SERVICE_ACCOUNT_JSON secret is empty or unset — set it to the full service-account JSON."
-            exit 1
-          fi
-          sa="$RUNNER_TEMP/sa.json"
-          printf '%s' "$SERVICE_ACCOUNT_JSON" > "$sa"
-          if ! jq -e . "$sa" >/dev/null 2>&1; then
-            echo "::error::PLAY_SERVICE_ACCOUNT_JSON is not valid JSON."
-            exit 1
-          fi
-          client_email=$(jq -r '.client_email // empty' "$sa")
-          token_uri=$(jq -r '.token_uri // "https://oauth2.googleapis.com/token"' "$sa")
-          if [ -z "$client_email" ]; then
-            echo "::error::Service-account JSON is missing client_email — the secret is malformed."
-            exit 1
-          fi
-          echo "Service account: $client_email"
-          echo "Package:         $APP_ID"
+          token=$(cat "${{ steps.preflight-token.outputs.token-file }}")
+          api="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}"
+          echo "Package: $APP_ID"
 
-          # Mint an RS256-signed JWT and exchange it for an androidpublisher access token.
-          b64url() { openssl base64 -e -A | tr '+/' '-_' | tr -d '='; }
-          now=$(date +%s); exp=$((now + 300))
-          header_b64=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)
-          claim_b64=$(jq -nc --arg iss "$client_email" --arg aud "$token_uri" \
-            --argjson iat "$now" --argjson exp "$exp" \
-            '{iss:$iss, scope:"https://www.googleapis.com/auth/androidpublisher", aud:$aud, iat:$iat, exp:$exp}' \
-            | b64url)
-          jq -r '.private_key' "$sa" > "$RUNNER_TEMP/key.pem"
-          sig=$(printf '%s' "$header_b64.$claim_b64" | openssl dgst -sha256 -sign "$RUNNER_TEMP/key.pem" | b64url)
-          jwt="$header_b64.$claim_b64.$sig"
-
-          access_token=$(curl -s -X POST "$token_uri" \
-            --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
-            --data-urlencode "assertion=$jwt" | jq -r '.access_token // empty')
-          if [ -z "$access_token" ]; then
-            echo "::error::Could not obtain an access token — the service-account credentials were rejected by $token_uri."
-            exit 1
-          fi
-
-          # Open an edit — exactly the first call the upload makes.
           resp="$RUNNER_TEMP/edit.json"
-          http=$(curl -s -o "$resp" -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer $access_token" \
-            "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}/edits")
+          http=$(curl -sS -o "$resp" -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $token" "$api/edits")
           echo "Play API edits.insert -> HTTP $http"
           echo "Response body:"; cat "$resp"; echo
           if [ "$http" != "200" ] && [ "$http" != "201" ]; then
@@ -1051,9 +1361,8 @@ jobs:
           play_max=0
           for kind in bundles apks; do
             list="$RUNNER_TEMP/$kind.json"
-            lh=$(curl -s -o "$list" -w "%{http_code}" \
-              -H "Authorization: Bearer $access_token" \
-              "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}/edits/${edit_id}/${kind}")
+            lh=$(curl -sS -o "$list" -w "%{http_code}" \
+              -H "Authorization: Bearer $token" "$api/edits/${edit_id}/${kind}")
             if [ "$lh" = "200" ]; then
               m=$(jq -r "[.${kind}[]?.versionCode // 0] | max // 0" "$list")
               [ "$m" -gt "$play_max" ] && play_max=$m
@@ -1063,13 +1372,12 @@ jobs:
           done
 
           if [ -n "$edit_id" ]; then
-            curl -s -o /dev/null -X DELETE \
-              -H "Authorization: Bearer $access_token" \
-              "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}/edits/${edit_id}" || true
+            curl -sS -o /dev/null -X DELETE \
+              -H "Authorization: Bearer $token" "$api/edits/${edit_id}" || true
           fi
           echo "Highest versionCode already on Play: $play_max"
           echo "PLAY_MAX_VERSION_CODE=$play_max" >> "$GITHUB_ENV"
-          echo "Play API access OK — proceeding to upload."
+          echo "Play API access OK — proceeding to build."
 
       # Gradle increments VERSION_D during the build, so the code this run will
       # produce is the committed value + 1. Check that against Play *before*
@@ -1169,15 +1477,40 @@ jobs:
             app/version.properties
           if-no-files-found: error
 
-      - name: Publish to Google Play
+      # Minted here rather than reused from the preflight: tokens last 5 minutes
+      # and the build sits in between.
+      - name: Mint a Play API token (publish)
+        id: publish-token
         if: ${{ inputs.publish }}
-        uses: r0adkll/upload-google-play@v1.1.3
+        uses: ./.github/actions/play-api-token
         with:
-          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-          packageName: ${{ env.APP_ID }}
-          releaseFiles: app/build/outputs/bundle/release/*.aab
-          track: ${{ inputs.track }}
-          status: ${{ inputs.status }}
+          service-account-json: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+
+      - name: Publish to Google Play
+        id: play
+        if: ${{ inputs.publish }}
+        uses: ./.github/actions/play-publish
+        with:
+          package-name: ${{ env.APP_ID }}
+          aab: ${{ env.AAB_PATH }}
+          token-file: ${{ steps.publish-token.outputs.token-file }}
+          expected-version-code: ${{ env.VERSION_CODE }}
+          completed-track: ${{ inputs.completed_track }}
+          draft-tracks: ${{ inputs.draft_tracks }}
+          release-name: ${{ env.VERSION_NAME }}
+          release-notes: ${{ inputs.release_notes }}
+
+      - name: Say what landed where
+        if: ${{ inputs.publish }}
+        run: |
+          echo "versionCode ${{ steps.play.outputs.version-code }} is live on the ${{ steps.play.outputs.rolled-out }} track."
+          drafted="${{ steps.play.outputs.drafted }}"
+          if [ -n "$drafted" ]; then
+            echo "Drafts staged (same bundle) on: $drafted"
+            echo "Promote one in the console when you're ready — no rebuild needed."
+          else
+            echo "::warning::No draft tracks were set. Check the warnings above for which ones Play refused."
+          fi
 
 
 ######################################################
@@ -1426,7 +1759,9 @@ GitHub Actions builds and tests every push to `main`. Pushing a version tag (`v1
 
 ### Google Play
 
-Sensitive permissions (`NotificationListenerService`, background location, SMS) require manual Play review — declaration text and Data Safety guidance in [docs/DECLARATIONS.md](docs/DECLARATIONS.md). Play releases ship as a signed App Bundle built by `release-play.yml`; setup in [docs/PLAY_PUBLISHING.md](docs/PLAY_PUBLISHING.md).
+Sensitive permissions (`NotificationListenerService`, background location, SMS) require manual Play review — declaration text and Data Safety guidance in [docs/DECLARATIONS.md](docs/DECLARATIONS.md).
+
+Play releases ship as a signed App Bundle built by `release-play.yml`. One run uploads the bundle once and puts that same `versionCode` in every track: **rolled out on internal testing, staged as a draft** on closed testing, open testing and production — so promoting a draft later ships the exact artifact internal testers used. Setup and failure modes in [docs/PLAY_PUBLISHING.md](docs/PLAY_PUBLISHING.md).
 
 ---
 
@@ -12583,9 +12918,10 @@ debug APKs for sideloading.
 ## TL;DR
 
 - Local signed bundle: create `keystore.properties` (below) and run `./gradlew bundleRelease`.
-- CI: run the **Release to Play** workflow (`workflow_dispatch`). It builds a signed `.aab`
-  with a commit-count `versionCode`, uploads it as an artifact, and — only if you tick
-  `publish` — pushes it to Play (default: `internal` track, `draft` status).
+- CI: run the **Release to Play** workflow (`workflow_dispatch`). It builds a signed `.aab`,
+  uploads it as a workflow artifact, and publishes it to Play: **rolled out on internal
+  testing**, and the **same bundle staged as a draft** on closed testing, open testing and
+  production. Nothing reaches the public until you promote one of those drafts.
 
 ## Why AAB (and what about modular delivery)
 
@@ -12765,10 +13101,44 @@ from the checked-out commit's history). Inputs:
 
 | Input     | Default    | Meaning |
 |-----------|------------|---------|
-| `track`   | `internal` | `internal` / `alpha` / `beta` / `production` |
-| `status`  | `draft`    | `draft` (review in console before going live) / `completed` |
-| `publish` | `false`    | **off** = build + upload the `.aab` as a workflow artifact only; **on** = also upload to Play |
+| `publish` | `true`     | **on** = build, upload to Play, roll out on internal, draft everywhere else; **off** = build + upload the `.aab` as a workflow artifact only, Play untouched |
+| `completed_track` | `internal` | The one track that actually gets rolled out |
+| `draft_tracks` | `alpha beta production` | Tracks that get the *same* bundle staged as a draft, space-separated. A track Play refuses is warned about and skipped |
+| `release_notes` | empty | Optional en-US release notes attached to every track's release |
 | `version_code_mode` | `strict` | `strict` = fail if the `versionCode` can't clear Play, naming the value to set; `auto` = raise it for this build and print what to commit |
+
+### One upload, every track
+
+The bundle is uploaded **once**, inside a single Play "edit", and that one `versionCode` is then
+assigned to every track before the edit is committed:
+
+| Track | Status | Effect |
+|---|---|---|
+| internal | `completed` | rolled out to internal testers immediately |
+| alpha (closed testing) | `draft` | staged in the console, nobody gets it |
+| beta (open testing) | `draft` | staged in the console, nobody gets it |
+| production | `draft` | staged in the console, nobody gets it |
+
+So promoting a draft later ships **the exact artifact internal testers used** — same bytes, same
+signature, same `versionCode`. There is no rebuild, and no second `versionCode` to burn.
+
+This is why the publish step is hand-rolled against the Play API
+([`.github/actions/play-publish`](../.github/actions/play-publish/action.yml)) instead of using
+`r0adkll/upload-google-play`: that action opens its own edit and uploads the `.aab` per
+invocation, so "the same bundle in four tracks" would mean four uploads of one `versionCode` —
+and Play rejects a `versionCode` it has already accepted. The API is built for the single-edit
+shape; the action isn't.
+
+Failure behaviour is deliberate:
+
+- The **completed track failing is fatal** — that's the one track a run exists to land. The edit
+  is abandoned and nothing is published.
+- A **draft track failing is a warning**. One track that isn't configured on the account
+  shouldn't throw away a good internal rollout; the log and job summary say which ones landed.
+- If the uploaded bundle's `versionCode` doesn't match what this run built, the edit is abandoned
+  — that mismatch means a stale artifact.
+- Play sometimes requires `changesNotSentForReview=true` on commit (apps whose changes can't be
+  auto-submitted for review). The commit is retried with it automatically.
 
 The workflow verifies the bundle's signature itself before the artifact is uploaded, and fails if it
 is unsigned or signed by an unexpected certificate — so a green run means a correctly signed bundle.

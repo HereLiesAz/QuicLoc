@@ -1,0 +1,226 @@
+name: Publish an AAB to every Play track
+description: >
+  Upload the bundle once and assign that same versionCode to every track in a
+  single Play edit — rolled out on one track, staged as a draft on the rest.
+
+# Why this is hand-rolled rather than r0adkll/upload-google-play: that action
+# creates its own edit and uploads the .aab per invocation, so "same bundle in
+# four tracks" would mean four uploads of the same versionCode — and Play
+# rejects a versionCode it has already seen. The API is built for this: one
+# edit, one bundles.upload, N tracks.update, one commit. Every track ends up
+# pointing at the identical artifact, bit for bit.
+#
+# Track behaviour:
+#   completed-track -> status "completed", i.e. actually rolled out
+#   draft-tracks    -> status "draft", staged in the console for a human to
+#                      review and roll out later. Nothing reaches users.
+#
+# A track that Play refuses (not configured for this app, or not available on
+# the account) is warned about and skipped — one awkward track must not throw
+# away a good internal rollout.
+
+inputs:
+  package-name:
+    description: applicationId, e.g. com.hereliesaz.quicloc.
+    required: true
+  aab:
+    description: Path to the signed .aab to upload.
+    required: true
+  token-file:
+    description: File holding a Play API bearer token (from the play-api-token action).
+    required: true
+  expected-version-code:
+    description: >
+      The versionCode the build produced. The upload's reported code is checked
+      against it, so a stale artifact can't be published by mistake.
+    required: false
+    default: ''
+  completed-track:
+    description: Track to actually roll out to.
+    required: false
+    default: internal
+  draft-tracks:
+    description: Space-separated tracks to stage a draft release in.
+    required: false
+    default: alpha beta production
+  release-name:
+    description: Release name shown in the console, e.g. the versionName.
+    required: false
+    default: ''
+  release-notes:
+    description: Optional en-US release notes attached to every track's release.
+    required: false
+    default: ''
+
+outputs:
+  version-code:
+    description: The versionCode Play recorded for the uploaded bundle.
+    value: ${{ steps.publish.outputs.version-code }}
+  rolled-out:
+    description: Track that received a completed release (empty if it failed).
+    value: ${{ steps.publish.outputs.rolled-out }}
+  drafted:
+    description: Space-separated tracks that received a draft release.
+    value: ${{ steps.publish.outputs.drafted }}
+
+runs:
+  using: composite
+  steps:
+    - id: publish
+      shell: bash
+      env:
+        PKG: ${{ inputs.package-name }}
+        AAB: ${{ inputs.aab }}
+        TOKEN_FILE: ${{ inputs.token-file }}
+        EXPECTED_VERSION_CODE: ${{ inputs.expected-version-code }}
+        COMPLETED_TRACK: ${{ inputs.completed-track }}
+        DRAFT_TRACKS: ${{ inputs.draft-tracks }}
+        RELEASE_NAME: ${{ inputs.release-name }}
+        RELEASE_NOTES: ${{ inputs.release-notes }}
+      run: |
+        set -euo pipefail
+
+        [ -f "$AAB" ] || { echo "::error::No bundle at $AAB."; exit 1; }
+        token=$(cat "$TOKEN_FILE")
+        api="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PKG"
+        upload_api="https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/$PKG"
+        tmp="$RUNNER_TEMP/play"
+        mkdir -p "$tmp"
+
+        # curl wrapper: body to $1, prints the HTTP status.
+        call() {
+          local out="$1"; shift
+          curl -sS -o "$out" -w "%{http_code}" -H "Authorization: Bearer $token" "$@"
+        }
+
+        # ---- one edit for everything ---------------------------------------
+        http=$(call "$tmp/edit.json" -X POST "$api/edits")
+        if [ "$http" != "200" ] && [ "$http" != "201" ]; then
+          echo "::error::Could not open a Play edit (HTTP $http)."
+          cat "$tmp/edit.json"; exit 1
+        fi
+        edit=$(jq -r '.id' "$tmp/edit.json")
+        echo "Edit $edit opened."
+
+        # Abandon the edit on any failure from here on, so a half-built release
+        # isn't left sitting in the console.
+        cleanup() {
+          if [ "${committed:-0}" != "1" ] && [ -n "${edit:-}" ]; then
+            echo "Abandoning edit $edit (nothing was committed)."
+            curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" \
+              "$api/edits/$edit" || true
+          fi
+        }
+        trap cleanup EXIT
+
+        # ---- upload the bundle exactly once --------------------------------
+        echo "Uploading $(basename "$AAB") ($(du -h "$AAB" | cut -f1))…"
+        http=$(call "$tmp/bundle.json" -X POST \
+          -H "Content-Type: application/octet-stream" \
+          --data-binary "@$AAB" \
+          "$upload_api/edits/$edit/bundles?uploadType=media")
+        if [ "$http" != "200" ]; then
+          echo "::error::Bundle upload failed (HTTP $http)."
+          cat "$tmp/bundle.json"
+          echo "A 403 usually means the service account can't manage this app; a 400 mentioning the version code means Play already has it."
+          exit 1
+        fi
+        version_code=$(jq -r '.versionCode' "$tmp/bundle.json")
+        echo "Play accepted the bundle as versionCode $version_code."
+
+        if [ -n "${EXPECTED_VERSION_CODE:-}" ] && [ "$version_code" != "$EXPECTED_VERSION_CODE" ]; then
+          echo "::error::Play recorded versionCode $version_code but this run built $EXPECTED_VERSION_CODE. Refusing to continue — the artifact and the build have diverged."
+          exit 1
+        fi
+
+        # ---- release payload, shared by every track ------------------------
+        # Identical versionCodes everywhere is the whole point: whatever gets
+        # promoted later is the exact artifact that was tested on internal.
+        notes_json='[]'
+        if [ -n "${RELEASE_NOTES:-}" ]; then
+          notes_json=$(jq -nc --arg t "$RELEASE_NOTES" '[{language:"en-US", text:$t}]')
+        fi
+        release_body() { # $1 = status
+          jq -nc \
+            --arg name "${RELEASE_NAME:-}" \
+            --arg status "$1" \
+            --arg vc "$version_code" \
+            --argjson notes "$notes_json" \
+            '{releases: [
+                ({versionCodes: [$vc], status: $status}
+                 + (if $name == "" then {} else {name: $name} end)
+                 + (if ($notes | length) == 0 then {} else {releaseNotes: $notes} end))
+             ]}'
+        }
+
+        set_track() { # $1 = track, $2 = status ; 0 on success
+          local track="$1" status="$2" body code
+          body=$(release_body "$status")
+          code=$(curl -sS -o "$tmp/track-$track.json" -w "%{http_code}" \
+            -X PUT \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -d "$body" \
+            "$api/edits/$edit/tracks/$track")
+          if [ "$code" = "200" ]; then
+            echo "  $track -> $status"
+            return 0
+          fi
+          echo "::warning::Could not set the $track track to $status (HTTP $code): $(jq -r '.error.message // "no message"' "$tmp/track-$track.json")"
+          return 1
+        }
+
+        # ---- roll out on one track, stage drafts on the others -------------
+        rolled_out=""
+        if set_track "$COMPLETED_TRACK" completed; then
+          rolled_out="$COMPLETED_TRACK"
+        else
+          echo "::error::The $COMPLETED_TRACK track could not be set to completed — that is the one track this workflow must land. Nothing has been committed."
+          exit 1
+        fi
+
+        drafted=""
+        for track in $DRAFT_TRACKS; do
+          [ "$track" = "$COMPLETED_TRACK" ] && continue
+          if set_track "$track" draft; then
+            drafted="${drafted:+$drafted }$track"
+          fi
+        done
+
+        # ---- commit ---------------------------------------------------------
+        # Apps whose changes can't be auto-submitted for review need
+        # changesNotSentForReview=true; Play says so in the error rather than
+        # accepting it silently, so retry once that way.
+        http=$(call "$tmp/commit.json" -X POST "$api/edits/$edit:commit")
+        if [ "$http" != "200" ]; then
+          msg=$(jq -r '.error.message // ""' "$tmp/commit.json")
+          if printf '%s' "$msg" | grep -qi "changesNotSentForReview"; then
+            echo "Play asked for changesNotSentForReview — retrying commit with it."
+            http=$(call "$tmp/commit.json" -X POST "$api/edits/$edit:commit?changesNotSentForReview=true")
+          fi
+        fi
+        if [ "$http" != "200" ]; then
+          echo "::error::Committing the edit failed (HTTP $http). Nothing was published."
+          cat "$tmp/commit.json"; exit 1
+        fi
+        committed=1
+        echo "Edit committed."
+
+        {
+          echo "version-code=$version_code"
+          echo "rolled-out=$rolled_out"
+          echo "drafted=$drafted"
+        } >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### Published to Google Play"
+          echo ""
+          echo "| | |"
+          echo "|---|---|"
+          echo "| versionCode | \`$version_code\` |"
+          echo "| Release name | ${RELEASE_NAME:-—} |"
+          echo "| Rolled out (completed) | **$rolled_out** |"
+          echo "| Staged as draft | ${drafted:-none} |"
+          echo ""
+          echo "Every track points at the same bundle, so promoting a draft ships the exact artifact that went to $rolled_out."
+        } >> "$GITHUB_STEP_SUMMARY"
