@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    2084a8e7cafd67c035e7567e6ee36766dbc78fb7
-  Timestamp: 2026-07-30 12:02:04 UTC
+  Commit:    d18dac888b4cbfc6efcfe2b8a6a0e80a68823732
+  Timestamp: 2026-07-30 12:07:35 UTC
 ======================================================
 
 
@@ -419,48 +419,75 @@ runs:
 ######################################################
 
 name: "play-publish"
-description: "Publish AAB to Google Play (composite action using google-github-actions/upload-google-play)"
+description: "Publish AAB to Google Play using the repo's hand-rolled API calls. This preserves the original behaviour: uses a short-lived token file and uploads one built bundle into multiple tracks/drafts, then commits the edit."
+
 inputs:
-  service_account_json:
-    description: "Service account JSON (full text)"
+  package-name:
+    description: "Application package name"
     required: true
-  aab_path:
-    description: "Path to built .aab (glob allowed)"
+  aab:
+    description: "Path to the built .aab (glob allowed)"
     required: true
-  track:
-    description: "Release track (production, beta, internal)"
+  token-file:
+    description: "Path to a file containing a short-lived Play API token (created by play-api-token action)"
     required: true
-    default: "internal"
-  package_name:
-    description: "Application package name (optional). If omitted the uploader will try to detect it from the AAB."
+  expected-version-code:
+    description: "The VERSION_CODE built by Gradle (for an additional sanity check)"
     required: false
-    default: ""
+    default: ''
+  completed-track:
+    description: "Track to roll out (completed)"
+    required: true
+  draft-tracks:
+    description: "Space-separated list of tracks to stage the same bundle as drafts"
+    required: false
+    default: ''
+  release-name:
+    description: "Name of the release (e.g. version name)"
+    required: false
+    default: ''
+  release-notes:
+    description: "Release notes text (will be attached as en-US only)"
+    required: false
+    default: ''
+
+outputs:
+  version-code:
+    description: "The versionCode that was uploaded and published/drafted"
+    value: ${{ steps.publish.outputs.version-code }}
+  rolled-out:
+    description: "The completed track that was rolled out (empty if none)"
+    value: ${{ steps.publish.outputs.rolled-out }}
+  drafted:
+    description: "Space-separated list of draft tracks that were staged"
+    value: ${{ steps.publish.outputs.drafted }}
 
 runs:
   using: "composite"
   steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+    - name: Ensure publish script is executable
+      run: |
+        chmod +x ./.github/actions/play-publish/publish.sh || true
 
-    - name: Prepare service account
+    - id: publish
       shell: bash
+      env:
+        PACKAGE_NAME: ${{ inputs.package-name }}
+        AAB: ${{ inputs.aab }}
+        TOKEN_FILE: ${{ inputs.token-file }}
+        EXPECTED_VERSION_CODE: ${{ inputs.expected-version-code }}
+        COMPLETED_TRACK: ${{ inputs.completed-track }}
+        DRAFT_TRACKS: ${{ inputs.draft-tracks }}
+        RELEASE_NAME: ${{ inputs.release-name }}
+        RELEASE_NOTES: ${{ inputs.release-notes }}
       run: |
         set -euo pipefail
-        sa="$RUNNER_TEMP/sa.json"
-        umask 077
-        printf '%s' "${{ inputs.service_account_json }}" > "$sa"
-        if ! jq -e . "$sa" >/dev/null 2>&1; then
-          echo "::error::Service account JSON is not valid JSON."
-          exit 1
-        fi
-
-    - name: Upload to Google Play
-      uses: google-github-actions/upload-google-play@v1
-      with:
-        serviceAccountJsonPlainText: "${{ inputs.service_account_json }}"
-        releaseFiles: "${{ inputs.aab_path }}"
-        track: "${{ inputs.track }}"
-        packageName: "${{ inputs.package_name }}"
+        out="$RUNNER_TEMP/play-publish-out.json"
+        # Run the publisher script; it writes JSON to $out on success.
+        ./.github/actions/play-publish/publish.sh "$PACKAGE_NAME" "$AAB" "$TOKEN_FILE" "$EXPECTED_VERSION_CODE" "$COMPLETED_TRACK" "$DRAFT_TRACKS" "$RELEASE_NAME" "$RELEASE_NOTES" "$out"
+        jq -r '.versionCode // ""' "$out" | awk '{print "version-code="$0}' >> "$GITHUB_OUTPUT"
+        jq -r '.rolledOut // ""' "$out" | awk '{print "rolled-out="$0}' >> "$GITHUB_OUTPUT"
+        jq -r '.drafted // [] | join(" ")' "$out" | awk '{print "drafted="$0}' >> "$GITHUB_OUTPUT"
 
 
 ######################################################
