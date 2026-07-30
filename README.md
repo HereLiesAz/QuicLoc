@@ -167,7 +167,7 @@ GitHub Actions builds and tests every push to `main`. Pushing a version tag (`v1
 
 Sensitive permissions (`NotificationListenerService`, background location, SMS) require manual Play review — declaration text and Data Safety guidance in [docs/DECLARATIONS.md](docs/DECLARATIONS.md).
 
-Play releases ship as a signed App Bundle built by `release-play.yml`. One run uploads the bundle once and puts that same `versionCode` in every track: **rolled out on internal testing, staged as a draft** on closed testing, open testing and production — so promoting a draft later ships the exact artifact internal testers used. Setup and failure modes in [docs/PLAY_PUBLISHING.md](docs/PLAY_PUBLISHING.md).
+Play publishing follows the GitHub release automatically — the Play job is chained onto the release job, so the sideload APK goes out first and Play follows. It uploads the bundle once and puts that same `versionCode` in every track: **rolled out on internal testing, staged as a draft** on closed testing, open testing and production — so promoting a draft later ships the exact artifact internal testers used. Setup and failure modes in [docs/PLAY_PUBLISHING.md](docs/PLAY_PUBLISHING.md).
 
 ---
 

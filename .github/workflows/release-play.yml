@@ -25,6 +25,25 @@ name: Release to Play
 #   KEYSTORE_PRIVATE / KEYSTORE_RSA / KEYSTORE_PUBLIC / KEYSTORE_CHAIN
 
 on:
+  # Called by the workflows that publish a GitHub release, so a Play publish
+  # follows automatically once the release is out. Also runnable by hand.
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: true
+      completed_track:
+        type: string
+        default: internal
+      draft_tracks:
+        type: string
+        default: alpha beta production
+      release_notes:
+        type: string
+        default: ''
+      version_code_mode:
+        type: string
+        default: auto
   workflow_dispatch:
     inputs:
       publish:
@@ -46,17 +65,21 @@ on:
         default: ''
       version_code_mode:
         description: >
-          What to do when app/version.properties would build a versionCode Play
-          can't accept. strict = fail and tell you what to set; auto = raise it
-          for this build only (then commit the printed value).
+          How to pick the versionCode. auto = next after whatever Play already
+          holds, so a stale version.properties can never block a release;
+          strict = use version.properties exactly and fail if Play is ahead.
         type: choice
-        options: [strict, auto]
-        default: strict
+        options: [auto, strict]
+        default: auto
 
 jobs:
   build-publish:
     name: Build signed AAB${{ inputs.publish && ' + publish' || '' }}
     runs-on: ubuntu-latest
+    # contents: write so the consumed versionCode can be committed back — see
+    # the last step. Everything else here only talks to Google.
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -158,29 +181,40 @@ jobs:
           echo "PLAY_MAX_VERSION_CODE=$play_max" >> "$GITHUB_ENV"
           echo "Play API access OK — proceeding to build."
 
-      # Gradle increments VERSION_D during the build, so the code this run will
-      # produce is the committed value + 1. Check that against Play *before*
-      # spending a build on it.
-      - name: Check the versionCode can clear Play
+      # Gradle increments VERSION_D during the build, so the code this run
+      # would produce is the committed value + 1. If that can't clear what Play
+      # already holds, the release is dead on arrival — Play accepts the upload
+      # and then refuses the rollout.
+      #
+      # The counter drifts by design: the build increments version.properties on
+      # the runner and nothing commits it back, so the file is stale the moment
+      # anything ships. `auto` therefore treats Play as the authority and takes
+      # the next code after whatever it holds, which cannot collide no matter
+      # how far behind the file is. The last step in this job commits the number
+      # back so the repo converges with reality.
+      - name: Resolve the versionCode
         if: ${{ inputs.publish }}
         run: |
           set -euo pipefail
           committed=$(grep -E '^VERSION_D=' app/version.properties | cut -d= -f2 | tr -d '[:space:]')
-          will_build=$((committed + 1))
           play_max=${PLAY_MAX_VERSION_CODE:-0}
-          echo "version.properties VERSION_D=$committed -> this build produces versionCode $will_build"
+          next=$((committed + 1))
+          echo "version.properties VERSION_D=$committed -> would build $next"
           echo "Play's highest versionCode: $play_max"
-          if [ "$will_build" -gt "$play_max" ]; then
-            echo "versionCode $will_build clears Play. Continuing."
+
+          if [ "$next" -gt "$play_max" ]; then
+            echo "$next clears Play. Building that."
             exit 0
           fi
-          if [ "${{ inputs.version_code_mode }}" = "auto" ]; then
-            sed -i "s/^VERSION_D=.*/VERSION_D=$play_max/" app/version.properties
-            echo "::warning::Raised VERSION_D to $play_max for this build only — it produces versionCode $((play_max + 1)). Commit VERSION_D=$((play_max + 1)) to app/version.properties so the repo matches what was published."
-          else
-            echo "::error::versionCode $will_build would not clear Play, which already has $play_max. Play would accept the upload and then refuse the rollout with \"does not allow any existing users to upgrade\". Set VERSION_D=$play_max in app/version.properties and commit (the build adds 1, giving $((play_max + 1))) — or re-run this workflow with version_code_mode=auto."
+
+          if [ "${{ inputs.version_code_mode }}" = "strict" ]; then
+            echo "::error::versionCode $next would not clear Play, which already has $play_max. Set VERSION_D=$play_max in app/version.properties and commit (the build adds 1), or re-run in auto mode."
             exit 1
           fi
+
+          # Play is ahead of the file — take the next code after Play's.
+          sed -i "s/^VERSION_D=.*/VERSION_D=$play_max/" app/version.properties
+          echo "::notice::version.properties was behind Play ($committed vs $play_max). Building versionCode $((play_max + 1)) instead; it will be committed back after publishing."
 
       - name: Build signed release bundle
         env:
@@ -228,25 +262,6 @@ jobs:
             exit 1
           fi
 
-      # Publishing consumes a versionCode, but the increment only happened on the
-      # runner. Without this, the next run rebuilds the same number and Play
-      # rejects it with "Version code N has already been used". Surface what to
-      # commit; the artifact carries the file so it can just be copied in.
-      - name: Report the versionCode that was consumed
-        if: ${{ inputs.publish }}
-        run: |
-          committed=$(git show HEAD:app/version.properties | grep -E '^VERSION_D=' | cut -d= -f2 | tr -d '[:space:]')
-          if [ "$committed" != "$VERSION_CODE" ]; then
-            {
-              echo "### Commit this version bump"
-              echo ""
-              echo "Published versionCode **$VERSION_CODE** (versionName $VERSION_NAME), but \`app/version.properties\` in git still says \`VERSION_D=$committed\`."
-              echo ""
-              echo "Set \`VERSION_D=$VERSION_CODE\` and commit, or the next publish rebuilds a code Play has already used."
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "::warning::Commit VERSION_D=$VERSION_CODE to app/version.properties — git still has $committed, and the next publish would rebuild $((committed + 1))."
-          fi
-
       - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
@@ -290,3 +305,46 @@ jobs:
           else
             echo "::warning::No draft tracks were set. Check the warnings above for which ones Play refused."
           fi
+
+      # The versionCode is now spent, but the increment only ever happened on
+      # this runner. Commit it so the repo tracks what actually shipped and the
+      # GitHub release tag (v<versionName>) keeps advancing too.
+      #
+      # Deliberately non-fatal: the bundle is already published, so a protected
+      # branch or a push race must not turn a successful release into a red run.
+      # If this fails, the next run's auto resolution reads the number from Play
+      # again and still can't collide — the commit is convergence, not
+      # correctness.
+      - name: Commit the versionCode that shipped
+        if: ${{ inputs.publish && steps.play.outputs.version-code != '' }}
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          published="${{ steps.play.outputs.version-code }}"
+          for attempt in 1 2 3; do
+            git fetch origin main --quiet || true
+            # The build mutated version.properties on disk; start from main.
+            git reset --hard origin/main --quiet
+            current=$(grep -E '^VERSION_D=' app/version.properties | cut -d= -f2 | tr -d '[:space:]')
+            if [ "$current" -ge "$published" ]; then
+              echo "main already has VERSION_D=$current (>= $published) — nothing to commit."
+              exit 0
+            fi
+            sed -i "s/^VERSION_D=.*/VERSION_D=$published/" app/version.properties
+            git -c user.name="github-actions[bot]" \
+                -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                commit -q -am "chore: versionCode $published shipped to Play [skip ci]"
+            if git push --quiet origin HEAD:main; then
+              echo "Committed VERSION_D=$published to main."
+              exit 0
+            fi
+            echo "Push attempt $attempt failed (main probably moved) — retrying."
+            sleep $((attempt * 3))
+          done
+          echo "::warning::Published versionCode $published but could not commit the bump to main. Set VERSION_D=$published in app/version.properties by hand. Releases still work without it — auto mode reads the next code from Play."
+          {
+            echo "### Commit this by hand"
+            echo ""
+            echo "versionCode **$published** shipped, but the bump could not be pushed to \`main\`."
+            echo "Set \`VERSION_D=$published\` in \`app/version.properties\`."
+          } >> "$GITHUB_STEP_SUMMARY"

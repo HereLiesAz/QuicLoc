@@ -8,6 +8,8 @@ name: Build and Publish QuicLoc APK
 #     Release tagged v<versionName>. Requires the KEYSTORE_RAW / KEYSTORE_PASSWORD
 #     / KEY_ALIAS / KEY_PASSWORD secrets (see docs/PLAY_PUBLISHING.md); the job
 #     fails rather than publishing anything unsigned if they're missing.
+#     Once that release is out, the Play publish runs automatically — see the
+#     publish-play job at the bottom.
 
 on:
   push:
@@ -139,3 +141,23 @@ jobs:
           files: ${{ env.APK_PATH }}
           prerelease: ${{ inputs.prerelease }}
           fail_on_unmatched_files: true
+
+  # Automatic Play publish, gated on the GitHub release having actually gone
+  # out: `needs: build` means this only starts once the release-publishing job
+  # succeeded. Sideload first, Play second, one button.
+  #
+  # version_code_mode: auto because nothing commits the version bump before this
+  # runs — the code is taken from whatever Play already holds, so a stale
+  # version.properties can't block the release. The Play workflow commits the
+  # number back afterwards.
+  publish-play:
+    name: Publish to Google Play
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-play.yml
+    with:
+      publish: true
+      version_code_mode: auto
+    secrets: inherit

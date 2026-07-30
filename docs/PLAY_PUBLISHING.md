@@ -8,10 +8,13 @@ debug APKs for sideloading.
 ## TL;DR
 
 - Local signed bundle: create `keystore.properties` (below) and run `./gradlew bundleRelease`.
-- CI: run the **Release to Play** workflow (`workflow_dispatch`). It builds a signed `.aab`,
-  uploads it as a workflow artifact, and publishes it to Play: **rolled out on internal
-  testing**, and the **same bundle staged as a draft** on closed testing, open testing and
-  production. Nothing reaches the public until you promote one of those drafts.
+- CI: **automatic.** Publishing a GitHub release publishes to Play — the Play job is chained
+  onto the release job (`needs:`), so the sideload APK goes out first and Play follows. It
+  builds a signed `.aab`, **rolls it out on internal testing**, and stages the **same bundle
+  as a draft** on closed testing, open testing and production. Nothing reaches the public
+  until you promote one of those drafts.
+- Both release paths chain it: **Build and Publish QuicLoc APK** (`workflow_dispatch`) and
+  **CI/CD** on a `v*` tag. **Release to Play** can also still be run on its own.
 
 ## Why AAB (and what about modular delivery)
 
@@ -173,21 +176,39 @@ the counter dropped back to the 250s — below what was already live.
 The publish workflow now asks Play directly rather than assuming:
 
 1. **Preflight** lists every bundle and APK Play holds and records the highest `versionCode`.
-2. **Before building**, it compares that against what `version.properties` would produce. `strict`
-   (the default) fails with the exact number to set; `version_code_mode: auto` raises `VERSION_D` for
-   that build only and prints the value to commit.
+2. **Before building**, it compares that against what `version.properties` would produce. In `auto`
+   (the default, and what the chained callers use) `VERSION_D` is raised to Play's highest so the
+   build produces *that + 1* — which cannot collide however far behind the file is. In `strict` it
+   fails instead, naming the value to set.
 3. **After building**, it re-checks the actual built code and refuses to upload if it can't clear
    Play.
-4. **After publishing**, it warns — in the job summary and the log — that `version.properties` in git
-   is now behind what was published, with the value to commit. The build increments the counter on
-   the runner, and nothing commits that back, so without this step the next publish rebuilds the same
-   number and hits *"already used"*. `version.properties` ships alongside the `.aab` artifact so the
-   bump can be copied straight in.
+4. **After publishing**, it **commits the consumed `versionCode` back to `main`** (`chore:
+   versionCode N shipped to Play [skip ci]`). The build increments the counter on the runner only, so
+   without this the file is stale the moment anything ships, and the next run would rebuild a number
+   Play has already used. The commit is deliberately non-fatal — the bundle is published by then, so a
+   protected branch or a push race must not turn a successful release red. It retries three times, and
+   if it still can't push it says exactly what to set by hand.
+
+Between (2) and (4), a stale `version.properties` can no longer block a release *or* silently repeat
+a number: `auto` reads the floor from Play, and the commit-back makes the repo catch up.
+`version.properties` also ships alongside the `.aab` artifact.
 
 ## Running the workflow
 
-**Actions → "Release to Play" → Run workflow.** Run it from `main` (the `versionCode` derives
-from the checked-out commit's history). Inputs:
+Usually you don't: publishing a GitHub release triggers it. Either
+
+- **Actions → "Build and Publish QuicLoc APK" → Run workflow** — signed APK to a GitHub
+  release, then Play; or
+- **push a `v*` tag** — CI/CD builds the signed APK + AAB, attaches them to a GitHub release,
+  then Play.
+
+In both cases the Play publish is a separate job with `needs:` on the one that published the
+release, so it cannot run first. (A release created by a workflow using the default
+`GITHUB_TOKEN` does not itself trigger other workflows, which is why the chaining is explicit
+rather than a `release: published` trigger.)
+
+To run it alone: **Actions → "Release to Play" → Run workflow**. Inputs — the chained callers
+pass `publish: true` and `version_code_mode: auto`:
 
 | Input     | Default    | Meaning |
 |-----------|------------|---------|
@@ -195,7 +216,7 @@ from the checked-out commit's history). Inputs:
 | `completed_track` | `internal` | The one track that actually gets rolled out |
 | `draft_tracks` | `alpha beta production` | Tracks that get the *same* bundle staged as a draft, space-separated. A track Play refuses is warned about and skipped |
 | `release_notes` | empty | Optional en-US release notes attached to every track's release |
-| `version_code_mode` | `strict` | `strict` = fail if the `versionCode` can't clear Play, naming the value to set; `auto` = raise it for this build and print what to commit |
+| `version_code_mode` | `auto` | `auto` = take the next code after whatever Play holds, so a stale `version.properties` can't block a release; `strict` = use `version.properties` exactly and fail if Play is ahead |
 
 ### One upload, every track
 
