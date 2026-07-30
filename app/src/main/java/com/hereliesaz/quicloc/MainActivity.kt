@@ -41,6 +41,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -53,6 +55,7 @@ import androidx.fragment.app.FragmentActivity
 import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest
 import com.google.android.gms.auth.api.identity.Identity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -1791,8 +1794,8 @@ fun BiometricGateScreen(
                 // through in this case; this is the belt-and-braces path.
                 Text(
                     text = "This phone has no lock screen and no QuicLoc PIN, so there's " +
-                        "nothing to unlock with. You can set a QuicLoc PIN inside, under " +
-                        "\"App access & notifications\".",
+                        "nothing to unlock with. Set one inside, in the \"Your QuicLoc PIN\" " +
+                        "section of settings.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -1828,12 +1831,16 @@ fun BiometricGateScreen(
  *        1 Trusted contacts — who is allowed to ask
  *        2 The trigger word — what they send
  *        3 Home screen widget — your own number, tap patterns
- *        4 Find my phone — passphrase / PIN / Device Admin (hidden while
+ *        4 Find my phone — passphrase / Device Admin (hidden while
  *          [FindMyPhone.ENABLED] is false)
- *        5 App access & notifications — reminder notification, lock screen
- *        6 Permissions — the full grant table
- *        7 Backup & restore — export / import
- *        8 Help & troubleshooting — tutorials, history, diagnostics
+ *        5 Your QuicLoc PIN — set / change / remove
+ *        6 App access & notifications — how you get in, reminder notification
+ *        7 Permissions — the full grant table
+ *        8 Backup & restore — export / import
+ *        9 Help & troubleshooting — tutorials, history, diagnostics
+ *
+ *      Numbers come from `sectionNo()`, which derives them from the sections
+ *      actually on screen, so hiding find-my-phone renumbers the rest.
  *
  * The whole screen is in a [verticalScroll] so the user can reach every
  * contact (no nested `LazyColumn` collapse).
@@ -1879,17 +1886,42 @@ fun QuicLocScreen(
     var phoneNumberInput by remember { mutableStateOf("") }
     val scrollState = rememberScrollState()
 
-    // Same source of truth as the All Permissions table in section 6 — the
-    // checklist and the table can never disagree.
-    val setupSteps = remember(enabled, numbersList.size, myNumber, permissionStatuses) {
+    val pinSet = currentPin.isNotBlank()
+
+    // Same source of truth as the All Permissions table — the checklist and the
+    // table can never disagree.
+    val setupSteps = remember(enabled, numbersList.size, myNumber, permissionStatuses, pinSet) {
         Readiness.steps(
             enabled = enabled,
             whitelistCount = numbersList.size,
             myNumber = myNumber,
             permissions = permissionStatuses,
+            pinSet = pinSet,
         )
     }
     val ready = Readiness.isReady(setupSteps)
+
+    // Section numbers are derived from what's actually on screen, so inserting
+    // or hiding a section doesn't mean hand-renumbering everything after it.
+    val sectionOrder = buildList {
+        add("contacts")
+        add("trigger")
+        add("widget")
+        if (FindMyPhone.ENABLED) add("findmyphone")
+        add("pin")
+        add("access")
+        add("permissions")
+        add("backup")
+        add("help")
+    }
+    fun sectionNo(id: String): Int = sectionOrder.indexOf(id) + 1
+
+    // The PIN checklist row jumps to the PIN section: bump the signal to expand
+    // it, then scroll it into view. `pinSectionY` is its offset inside the
+    // scrolling Column, captured on layout.
+    var pinSectionY by remember { mutableStateOf(0) }
+    var pinExpandSignal by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
 
     // Checklist rows whose action is in-app state rather than a system
     // screen are handled here; everything else goes back to the activity.
@@ -1899,6 +1931,10 @@ fun QuicLocScreen(
             PermKeys.ADD_CONTACT -> onPickContact()
             PermKeys.MY_NUMBER -> onAutoDetectMyNumber(false)
             PermKeys.NOTIF_LISTENER -> onRequestNotificationAccess()
+            PermKeys.SET_PIN -> {
+                pinExpandSignal++
+                scope.launch { scrollState.animateScrollTo(pinSectionY) }
+            }
             else -> onPermissionAction(key)
         }
     }
@@ -1926,7 +1962,7 @@ fun QuicLocScreen(
         // 1 — Trusted contacts
         // ------------------------------------------------------------------
         SectionCard(
-            number = 1,
+            number = sectionNo("contacts"),
             title = "Trusted contacts",
             subtitle = "Who is allowed to ask where you are",
             statusText = if (numbersList.isEmpty())
@@ -2052,7 +2088,7 @@ fun QuicLocScreen(
         // 2 — The trigger word
         // ------------------------------------------------------------------
         SectionCard(
-            number = 2,
+            number = sectionNo("trigger"),
             title = "The trigger word",
             subtitle = "What a trusted contact sends you",
             statusText = if (notificationAccessGranted)
@@ -2143,7 +2179,7 @@ fun QuicLocScreen(
         // 3 — Home screen widget
         // ------------------------------------------------------------------
         SectionCard(
-            number = 3,
+            number = sectionNo("widget"),
             title = "Home screen widget",
             subtitle = "Send your location without being asked",
             statusText = "Long-press the home screen → Widgets → QuicLoc",
@@ -2263,7 +2299,7 @@ fun QuicLocScreen(
         // re-enabling the feature is a one-line flip of FindMyPhone.ENABLED.
         if (FindMyPhone.ENABLED) {
             SectionCard(
-                number = 4,
+                number = sectionNo("findmyphone"),
                 title = "Find my phone",
                 subtitle = "Lock and track this phone if it's lost or stolen",
                 statusText = if (currentPassphrase.isBlank())
@@ -2471,50 +2507,74 @@ fun QuicLocScreen(
         }
 
         // ------------------------------------------------------------------
-        // 5 — App access & notifications
+        // Your QuicLoc PIN — its own section, because it is its own decision:
+        // a second way into the app AND the key that makes backup possible.
+        // It used to live inside the section below, collapsed, where nobody
+        // found it.
+        // ------------------------------------------------------------------
+        Box(
+            modifier = Modifier.onGloballyPositioned { coords ->
+                pinSectionY = coords.positionInParent().y.toInt()
+            }
+        ) {
+            SectionCard(
+                number = sectionNo("pin"),
+                title = "Your QuicLoc PIN",
+                subtitle = "A second way in, and what makes backup possible",
+                statusText = if (pinSet)
+                    "PIN is set — unlocks the app, encrypts your backup"
+                else
+                    "No PIN — no backup, and no way in if a fingerprint fails",
+                statusOk = pinSet,
+                expandSignal = pinExpandSignal,
+            ) {
+                if (noLockScreenWarning && !pinSet) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                    ) {
+                        Text(
+                            text = "⚠ This phone has no lock screen, so anyone who picks it up can " +
+                                "open QuicLoc and read or change your trusted contacts. Setting a " +
+                                "PIN here fixes that — or set a lock screen in system settings.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+                AppPinCard(
+                    pinSet = pinSet,
+                    onSetAppPin = onSetAppPin,
+                    onClearAppPin = onClearAppPin,
+                )
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // App access & notifications
         // ------------------------------------------------------------------
         SectionCard(
-            number = if (FindMyPhone.ENABLED) 5 else 4,
+            number = sectionNo("access"),
             title = "App access & notifications",
-            subtitle = "Who can open this screen, and what shows in the shade",
+            subtitle = "How you get in, and what shows in the shade",
             statusText = when {
-                !noLockScreenWarning && currentPin.isNotBlank() ->
+                !noLockScreenWarning && pinSet ->
                     "Fingerprint, device PIN, or your QuicLoc PIN"
                 !noLockScreenWarning -> "Locked behind your fingerprint, face or device PIN"
-                currentPin.isNotBlank() -> "No device lock screen — locked by your QuicLoc PIN"
+                pinSet -> "No device lock screen — locked by your QuicLoc PIN"
                 else -> "Unlocked — this phone has no lock screen and no QuicLoc PIN"
             },
-            statusOk = !noLockScreenWarning || currentPin.isNotBlank(),
+            statusOk = !noLockScreenWarning || pinSet,
             initiallyExpanded = false,
         ) {
-            if (noLockScreenWarning && currentPin.isBlank()) {
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
-                ) {
-                    Text(
-                        text = "⚠ Anyone who picks up this phone can open QuicLoc and read or " +
-                            "change your trusted contacts. Fix it either way: set a lock screen " +
-                            "in system settings, or set a QuicLoc PIN below.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.padding(12.dp)
-                    )
-                }
-            }
             Text(
                 text = "Opening QuicLoc needs your fingerprint, face or device PIN — or the " +
-                    "QuicLoc PIN below. Answering a request needs none of them: that keeps " +
-                    "working while the phone is locked in your pocket, which is the entire point.",
+                    "QuicLoc PIN from section ${sectionNo("pin")}. Answering a request needs none " +
+                    "of them: that keeps working while the phone is locked in your pocket, which " +
+                    "is the entire point.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-            AppPinCard(
-                pinSet = currentPin.isNotBlank(),
-                onSetAppPin = onSetAppPin,
-                onClearAppPin = onClearAppPin,
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -2549,7 +2609,7 @@ fun QuicLocScreen(
             it.state == PermStatus.GRANTED || it.state == PermStatus.AUTO_GRANTED
         }
         SectionCard(
-            number = if (FindMyPhone.ENABLED) 6 else 5,
+            number = sectionNo("permissions"),
             title = "Permissions",
             subtitle = "Every permission QuicLoc uses, and its live status",
             statusText = "$grantedCount of ${permissionStatuses.size} granted",
@@ -2685,7 +2745,7 @@ fun QuicLocScreen(
         // 7 — Backup & restore
         // ------------------------------------------------------------------
         SectionCard(
-            number = if (FindMyPhone.ENABLED) 7 else 6,
+            number = sectionNo("backup"),
             title = "Backup & restore",
             subtitle = "Move your setup to a new phone",
             statusText = if (backupAvailable)
@@ -2705,9 +2765,9 @@ fun QuicLocScreen(
                 else
                     "There is nothing to back up until you set a QuicLoc PIN — the PIN is the " +
                         "encryption key, and without one there's no way to protect the file. " +
-                        "Set one in section ${if (FindMyPhone.ENABLED) 5 else 4}, \"App access " +
-                        "& notifications\", and your contacts and settings then travel with " +
-                        "Android's cloud backup and device-to-device transfer automatically.",
+                        "Set one in section ${sectionNo("pin")}, \"Your QuicLoc PIN\", and your " +
+                        "contacts and settings then travel with Android's cloud backup and " +
+                        "device-to-device transfer automatically.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 12.dp)
@@ -2734,7 +2794,7 @@ fun QuicLocScreen(
         // 8 — Help & troubleshooting
         // ------------------------------------------------------------------
         SectionCard(
-            number = if (FindMyPhone.ENABLED) 8 else 7,
+            number = sectionNo("help"),
             title = "Help & troubleshooting",
             subtitle = "Tutorials, what happened, and why nothing happened",
             statusText = null,
@@ -3011,9 +3071,18 @@ private fun SectionCard(
     statusText: String?,
     statusOk: Boolean?,
     initiallyExpanded: Boolean = true,
+    /**
+     * Bump this to force the section open — used when something elsewhere on
+     * the screen (a setup-checklist row) needs to send the user here.
+     */
+    expandSignal: Int = 0,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     var expanded by rememberSaveable(number) { mutableStateOf(initiallyExpanded) }
+    // Skip the initial composition: only a *change* means someone asked.
+    LaunchedEffect(expandSignal) {
+        if (expandSignal > 0) expanded = true
+    }
     Card(
         modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)

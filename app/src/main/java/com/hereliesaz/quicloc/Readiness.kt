@@ -45,6 +45,8 @@ object PermKeys {
     const val ADD_CONTACT = "setup.add_contact"
     /** Auto-detect / prompt for the user's own phone number. */
     const val MY_NUMBER = "setup.my_number"
+    /** Open the QuicLoc PIN section and scroll to it. */
+    const val SET_PIN = "setup.set_pin"
 }
 
 /** Whether a setup step is satisfied, still needs the user, or can't be checked. */
@@ -99,6 +101,7 @@ object Readiness {
         whitelistCount: Int,
         myNumber: String,
         permissions: List<PermissionStatus>,
+        pinSet: Boolean = false,
     ): List<SetupStep> {
         val byKey = permissions.associateBy { it.key }
         fun state(key: String): PermStatus? = byKey[key]?.state
@@ -206,6 +209,18 @@ object Readiness {
             required = false,
             actionKey = PermKeys.BATTERY,
             actionLabel = "Allow",
+        )
+
+        steps += SetupStep(
+            id = "app-pin",
+            title = "Set a QuicLoc PIN",
+            detail = "Optional. A 6-digit PIN that unlocks the app when a fingerprint won't read, " +
+                "and encrypts your backup — with no PIN there is no backup, so your contacts " +
+                "don't survive a new phone.",
+            state = if (pinSet) StepState.DONE else StepState.TODO,
+            required = false,
+            actionKey = PermKeys.SET_PIN,
+            actionLabel = "Set",
         )
 
         steps += SetupStep(

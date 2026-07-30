@@ -34,7 +34,8 @@ class ReadinessTest {
         whitelistCount: Int = 1,
         myNumber: String = "+15550100",
         permissions: List<PermissionStatus> = allGranted(),
-    ) = Readiness.steps(enabled, whitelistCount, myNumber, permissions)
+        pinSet: Boolean = true,
+    ) = Readiness.steps(enabled, whitelistCount, myNumber, permissions, pinSet)
 
     @Test
     fun `fully configured app reports ready with nothing outstanding`() {
@@ -125,6 +126,17 @@ class ReadinessTest {
     }
 
     @Test
+    fun `the PIN is an optional step of its own`() {
+        val without = steps(pinSet = false)
+        val step = without.first { it.id == "app-pin" }
+        assertEquals(StepState.TODO, step.state)
+        assertFalse("no PIN must never block readiness", step.required)
+        assertEquals(PermKeys.SET_PIN, step.actionKey)
+        assertTrue(Readiness.isReady(without))
+        assertEquals(StepState.DONE, steps(pinSet = true).first { it.id == "app-pin" }.state)
+    }
+
+    @Test
     fun `own number is optional and only tracks whether it is set`() {
         assertEquals(StepState.TODO, steps(myNumber = "").first { it.id == "my-number" }.state)
         assertEquals(StepState.TODO, steps(myNumber = "   ").first { it.id == "my-number" }.state)
@@ -160,7 +172,7 @@ class ReadinessTest {
 
     @Test
     fun `every step has a distinct id and a usable action`() {
-        val steps = steps(enabled = false, whitelistCount = 0, myNumber = "", permissions = emptyList())
+        val steps = steps(enabled = false, whitelistCount = 0, myNumber = "", permissions = emptyList(), pinSet = false)
         assertEquals(steps.size, steps.map { it.id }.toSet().size)
         for (step in steps) {
             assertTrue("step ${step.id} has no title", step.title.isNotBlank())
@@ -175,7 +187,7 @@ class ReadinessTest {
         // An empty permission list is what a fresh, all-denied install looks
         // like on an old platform: only the steps that don't depend on a
         // platform-specific permission should be present.
-        val steps = steps(enabled = false, whitelistCount = 0, myNumber = "", permissions = emptyList())
+        val steps = steps(enabled = false, whitelistCount = 0, myNumber = "", permissions = emptyList(), pinSet = false)
         assertEquals(
             listOf("enabled", "sms", "location", "whitelist"),
             steps.filter { it.required }.map { it.id }
