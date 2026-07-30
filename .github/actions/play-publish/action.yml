@@ -87,17 +87,42 @@ runs:
         tmp="$RUNNER_TEMP/play"
         mkdir -p "$tmp"
 
-        # curl wrapper: body to $1, prints the HTTP status.
+        # curl wrapper: body to $1, prints the HTTP status, sets CURL_RC.
+        #
+        # --http1.1 and an empty Expect header are deliberate. Google's upload
+        # endpoint over HTTP/2 with curl's automatic "Expect: 100-continue" is
+        # where `curl: (56) Failure when receiving data from the peer` on a
+        # multi-megabyte body comes from; forcing 1.1 and suppressing Expect
+        # avoids both halves of that.
+        #
+        # `set -e` would otherwise abort the whole script the moment curl exits
+        # non-zero, before any of the error handling below gets to run — which
+        # is exactly how a transient upload failure produced a bare "exit code
+        # 56" and no explanation. CURL_RC is captured instead.
+        # Results land in globals rather than being echoed: `http=$(call …)`
+        # would run the function in a subshell, and curl's exit code — set
+        # inside it — would be discarded, reporting rc=0 for a connection that
+        # actually died. Functions called plainly share the caller's shell.
+        CALL_STATUS=000
+        CALL_RC=0
         call() {
           local out="$1"; shift
-          curl -sS -o "$out" -w "%{http_code}" -H "Authorization: Bearer $token" "$@"
+          set +e
+          CALL_STATUS=$(curl -sS --http1.1 -H "Expect:" \
+            --connect-timeout 30 --max-time 900 \
+            -o "$out" -w "%{http_code}" \
+            -H "Authorization: Bearer $token" "$@")
+          CALL_RC=$?
+          set -e
+          CALL_STATUS=${CALL_STATUS:-000}
         }
 
         # ---- one edit for everything ---------------------------------------
-        http=$(call "$tmp/edit.json" -X POST "$api/edits")
-        if [ "$http" != "200" ] && [ "$http" != "201" ]; then
-          echo "::error::Could not open a Play edit (HTTP $http)."
-          cat "$tmp/edit.json"; exit 1
+        call "$tmp/edit.json" -X POST "$api/edits"
+        http=$CALL_STATUS
+        if [ "$CALL_RC" != "0" ] || { [ "$http" != "200" ] && [ "$http" != "201" ]; }; then
+          echo "::error::Could not open a Play edit (curl rc=$CALL_RC, HTTP $http)."
+          cat "$tmp/edit.json" 2>/dev/null; exit 1
         fi
         edit=$(jq -r '.id' "$tmp/edit.json")
         echo "Edit $edit opened."
@@ -114,15 +139,58 @@ runs:
         trap cleanup EXIT
 
         # ---- upload the bundle exactly once --------------------------------
+        # "Once" in the sense of one *accepted* upload. A dropped connection
+        # partway through 19MB is a network event, not a reason to abandon a
+        # release, so this retries — but never blindly: before each retry it
+        # asks Play whether the bundle actually landed and only the response
+        # was lost. Re-POSTing a versionCode Play already has is an error.
+        bundle_present() { # $1 = versionCode ; 0 if Play has it in this edit
+          call "$tmp/bundles-check.json" "$api/edits/$edit/bundles"
+          [ "$CALL_STATUS" = "200" ] || return 1
+          jq -e --argjson vc "$1" '[.bundles[]?.versionCode] | index($vc) != null' \
+            "$tmp/bundles-check.json" >/dev/null 2>&1
+        }
+
         echo "Uploading $(basename "$AAB") ($(du -h "$AAB" | cut -f1))…"
-        http=$(call "$tmp/bundle.json" -X POST \
-          -H "Content-Type: application/octet-stream" \
-          --data-binary "@$AAB" \
-          "$upload_api/edits/$edit/bundles?uploadType=media")
-        if [ "$http" != "200" ]; then
-          echo "::error::Bundle upload failed (HTTP $http)."
-          cat "$tmp/bundle.json"
-          echo "A 403 usually means the service account can't manage this app; a 400 mentioning the version code means Play already has it."
+        uploaded=0
+        for attempt in 1 2 3; do
+          call "$tmp/bundle.json" -X POST \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@$AAB" \
+            "$upload_api/edits/$edit/bundles?uploadType=media"
+          http=$CALL_STATUS
+          rc=$CALL_RC
+          if [ "$rc" = "0" ] && [ "$http" = "200" ]; then
+            uploaded=1
+            break
+          fi
+
+          echo "::warning::Upload attempt $attempt failed (curl rc=$rc, HTTP $http)."
+          [ -s "$tmp/bundle.json" ] && cat "$tmp/bundle.json"
+
+          # Non-network refusals won't get better by trying again.
+          case "$http" in
+            401|403|404)
+              echo "::error::Play refused the upload (HTTP $http) — that is a permissions or package problem, not a network one. A 403 usually means the service account can't manage this app."
+              exit 1
+              ;;
+          esac
+
+          if [ -n "${EXPECTED_VERSION_CODE:-}" ] && bundle_present "$EXPECTED_VERSION_CODE"; then
+            echo "Play already holds versionCode $EXPECTED_VERSION_CODE in this edit — the upload did land, only its response was lost."
+            printf '{"versionCode": %s}' "$EXPECTED_VERSION_CODE" > "$tmp/bundle.json"
+            uploaded=1
+            break
+          fi
+
+          if [ "$attempt" -lt 3 ]; then
+            echo "Retrying in $((attempt * 10))s…"
+            sleep $((attempt * 10))
+          fi
+        done
+
+        if [ "$uploaded" != "1" ]; then
+          echo "::error::Bundle upload failed after 3 attempts. The last body is above; a 400 mentioning the version code means Play already has it."
           exit 1
         fi
         version_code=$(jq -r '.versionCode' "$tmp/bundle.json")
@@ -156,17 +224,17 @@ runs:
         set_track() { # $1 = track, $2 = status ; 0 on success
           local track="$1" status="$2" body code
           body=$(release_body "$status")
-          code=$(curl -sS -o "$tmp/track-$track.json" -w "%{http_code}" \
+          call "$tmp/track-$track.json" \
             -X PUT \
-            -H "Authorization: Bearer $token" \
             -H "Content-Type: application/json" \
             -d "$body" \
-            "$api/edits/$edit/tracks/$track")
-          if [ "$code" = "200" ]; then
+            "$api/edits/$edit/tracks/$track"
+          code=$CALL_STATUS
+          if [ "$CALL_RC" = "0" ] && [ "$code" = "200" ]; then
             echo "  $track -> $status"
             return 0
           fi
-          echo "::warning::Could not set the $track track to $status (HTTP $code): $(jq -r '.error.message // "no message"' "$tmp/track-$track.json")"
+          echo "::warning::Could not set the $track track to $status (curl rc=$CALL_RC, HTTP $code): $(jq -r '.error.message // "no message"' "$tmp/track-$track.json" 2>/dev/null)"
           return 1
         }
 
@@ -191,17 +259,19 @@ runs:
         # Apps whose changes can't be auto-submitted for review need
         # changesNotSentForReview=true; Play says so in the error rather than
         # accepting it silently, so retry once that way.
-        http=$(call "$tmp/commit.json" -X POST "$api/edits/$edit:commit")
+        call "$tmp/commit.json" -X POST "$api/edits/$edit:commit"
+        http=$CALL_STATUS
         if [ "$http" != "200" ]; then
-          msg=$(jq -r '.error.message // ""' "$tmp/commit.json")
+          msg=$(jq -r '.error.message // ""' "$tmp/commit.json" 2>/dev/null)
           if printf '%s' "$msg" | grep -qi "changesNotSentForReview"; then
             echo "Play asked for changesNotSentForReview — retrying commit with it."
-            http=$(call "$tmp/commit.json" -X POST "$api/edits/$edit:commit?changesNotSentForReview=true")
+            call "$tmp/commit.json" -X POST "$api/edits/$edit:commit?changesNotSentForReview=true"
+            http=$CALL_STATUS
           fi
         fi
         if [ "$http" != "200" ]; then
-          echo "::error::Committing the edit failed (HTTP $http). Nothing was published."
-          cat "$tmp/commit.json"; exit 1
+          echo "::error::Committing the edit failed (curl rc=$CALL_RC, HTTP $http). Nothing was published."
+          cat "$tmp/commit.json" 2>/dev/null; exit 1
         fi
         committed=1
         echo "Edit committed."
