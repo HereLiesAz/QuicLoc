@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    35304f10a84c4cb97d5724a127ffdb7e418c63be
-  Timestamp: 2026-07-30 06:42:39 UTC
+  Commit:    d072655f05bed08a13ac3aa55565143f632624e2
+  Timestamp: 2026-07-30 07:05:21 UTC
 ======================================================
 
 
@@ -507,17 +507,42 @@ runs:
         tmp="$RUNNER_TEMP/play"
         mkdir -p "$tmp"
 
-        # curl wrapper: body to $1, prints the HTTP status.
+        # curl wrapper: body to $1, prints the HTTP status, sets CURL_RC.
+        #
+        # --http1.1 and an empty Expect header are deliberate. Google's upload
+        # endpoint over HTTP/2 with curl's automatic "Expect: 100-continue" is
+        # where `curl: (56) Failure when receiving data from the peer` on a
+        # multi-megabyte body comes from; forcing 1.1 and suppressing Expect
+        # avoids both halves of that.
+        #
+        # `set -e` would otherwise abort the whole script the moment curl exits
+        # non-zero, before any of the error handling below gets to run — which
+        # is exactly how a transient upload failure produced a bare "exit code
+        # 56" and no explanation. CURL_RC is captured instead.
+        # Results land in globals rather than being echoed: `http=$(call …)`
+        # would run the function in a subshell, and curl's exit code — set
+        # inside it — would be discarded, reporting rc=0 for a connection that
+        # actually died. Functions called plainly share the caller's shell.
+        CALL_STATUS=000
+        CALL_RC=0
         call() {
           local out="$1"; shift
-          curl -sS -o "$out" -w "%{http_code}" -H "Authorization: Bearer $token" "$@"
+          set +e
+          CALL_STATUS=$(curl -sS --http1.1 -H "Expect:" \
+            --connect-timeout 30 --max-time 900 \
+            -o "$out" -w "%{http_code}" \
+            -H "Authorization: Bearer $token" "$@")
+          CALL_RC=$?
+          set -e
+          CALL_STATUS=${CALL_STATUS:-000}
         }
 
         # ---- one edit for everything ---------------------------------------
-        http=$(call "$tmp/edit.json" -X POST "$api/edits")
-        if [ "$http" != "200" ] && [ "$http" != "201" ]; then
-          echo "::error::Could not open a Play edit (HTTP $http)."
-          cat "$tmp/edit.json"; exit 1
+        call "$tmp/edit.json" -X POST "$api/edits"
+        http=$CALL_STATUS
+        if [ "$CALL_RC" != "0" ] || { [ "$http" != "200" ] && [ "$http" != "201" ]; }; then
+          echo "::error::Could not open a Play edit (curl rc=$CALL_RC, HTTP $http)."
+          cat "$tmp/edit.json" 2>/dev/null; exit 1
         fi
         edit=$(jq -r '.id' "$tmp/edit.json")
         echo "Edit $edit opened."
@@ -534,15 +559,58 @@ runs:
         trap cleanup EXIT
 
         # ---- upload the bundle exactly once --------------------------------
+        # "Once" in the sense of one *accepted* upload. A dropped connection
+        # partway through 19MB is a network event, not a reason to abandon a
+        # release, so this retries — but never blindly: before each retry it
+        # asks Play whether the bundle actually landed and only the response
+        # was lost. Re-POSTing a versionCode Play already has is an error.
+        bundle_present() { # $1 = versionCode ; 0 if Play has it in this edit
+          call "$tmp/bundles-check.json" "$api/edits/$edit/bundles"
+          [ "$CALL_STATUS" = "200" ] || return 1
+          jq -e --argjson vc "$1" '[.bundles[]?.versionCode] | index($vc) != null' \
+            "$tmp/bundles-check.json" >/dev/null 2>&1
+        }
+
         echo "Uploading $(basename "$AAB") ($(du -h "$AAB" | cut -f1))…"
-        http=$(call "$tmp/bundle.json" -X POST \
-          -H "Content-Type: application/octet-stream" \
-          --data-binary "@$AAB" \
-          "$upload_api/edits/$edit/bundles?uploadType=media")
-        if [ "$http" != "200" ]; then
-          echo "::error::Bundle upload failed (HTTP $http)."
-          cat "$tmp/bundle.json"
-          echo "A 403 usually means the service account can't manage this app; a 400 mentioning the version code means Play already has it."
+        uploaded=0
+        for attempt in 1 2 3; do
+          call "$tmp/bundle.json" -X POST \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@$AAB" \
+            "$upload_api/edits/$edit/bundles?uploadType=media"
+          http=$CALL_STATUS
+          rc=$CALL_RC
+          if [ "$rc" = "0" ] && [ "$http" = "200" ]; then
+            uploaded=1
+            break
+          fi
+
+          echo "::warning::Upload attempt $attempt failed (curl rc=$rc, HTTP $http)."
+          [ -s "$tmp/bundle.json" ] && cat "$tmp/bundle.json"
+
+          # Non-network refusals won't get better by trying again.
+          case "$http" in
+            401|403|404)
+              echo "::error::Play refused the upload (HTTP $http) — that is a permissions or package problem, not a network one. A 403 usually means the service account can't manage this app."
+              exit 1
+              ;;
+          esac
+
+          if [ -n "${EXPECTED_VERSION_CODE:-}" ] && bundle_present "$EXPECTED_VERSION_CODE"; then
+            echo "Play already holds versionCode $EXPECTED_VERSION_CODE in this edit — the upload did land, only its response was lost."
+            printf '{"versionCode": %s}' "$EXPECTED_VERSION_CODE" > "$tmp/bundle.json"
+            uploaded=1
+            break
+          fi
+
+          if [ "$attempt" -lt 3 ]; then
+            echo "Retrying in $((attempt * 10))s…"
+            sleep $((attempt * 10))
+          fi
+        done
+
+        if [ "$uploaded" != "1" ]; then
+          echo "::error::Bundle upload failed after 3 attempts. The last body is above; a 400 mentioning the version code means Play already has it."
           exit 1
         fi
         version_code=$(jq -r '.versionCode' "$tmp/bundle.json")
@@ -576,17 +644,17 @@ runs:
         set_track() { # $1 = track, $2 = status ; 0 on success
           local track="$1" status="$2" body code
           body=$(release_body "$status")
-          code=$(curl -sS -o "$tmp/track-$track.json" -w "%{http_code}" \
+          call "$tmp/track-$track.json" \
             -X PUT \
-            -H "Authorization: Bearer $token" \
             -H "Content-Type: application/json" \
             -d "$body" \
-            "$api/edits/$edit/tracks/$track")
-          if [ "$code" = "200" ]; then
+            "$api/edits/$edit/tracks/$track"
+          code=$CALL_STATUS
+          if [ "$CALL_RC" = "0" ] && [ "$code" = "200" ]; then
             echo "  $track -> $status"
             return 0
           fi
-          echo "::warning::Could not set the $track track to $status (HTTP $code): $(jq -r '.error.message // "no message"' "$tmp/track-$track.json")"
+          echo "::warning::Could not set the $track track to $status (curl rc=$CALL_RC, HTTP $code): $(jq -r '.error.message // "no message"' "$tmp/track-$track.json" 2>/dev/null)"
           return 1
         }
 
@@ -611,17 +679,19 @@ runs:
         # Apps whose changes can't be auto-submitted for review need
         # changesNotSentForReview=true; Play says so in the error rather than
         # accepting it silently, so retry once that way.
-        http=$(call "$tmp/commit.json" -X POST "$api/edits/$edit:commit")
+        call "$tmp/commit.json" -X POST "$api/edits/$edit:commit"
+        http=$CALL_STATUS
         if [ "$http" != "200" ]; then
-          msg=$(jq -r '.error.message // ""' "$tmp/commit.json")
+          msg=$(jq -r '.error.message // ""' "$tmp/commit.json" 2>/dev/null)
           if printf '%s' "$msg" | grep -qi "changesNotSentForReview"; then
             echo "Play asked for changesNotSentForReview — retrying commit with it."
-            http=$(call "$tmp/commit.json" -X POST "$api/edits/$edit:commit?changesNotSentForReview=true")
+            call "$tmp/commit.json" -X POST "$api/edits/$edit:commit?changesNotSentForReview=true"
+            http=$CALL_STATUS
           fi
         fi
         if [ "$http" != "200" ]; then
-          echo "::error::Committing the edit failed (HTTP $http). Nothing was published."
-          cat "$tmp/commit.json"; exit 1
+          echo "::error::Committing the edit failed (curl rc=$CALL_RC, HTTP $http). Nothing was published."
+          cat "$tmp/commit.json" 2>/dev/null; exit 1
         fi
         committed=1
         echo "Edit committed."
@@ -873,6 +943,8 @@ name: Build and Publish QuicLoc APK
 #     Release tagged v<versionName>. Requires the KEYSTORE_RAW / KEYSTORE_PASSWORD
 #     / KEY_ALIAS / KEY_PASSWORD secrets (see docs/PLAY_PUBLISHING.md); the job
 #     fails rather than publishing anything unsigned if they're missing.
+#     Once that release is out, the Play publish runs automatically — see the
+#     publish-play job at the bottom.
 
 on:
   push:
@@ -1005,6 +1077,26 @@ jobs:
           prerelease: ${{ inputs.prerelease }}
           fail_on_unmatched_files: true
 
+  # Automatic Play publish, gated on the GitHub release having actually gone
+  # out: `needs: build` means this only starts once the release-publishing job
+  # succeeded. Sideload first, Play second, one button.
+  #
+  # version_code_mode: auto because nothing commits the version bump before this
+  # runs — the code is taken from whatever Play already holds, so a stale
+  # version.properties can't block the release. The Play workflow commits the
+  # number back afterwards.
+  publish-play:
+    name: Publish to Google Play
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-play.yml
+    with:
+      publish: true
+      version_code_mode: auto
+    secrets: inherit
+
 
 ######################################################
 # FILE: .github/workflows/ci-cd.yml
@@ -1019,7 +1111,8 @@ name: CI/CD
 #     release build here is UNSIGNED on purpose: fork PRs can't read secrets,
 #     and building it still exercises packaging/bundletool.
 #   • push of a v* tag            -> test + build a SIGNED release APK and AAB,
-#     verify the signature, then attach them to a GitHub Release. If the
+#     verify the signature, then attach them to a GitHub Release, and — once
+#     that release is out — publish to Google Play automatically. If the
 #     keystore secrets are missing or wrong, the job fails; it never falls back
 #     to publishing an unsigned artifact.
 #
@@ -1171,6 +1264,20 @@ jobs:
           files: signed/*
           fail_on_unmatched_files: true
 
+  # Play publish follows the GitHub release, never precedes it: `needs: release`
+  # is the ordering guarantee. auto version resolution for the same reason as in
+  # build-apk.yml — the committed counter is stale by the time we get here.
+  publish-play:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-play.yml
+    with:
+      publish: true
+      version_code_mode: auto
+    secrets: inherit
+
 
 ######################################################
 # FILE: .github/workflows/deploy-sftp.yml
@@ -1246,6 +1353,25 @@ name: Release to Play
 #   KEYSTORE_PRIVATE / KEYSTORE_RSA / KEYSTORE_PUBLIC / KEYSTORE_CHAIN
 
 on:
+  # Called by the workflows that publish a GitHub release, so a Play publish
+  # follows automatically once the release is out. Also runnable by hand.
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: true
+      completed_track:
+        type: string
+        default: internal
+      draft_tracks:
+        type: string
+        default: alpha beta production
+      release_notes:
+        type: string
+        default: ''
+      version_code_mode:
+        type: string
+        default: auto
   workflow_dispatch:
     inputs:
       publish:
@@ -1267,17 +1393,21 @@ on:
         default: ''
       version_code_mode:
         description: >
-          What to do when app/version.properties would build a versionCode Play
-          can't accept. strict = fail and tell you what to set; auto = raise it
-          for this build only (then commit the printed value).
+          How to pick the versionCode. auto = next after whatever Play already
+          holds, so a stale version.properties can never block a release;
+          strict = use version.properties exactly and fail if Play is ahead.
         type: choice
-        options: [strict, auto]
-        default: strict
+        options: [auto, strict]
+        default: auto
 
 jobs:
   build-publish:
     name: Build signed AAB${{ inputs.publish && ' + publish' || '' }}
     runs-on: ubuntu-latest
+    # contents: write so the consumed versionCode can be committed back — see
+    # the last step. Everything else here only talks to Google.
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -1379,29 +1509,40 @@ jobs:
           echo "PLAY_MAX_VERSION_CODE=$play_max" >> "$GITHUB_ENV"
           echo "Play API access OK — proceeding to build."
 
-      # Gradle increments VERSION_D during the build, so the code this run will
-      # produce is the committed value + 1. Check that against Play *before*
-      # spending a build on it.
-      - name: Check the versionCode can clear Play
+      # Gradle increments VERSION_D during the build, so the code this run
+      # would produce is the committed value + 1. If that can't clear what Play
+      # already holds, the release is dead on arrival — Play accepts the upload
+      # and then refuses the rollout.
+      #
+      # The counter drifts by design: the build increments version.properties on
+      # the runner and nothing commits it back, so the file is stale the moment
+      # anything ships. `auto` therefore treats Play as the authority and takes
+      # the next code after whatever it holds, which cannot collide no matter
+      # how far behind the file is. The last step in this job commits the number
+      # back so the repo converges with reality.
+      - name: Resolve the versionCode
         if: ${{ inputs.publish }}
         run: |
           set -euo pipefail
           committed=$(grep -E '^VERSION_D=' app/version.properties | cut -d= -f2 | tr -d '[:space:]')
-          will_build=$((committed + 1))
           play_max=${PLAY_MAX_VERSION_CODE:-0}
-          echo "version.properties VERSION_D=$committed -> this build produces versionCode $will_build"
+          next=$((committed + 1))
+          echo "version.properties VERSION_D=$committed -> would build $next"
           echo "Play's highest versionCode: $play_max"
-          if [ "$will_build" -gt "$play_max" ]; then
-            echo "versionCode $will_build clears Play. Continuing."
+
+          if [ "$next" -gt "$play_max" ]; then
+            echo "$next clears Play. Building that."
             exit 0
           fi
-          if [ "${{ inputs.version_code_mode }}" = "auto" ]; then
-            sed -i "s/^VERSION_D=.*/VERSION_D=$play_max/" app/version.properties
-            echo "::warning::Raised VERSION_D to $play_max for this build only — it produces versionCode $((play_max + 1)). Commit VERSION_D=$((play_max + 1)) to app/version.properties so the repo matches what was published."
-          else
-            echo "::error::versionCode $will_build would not clear Play, which already has $play_max. Play would accept the upload and then refuse the rollout with \"does not allow any existing users to upgrade\". Set VERSION_D=$play_max in app/version.properties and commit (the build adds 1, giving $((play_max + 1))) — or re-run this workflow with version_code_mode=auto."
+
+          if [ "${{ inputs.version_code_mode }}" = "strict" ]; then
+            echo "::error::versionCode $next would not clear Play, which already has $play_max. Set VERSION_D=$play_max in app/version.properties and commit (the build adds 1), or re-run in auto mode."
             exit 1
           fi
+
+          # Play is ahead of the file — take the next code after Play's.
+          sed -i "s/^VERSION_D=.*/VERSION_D=$play_max/" app/version.properties
+          echo "::notice::version.properties was behind Play ($committed vs $play_max). Building versionCode $((play_max + 1)) instead; it will be committed back after publishing."
 
       - name: Build signed release bundle
         env:
@@ -1449,25 +1590,6 @@ jobs:
             exit 1
           fi
 
-      # Publishing consumes a versionCode, but the increment only happened on the
-      # runner. Without this, the next run rebuilds the same number and Play
-      # rejects it with "Version code N has already been used". Surface what to
-      # commit; the artifact carries the file so it can just be copied in.
-      - name: Report the versionCode that was consumed
-        if: ${{ inputs.publish }}
-        run: |
-          committed=$(git show HEAD:app/version.properties | grep -E '^VERSION_D=' | cut -d= -f2 | tr -d '[:space:]')
-          if [ "$committed" != "$VERSION_CODE" ]; then
-            {
-              echo "### Commit this version bump"
-              echo ""
-              echo "Published versionCode **$VERSION_CODE** (versionName $VERSION_NAME), but \`app/version.properties\` in git still says \`VERSION_D=$committed\`."
-              echo ""
-              echo "Set \`VERSION_D=$VERSION_CODE\` and commit, or the next publish rebuilds a code Play has already used."
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "::warning::Commit VERSION_D=$VERSION_CODE to app/version.properties — git still has $committed, and the next publish would rebuild $((committed + 1))."
-          fi
-
       - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
@@ -1511,6 +1633,49 @@ jobs:
           else
             echo "::warning::No draft tracks were set. Check the warnings above for which ones Play refused."
           fi
+
+      # The versionCode is now spent, but the increment only ever happened on
+      # this runner. Commit it so the repo tracks what actually shipped and the
+      # GitHub release tag (v<versionName>) keeps advancing too.
+      #
+      # Deliberately non-fatal: the bundle is already published, so a protected
+      # branch or a push race must not turn a successful release into a red run.
+      # If this fails, the next run's auto resolution reads the number from Play
+      # again and still can't collide — the commit is convergence, not
+      # correctness.
+      - name: Commit the versionCode that shipped
+        if: ${{ inputs.publish && steps.play.outputs.version-code != '' }}
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          published="${{ steps.play.outputs.version-code }}"
+          for attempt in 1 2 3; do
+            git fetch origin main --quiet || true
+            # The build mutated version.properties on disk; start from main.
+            git reset --hard origin/main --quiet
+            current=$(grep -E '^VERSION_D=' app/version.properties | cut -d= -f2 | tr -d '[:space:]')
+            if [ "$current" -ge "$published" ]; then
+              echo "main already has VERSION_D=$current (>= $published) — nothing to commit."
+              exit 0
+            fi
+            sed -i "s/^VERSION_D=.*/VERSION_D=$published/" app/version.properties
+            git -c user.name="github-actions[bot]" \
+                -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                commit -q -am "chore: versionCode $published shipped to Play [skip ci]"
+            if git push --quiet origin HEAD:main; then
+              echo "Committed VERSION_D=$published to main."
+              exit 0
+            fi
+            echo "Push attempt $attempt failed (main probably moved) — retrying."
+            sleep $((attempt * 3))
+          done
+          echo "::warning::Published versionCode $published but could not commit the bump to main. Set VERSION_D=$published in app/version.properties by hand. Releases still work without it — auto mode reads the next code from Play."
+          {
+            echo "### Commit this by hand"
+            echo ""
+            echo "versionCode **$published** shipped, but the bump could not be pushed to \`main\`."
+            echo "Set \`VERSION_D=$published\` in \`app/version.properties\`."
+          } >> "$GITHUB_STEP_SUMMARY"
 
 
 ######################################################
@@ -1761,7 +1926,7 @@ GitHub Actions builds and tests every push to `main`. Pushing a version tag (`v1
 
 Sensitive permissions (`NotificationListenerService`, background location, SMS) require manual Play review — declaration text and Data Safety guidance in [docs/DECLARATIONS.md](docs/DECLARATIONS.md).
 
-Play releases ship as a signed App Bundle built by `release-play.yml`. One run uploads the bundle once and puts that same `versionCode` in every track: **rolled out on internal testing, staged as a draft** on closed testing, open testing and production — so promoting a draft later ships the exact artifact internal testers used. Setup and failure modes in [docs/PLAY_PUBLISHING.md](docs/PLAY_PUBLISHING.md).
+Play publishing follows the GitHub release automatically — the Play job is chained onto the release job, so the sideload APK goes out first and Play follows. It uploads the bundle once and puts that same `versionCode` in every track: **rolled out on internal testing, staged as a draft** on closed testing, open testing and production — so promoting a draft later ships the exact artifact internal testers used. Setup and failure modes in [docs/PLAY_PUBLISHING.md](docs/PLAY_PUBLISHING.md).
 
 ---
 
@@ -12918,10 +13083,13 @@ debug APKs for sideloading.
 ## TL;DR
 
 - Local signed bundle: create `keystore.properties` (below) and run `./gradlew bundleRelease`.
-- CI: run the **Release to Play** workflow (`workflow_dispatch`). It builds a signed `.aab`,
-  uploads it as a workflow artifact, and publishes it to Play: **rolled out on internal
-  testing**, and the **same bundle staged as a draft** on closed testing, open testing and
-  production. Nothing reaches the public until you promote one of those drafts.
+- CI: **automatic.** Publishing a GitHub release publishes to Play — the Play job is chained
+  onto the release job (`needs:`), so the sideload APK goes out first and Play follows. It
+  builds a signed `.aab`, **rolls it out on internal testing**, and stages the **same bundle
+  as a draft** on closed testing, open testing and production. Nothing reaches the public
+  until you promote one of those drafts.
+- Both release paths chain it: **Build and Publish QuicLoc APK** (`workflow_dispatch`) and
+  **CI/CD** on a `v*` tag. **Release to Play** can also still be run on its own.
 
 ## Why AAB (and what about modular delivery)
 
@@ -13083,21 +13251,39 @@ the counter dropped back to the 250s — below what was already live.
 The publish workflow now asks Play directly rather than assuming:
 
 1. **Preflight** lists every bundle and APK Play holds and records the highest `versionCode`.
-2. **Before building**, it compares that against what `version.properties` would produce. `strict`
-   (the default) fails with the exact number to set; `version_code_mode: auto` raises `VERSION_D` for
-   that build only and prints the value to commit.
+2. **Before building**, it compares that against what `version.properties` would produce. In `auto`
+   (the default, and what the chained callers use) `VERSION_D` is raised to Play's highest so the
+   build produces *that + 1* — which cannot collide however far behind the file is. In `strict` it
+   fails instead, naming the value to set.
 3. **After building**, it re-checks the actual built code and refuses to upload if it can't clear
    Play.
-4. **After publishing**, it warns — in the job summary and the log — that `version.properties` in git
-   is now behind what was published, with the value to commit. The build increments the counter on
-   the runner, and nothing commits that back, so without this step the next publish rebuilds the same
-   number and hits *"already used"*. `version.properties` ships alongside the `.aab` artifact so the
-   bump can be copied straight in.
+4. **After publishing**, it **commits the consumed `versionCode` back to `main`** (`chore:
+   versionCode N shipped to Play [skip ci]`). The build increments the counter on the runner only, so
+   without this the file is stale the moment anything ships, and the next run would rebuild a number
+   Play has already used. The commit is deliberately non-fatal — the bundle is published by then, so a
+   protected branch or a push race must not turn a successful release red. It retries three times, and
+   if it still can't push it says exactly what to set by hand.
+
+Between (2) and (4), a stale `version.properties` can no longer block a release *or* silently repeat
+a number: `auto` reads the floor from Play, and the commit-back makes the repo catch up.
+`version.properties` also ships alongside the `.aab` artifact.
 
 ## Running the workflow
 
-**Actions → "Release to Play" → Run workflow.** Run it from `main` (the `versionCode` derives
-from the checked-out commit's history). Inputs:
+Usually you don't: publishing a GitHub release triggers it. Either
+
+- **Actions → "Build and Publish QuicLoc APK" → Run workflow** — signed APK to a GitHub
+  release, then Play; or
+- **push a `v*` tag** — CI/CD builds the signed APK + AAB, attaches them to a GitHub release,
+  then Play.
+
+In both cases the Play publish is a separate job with `needs:` on the one that published the
+release, so it cannot run first. (A release created by a workflow using the default
+`GITHUB_TOKEN` does not itself trigger other workflows, which is why the chaining is explicit
+rather than a `release: published` trigger.)
+
+To run it alone: **Actions → "Release to Play" → Run workflow**. Inputs — the chained callers
+pass `publish: true` and `version_code_mode: auto`:
 
 | Input     | Default    | Meaning |
 |-----------|------------|---------|
@@ -13105,7 +13291,7 @@ from the checked-out commit's history). Inputs:
 | `completed_track` | `internal` | The one track that actually gets rolled out |
 | `draft_tracks` | `alpha beta production` | Tracks that get the *same* bundle staged as a draft, space-separated. A track Play refuses is warned about and skipped |
 | `release_notes` | empty | Optional en-US release notes attached to every track's release |
-| `version_code_mode` | `strict` | `strict` = fail if the `versionCode` can't clear Play, naming the value to set; `auto` = raise it for this build and print what to commit |
+| `version_code_mode` | `auto` | `auto` = take the next code after whatever Play holds, so a stale `version.properties` can't block a release; `strict` = use `version.properties` exactly and fail if Play is ahead |
 
 ### One upload, every track
 
