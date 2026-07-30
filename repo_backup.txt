@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    2be828af16ce1617602701633f7e8778e78a0466
-  Timestamp: 2026-07-30 10:43:55 UTC
+  Commit:    fc5bf034a2751b34c6aefb91199810f6d0a9ee4f
+  Timestamp: 2026-07-30 11:18:42 UTC
 ======================================================
 
 
@@ -522,6 +522,23 @@ runs:
         else
           echo "Signed by $actual (no expected fingerprint supplied, so identity was not checked)."
         fi
+
+
+######################################################
+# FILE: .github/dependabot.yml
+######################################################
+
+# To get started with Dependabot version updates, you'll need to specify which
+# package ecosystems to update and where the package manifests are located.
+# Please see the documentation for all configuration options:
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2 
+updates:
+  - package-ecosystem: "" # See documentation for possible values
+    directory: "/" # Location of package manifests
+    schedule:
+      interval: "weekly"
 
 
 ######################################################
