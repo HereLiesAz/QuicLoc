@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    7d7b1e11bb4db2d813526bc29c4db0650ff9663a
-  Timestamp: 2026-07-30 11:45:32 UTC
+  Commit:    2084a8e7cafd67c035e7567e6ee36766dbc78fb7
+  Timestamp: 2026-07-30 12:02:04 UTC
 ======================================================
 
 
@@ -461,6 +461,13 @@ runs:
         releaseFiles: "${{ inputs.aab_path }}"
         track: "${{ inputs.track }}"
         packageName: "${{ inputs.package_name }}"
+
+
+######################################################
+# FILE: .github/actions/play-publish/publish.sh
+######################################################
+
+[BINARY FILE - SKIPPED]
 
 
 ######################################################
