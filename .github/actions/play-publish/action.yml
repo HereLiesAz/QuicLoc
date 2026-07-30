@@ -46,6 +46,7 @@ runs:
   using: "composite"
   steps:
     - name: Ensure publish script is executable
+      shell: bash
       run: |
         chmod +x ./.github/actions/play-publish/publish.sh || true
 
