@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    de0393eec04396370a90ec0b86538776be8a9768
-  Timestamp: 2026-07-30 11:29:01 UTC
+  Commit:    7d7b1e11bb4db2d813526bc29c4db0650ff9663a
+  Timestamp: 2026-07-30 11:45:32 UTC
 ======================================================
 
 
@@ -419,18 +419,23 @@ runs:
 ######################################################
 
 name: "play-publish"
-description: "Publish AAB to Google Play (composite action)"
+description: "Publish AAB to Google Play (composite action using google-github-actions/upload-google-play)"
 inputs:
   service_account_json:
     description: "Service account JSON (full text)"
     required: true
   aab_path:
-    description: "Path to built .aab"
+    description: "Path to built .aab (glob allowed)"
     required: true
   track:
     description: "Release track (production, beta, internal)"
     required: true
     default: "internal"
+  package_name:
+    description: "Application package name (optional). If omitted the uploader will try to detect it from the AAB."
+    required: false
+    default: ""
+
 runs:
   using: "composite"
   steps:
@@ -449,17 +454,13 @@ runs:
           exit 1
         fi
 
-    - name: Run publish script
-      shell: bash
-      run: |
-        set -euo pipefail
-        script="./.github/actions/play-publish/publish.sh"
-        if [ -f "$script" ]; then
-          bash "$script" "${{ inputs.aab_path }}" "${{ inputs.track }}"
-        else
-          echo "::error::publish.sh not found in play-publish action directory"
-          exit 1
-        fi
+    - name: Upload to Google Play
+      uses: google-github-actions/upload-google-play@v1
+      with:
+        serviceAccountJsonPlainText: "${{ inputs.service_account_json }}"
+        releaseFiles: "${{ inputs.aab_path }}"
+        track: "${{ inputs.track }}"
+        packageName: "${{ inputs.package_name }}"
 
 
 ######################################################
