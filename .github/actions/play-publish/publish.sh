@@ -70,11 +70,14 @@ if [ -z "$edit_id" ]; then
   exit 1
 fi
 
-# 2) Upload the AAB (media upload)
-upload_url="$api/edits/${edit_id}/bundles?uploadType=media"
-# Use application/octet-stream
+# 2) Upload the AAB (media upload) - use Google's upload host
+upload_base="https://www.googleapis.com/upload/androidpublisher/v3/applications/$package"
+upload_url="$upload_base/edits/${edit_id}/bundles?uploadType=media"
 http=$(curl -sS -w "%{http_code}" -o "$upload_resp" -X POST \
-  -H "Authorization: Bearer $token" -H "Content-Type: application/octet-stream" --data-binary @"$aab" "$upload_url")
+  -H "Authorization: Bearer $token" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @"$aab" \
+  "$upload_url")
 if [ "$http" != "200" ] && [ "$http" != "201" ]; then
   echo "::error::Bundle upload -> HTTP $http"
   echo "Response:"
