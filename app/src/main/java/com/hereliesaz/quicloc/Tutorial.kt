@@ -252,7 +252,7 @@ Opening QuicLoc's settings requires proof it's you. Answering a location request
 There are two ways in, and you can use either:
 
 • Your phone's own lock — fingerprint, face, or the device PIN/pattern. This is the default when your phone has a lock screen set up.
-• Your QuicLoc PIN — a 6-digit PIN that belongs to this app. Set it under "App access & notifications" in settings.
+• Your QuicLoc PIN — a 6-digit PIN that belongs to this app. Set it in the "Your QuicLoc PIN" section of settings, which has its own numbered step on the settings screen.
 
 Why bother with a QuicLoc PIN?
 
@@ -275,7 +275,7 @@ Things to know:
         body = """
 Your settings (whitelist, starred contacts, PIN, passphrase, your number) are stored encrypted on-device using a key held in the Android Keystore. That key does not transfer to a new phone — so an extra layer is needed for backups to work.
 
-QuicLoc solves this by writing a second copy of your settings, encrypted with your QuicLoc PIN (set under "App access & notifications" in settings), into a file at app data. That file is included in Android's automatic backup (Google Drive) and in device-to-device transfer (Pixel Switch, Smart Switch, Quick Start).
+QuicLoc solves this by writing a second copy of your settings, encrypted with your QuicLoc PIN (set in the "Your QuicLoc PIN" section of settings), into a file at app data. That file is included in Android's automatic backup (Google Drive) and in device-to-device transfer (Pixel Switch, Smart Switch, Quick Start).
 
 How restore works:
 

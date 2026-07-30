@@ -53,10 +53,11 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 | **1 · Trusted contacts** | Who's allowed to ask, priority ★ stars, add by contact / number / name |
 | **2 · The trigger word** | What they send, which apps work, Notification Access |
 | **3 · Home screen widget** | Your own number, the tap patterns and what each one needs |
-| **4 · App access & notifications** | How you unlock the app (fingerprint / device PIN / your own QuicLoc PIN), the optional reminder notification |
-| **5 · Permissions** | Every permission with live status and a Grant/Manage button |
-| **6 · Backup & restore** | Export / import your setup |
-| **7 · Help & troubleshooting** | Tutorials, request history, diagnostics |
+| **4 · Your QuicLoc PIN** | Set / change / remove the PIN that unlocks the app and encrypts your backup |
+| **5 · App access & notifications** | How you get in (fingerprint / device PIN / QuicLoc PIN), the optional reminder notification |
+| **6 · Permissions** | Every permission with live status and a Grant/Manage button |
+| **7 · Backup & restore** | Export / import your setup |
+| **8 · Help & troubleshooting** | Tutorials, request history, diagnostics |
 
 (Numbering shifts by one when the find-my-phone feature is enabled — see below.)
 
