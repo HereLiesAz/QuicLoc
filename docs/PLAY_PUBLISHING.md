@@ -8,9 +8,10 @@ debug APKs for sideloading.
 ## TL;DR
 
 - Local signed bundle: create `keystore.properties` (below) and run `./gradlew bundleRelease`.
-- CI: run the **Release to Play** workflow (`workflow_dispatch`). It builds a signed `.aab`
-  with a commit-count `versionCode`, uploads it as an artifact, and — only if you tick
-  `publish` — pushes it to Play (default: `internal` track, `draft` status).
+- CI: run the **Release to Play** workflow (`workflow_dispatch`). It builds a signed `.aab`,
+  uploads it as a workflow artifact, and publishes it to Play: **rolled out on internal
+  testing**, and the **same bundle staged as a draft** on closed testing, open testing and
+  production. Nothing reaches the public until you promote one of those drafts.
 
 ## Why AAB (and what about modular delivery)
 
@@ -190,10 +191,44 @@ from the checked-out commit's history). Inputs:
 
 | Input     | Default    | Meaning |
 |-----------|------------|---------|
-| `track`   | `internal` | `internal` / `alpha` / `beta` / `production` |
-| `status`  | `draft`    | `draft` (review in console before going live) / `completed` |
-| `publish` | `false`    | **off** = build + upload the `.aab` as a workflow artifact only; **on** = also upload to Play |
+| `publish` | `true`     | **on** = build, upload to Play, roll out on internal, draft everywhere else; **off** = build + upload the `.aab` as a workflow artifact only, Play untouched |
+| `completed_track` | `internal` | The one track that actually gets rolled out |
+| `draft_tracks` | `alpha beta production` | Tracks that get the *same* bundle staged as a draft, space-separated. A track Play refuses is warned about and skipped |
+| `release_notes` | empty | Optional en-US release notes attached to every track's release |
 | `version_code_mode` | `strict` | `strict` = fail if the `versionCode` can't clear Play, naming the value to set; `auto` = raise it for this build and print what to commit |
+
+### One upload, every track
+
+The bundle is uploaded **once**, inside a single Play "edit", and that one `versionCode` is then
+assigned to every track before the edit is committed:
+
+| Track | Status | Effect |
+|---|---|---|
+| internal | `completed` | rolled out to internal testers immediately |
+| alpha (closed testing) | `draft` | staged in the console, nobody gets it |
+| beta (open testing) | `draft` | staged in the console, nobody gets it |
+| production | `draft` | staged in the console, nobody gets it |
+
+So promoting a draft later ships **the exact artifact internal testers used** — same bytes, same
+signature, same `versionCode`. There is no rebuild, and no second `versionCode` to burn.
+
+This is why the publish step is hand-rolled against the Play API
+([`.github/actions/play-publish`](../.github/actions/play-publish/action.yml)) instead of using
+`r0adkll/upload-google-play`: that action opens its own edit and uploads the `.aab` per
+invocation, so "the same bundle in four tracks" would mean four uploads of one `versionCode` —
+and Play rejects a `versionCode` it has already accepted. The API is built for the single-edit
+shape; the action isn't.
+
+Failure behaviour is deliberate:
+
+- The **completed track failing is fatal** — that's the one track a run exists to land. The edit
+  is abandoned and nothing is published.
+- A **draft track failing is a warning**. One track that isn't configured on the account
+  shouldn't throw away a good internal rollout; the log and job summary say which ones landed.
+- If the uploaded bundle's `versionCode` doesn't match what this run built, the edit is abandoned
+  — that mismatch means a stale artifact.
+- Play sometimes requires `changesNotSentForReview=true` on commit (apps whose changes can't be
+  auto-submitted for review). The commit is retried with it automatically.
 
 The workflow verifies the bundle's signature itself before the artifact is uploaded, and fails if it
 is unsigned or signed by an unexpected certificate — so a green run means a correctly signed bundle.

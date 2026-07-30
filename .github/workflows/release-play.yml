@@ -1,9 +1,16 @@
 name: Release to Play
 
-# Manual, signed Android App Bundle build + (optional) Google Play upload.
-# Defaults are deliberately safe: builds the .aab and uploads it as a workflow
-# artifact, and only pushes to Play when `publish` is explicitly enabled, to the
-# internal track, as a draft.
+# Signed Android App Bundle build + Google Play publish.
+#
+# One build, one upload, every track: the bundle is rolled out (status
+# "completed") on internal testing, and the *same* versionCode is staged as a
+# draft on closed testing, open testing and production. Promoting any of those
+# drafts later ships the exact artifact internal testers used — no rebuild, no
+# re-sign, no second versionCode.
+#
+# Nothing reaches the public: drafts sit in the console until a human rolls them
+# out. `publish: false` builds and uploads the artifact here without touching
+# Play at all.
 #
 # Required repo secrets (see docs/PLAY_PUBLISHING.md):
 #   KEYSTORE_RAW               - base64 of the upload keystore (.jks / .p12)
@@ -20,20 +27,23 @@ name: Release to Play
 on:
   workflow_dispatch:
     inputs:
-      track:
-        description: "Play track"
+      publish:
+        description: "Publish to Play (off = build the .aab and upload it as a workflow artifact only)"
+        type: boolean
+        default: true
+      completed_track:
+        description: "Track to actually roll out to"
         type: choice
         options: [internal, alpha, beta, production]
         default: internal
-      status:
-        description: "Release status"
-        type: choice
-        options: [draft, completed]
-        default: draft
-      publish:
-        description: "Publish to Play (off = build + upload the .aab artifact only)"
-        type: boolean
-        default: false
+      draft_tracks:
+        description: "Tracks to stage the same bundle in as a draft (space-separated)"
+        type: string
+        default: alpha beta production
+      release_notes:
+        description: "Optional en-US release notes attached to every track's release"
+        type: string
+        default: ''
       version_code_mode:
         description: >
           What to do when app/version.properties would build a versionCode Play
@@ -82,67 +92,38 @@ jobs:
       - name: Read application id
         run: echo "APP_ID=$(./gradlew -q :app:printApplicationId)" >> "$GITHUB_ENV"
 
-      # Preflight the Google Play Developer API before the upload step, because
-      # r0adkll/upload-google-play reports every API failure as a useless
-      # "Unknown error occurred." This authenticates with the service account
-      # and opens an edit (the same first call the upload makes), surfacing the
-      # real HTTP status + Google error message so failures are diagnosable:
+      # Everything Play-related is hand-rolled against the API (curl + jq +
+      # openssl, all on ubuntu-latest) rather than delegated to a third-party
+      # action: it is the only way to get one upload into several tracks, and it
+      # means the signing key and the service account never leave this repo's
+      # own actions.
+      - name: Mint a Play API token (preflight)
+        id: preflight-token
+        if: ${{ inputs.publish }}
+        uses: ./.github/actions/play-api-token
+        with:
+          service-account-json: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+
+      # Fail early and legibly. r0adkll/upload-google-play used to report every
+      # API problem as "Unknown error occurred."; opening an edit here surfaces
+      # the real status instead:
       #   401 -> bad/blocked credentials
       #   403 -> service account lacks permission, or the Play Developer API
       #          isn't enabled for its project
       #   404 -> app/package not found, i.e. no manual first release exists yet
-      # Self-contained (jq + openssl + curl, all on ubuntu-latest); never prints
-      # the private key or access token. Only runs when actually publishing.
+      # It also reads back the highest versionCode Play holds, which is the
+      # number the next step needs.
       - name: Preflight Google Play API access
         if: ${{ inputs.publish }}
-        env:
-          SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
         run: |
           set -euo pipefail
-          if [ -z "${SERVICE_ACCOUNT_JSON:-}" ]; then
-            echo "::error::PLAY_SERVICE_ACCOUNT_JSON secret is empty or unset — set it to the full service-account JSON."
-            exit 1
-          fi
-          sa="$RUNNER_TEMP/sa.json"
-          printf '%s' "$SERVICE_ACCOUNT_JSON" > "$sa"
-          if ! jq -e . "$sa" >/dev/null 2>&1; then
-            echo "::error::PLAY_SERVICE_ACCOUNT_JSON is not valid JSON."
-            exit 1
-          fi
-          client_email=$(jq -r '.client_email // empty' "$sa")
-          token_uri=$(jq -r '.token_uri // "https://oauth2.googleapis.com/token"' "$sa")
-          if [ -z "$client_email" ]; then
-            echo "::error::Service-account JSON is missing client_email — the secret is malformed."
-            exit 1
-          fi
-          echo "Service account: $client_email"
-          echo "Package:         $APP_ID"
+          token=$(cat "${{ steps.preflight-token.outputs.token-file }}")
+          api="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}"
+          echo "Package: $APP_ID"
 
-          # Mint an RS256-signed JWT and exchange it for an androidpublisher access token.
-          b64url() { openssl base64 -e -A | tr '+/' '-_' | tr -d '='; }
-          now=$(date +%s); exp=$((now + 300))
-          header_b64=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)
-          claim_b64=$(jq -nc --arg iss "$client_email" --arg aud "$token_uri" \
-            --argjson iat "$now" --argjson exp "$exp" \
-            '{iss:$iss, scope:"https://www.googleapis.com/auth/androidpublisher", aud:$aud, iat:$iat, exp:$exp}' \
-            | b64url)
-          jq -r '.private_key' "$sa" > "$RUNNER_TEMP/key.pem"
-          sig=$(printf '%s' "$header_b64.$claim_b64" | openssl dgst -sha256 -sign "$RUNNER_TEMP/key.pem" | b64url)
-          jwt="$header_b64.$claim_b64.$sig"
-
-          access_token=$(curl -s -X POST "$token_uri" \
-            --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
-            --data-urlencode "assertion=$jwt" | jq -r '.access_token // empty')
-          if [ -z "$access_token" ]; then
-            echo "::error::Could not obtain an access token — the service-account credentials were rejected by $token_uri."
-            exit 1
-          fi
-
-          # Open an edit — exactly the first call the upload makes.
           resp="$RUNNER_TEMP/edit.json"
-          http=$(curl -s -o "$resp" -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer $access_token" \
-            "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}/edits")
+          http=$(curl -sS -o "$resp" -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $token" "$api/edits")
           echo "Play API edits.insert -> HTTP $http"
           echo "Response body:"; cat "$resp"; echo
           if [ "$http" != "200" ] && [ "$http" != "201" ]; then
@@ -159,9 +140,8 @@ jobs:
           play_max=0
           for kind in bundles apks; do
             list="$RUNNER_TEMP/$kind.json"
-            lh=$(curl -s -o "$list" -w "%{http_code}" \
-              -H "Authorization: Bearer $access_token" \
-              "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}/edits/${edit_id}/${kind}")
+            lh=$(curl -sS -o "$list" -w "%{http_code}" \
+              -H "Authorization: Bearer $token" "$api/edits/${edit_id}/${kind}")
             if [ "$lh" = "200" ]; then
               m=$(jq -r "[.${kind}[]?.versionCode // 0] | max // 0" "$list")
               [ "$m" -gt "$play_max" ] && play_max=$m
@@ -171,13 +151,12 @@ jobs:
           done
 
           if [ -n "$edit_id" ]; then
-            curl -s -o /dev/null -X DELETE \
-              -H "Authorization: Bearer $access_token" \
-              "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${APP_ID}/edits/${edit_id}" || true
+            curl -sS -o /dev/null -X DELETE \
+              -H "Authorization: Bearer $token" "$api/edits/${edit_id}" || true
           fi
           echo "Highest versionCode already on Play: $play_max"
           echo "PLAY_MAX_VERSION_CODE=$play_max" >> "$GITHUB_ENV"
-          echo "Play API access OK — proceeding to upload."
+          echo "Play API access OK — proceeding to build."
 
       # Gradle increments VERSION_D during the build, so the code this run will
       # produce is the committed value + 1. Check that against Play *before*
@@ -277,12 +256,37 @@ jobs:
             app/version.properties
           if-no-files-found: error
 
-      - name: Publish to Google Play
+      # Minted here rather than reused from the preflight: tokens last 5 minutes
+      # and the build sits in between.
+      - name: Mint a Play API token (publish)
+        id: publish-token
         if: ${{ inputs.publish }}
-        uses: r0adkll/upload-google-play@v1.1.3
+        uses: ./.github/actions/play-api-token
         with:
-          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-          packageName: ${{ env.APP_ID }}
-          releaseFiles: app/build/outputs/bundle/release/*.aab
-          track: ${{ inputs.track }}
-          status: ${{ inputs.status }}
+          service-account-json: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+
+      - name: Publish to Google Play
+        id: play
+        if: ${{ inputs.publish }}
+        uses: ./.github/actions/play-publish
+        with:
+          package-name: ${{ env.APP_ID }}
+          aab: ${{ env.AAB_PATH }}
+          token-file: ${{ steps.publish-token.outputs.token-file }}
+          expected-version-code: ${{ env.VERSION_CODE }}
+          completed-track: ${{ inputs.completed_track }}
+          draft-tracks: ${{ inputs.draft_tracks }}
+          release-name: ${{ env.VERSION_NAME }}
+          release-notes: ${{ inputs.release_notes }}
+
+      - name: Say what landed where
+        if: ${{ inputs.publish }}
+        run: |
+          echo "versionCode ${{ steps.play.outputs.version-code }} is live on the ${{ steps.play.outputs.rolled-out }} track."
+          drafted="${{ steps.play.outputs.drafted }}"
+          if [ -n "$drafted" ]; then
+            echo "Drafts staged (same bundle) on: $drafted"
+            echo "Promote one in the console when you're ready — no rebuild needed."
+          else
+            echo "::warning::No draft tracks were set. Check the warnings above for which ones Play refused."
+          fi
