@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    a54310473995825893867520c578fcb2c52a6490
-  Timestamp: 2026-07-30 12:54:45 UTC
+  Branch:    fix/edge-to-edge-and-r8-9197171074392364959
+  Commit:    1182813fe5d2d6a448081d6d2a4a9210d0f05bde
+  Timestamp: 2026-08-06 12:02:55 UTC
 ======================================================
 
 
@@ -1872,7 +1872,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -1962,6 +1963,19 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }
+
+
+######################################################
+# FILE: app/proguard-rules.pro
+######################################################
+
+-keep class com.hereliesaz.quicloc.lockdown.** { *; }
+-keep class com.klinker.android.send_message.** { *; }
+-keep class com.google.crypto.tink.** { *; }
+-keep class com.hereliesaz.quicloc.** extends android.content.BroadcastReceiver { *; }
+-keep class com.hereliesaz.quicloc.** extends android.app.Service { *; }
+-dontwarn com.google.api.client.**
+-dontwarn org.joda.time.**
 
 
 ######################################################
@@ -3739,6 +3753,7 @@ import android.provider.Settings
 import android.text.TextUtils
 import android.widget.Toast
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
@@ -4562,6 +4577,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         whitelistManager = WhitelistManager(this)
         numbersState.value = whitelistManager.getNumbers().toList()
@@ -9846,6 +9862,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -9870,6 +9887,7 @@ import androidx.compose.ui.unit.dp
 class WidgetHelpActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         val whitelistManager = WhitelistManager(this)
         val myNumber = whitelistManager.getMyNumber()
         val starredCount = whitelistManager.getStarredNumbers().size
@@ -9912,7 +9930,8 @@ fun WidgetHelpUI(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onFinished,
-            ),
+            )
+            .systemBarsPadding(),
         contentAlignment = Alignment.Center
     ) {
         Surface(
@@ -11923,11 +11942,11 @@ class WhitelistManagerTest {
 # FILE: app/version.properties
 ######################################################
 
-#Sat Jul 25 20:30:00 UTC 2026
+#Thu Aug 06 11:54:45 UTC 2026
 VERSION_A=1
 VERSION_B=3
-VERSION_C=6
-VERSION_D=2002
+VERSION_C=11
+VERSION_D=2007
 
 
 ######################################################
@@ -12934,23 +12953,14 @@ debug APKs for sideloading.
     `loc <passphrase>` just doesn't start tracking; core `loc` still replies). On the **APK** path
     confirm the fused feature is present and works. Also verify the base AAB manifest carries no
     `CAMERA`/`USE_FULL_SCREEN_INTENT` and no lockdown components.
-  - **Note for R8:** if `isMinifyEnabled` is ever turned on, the module's components are addressed by
+  - **Note for R8:** `isMinifyEnabled` is true, so the module's components are addressed by
     `ComponentName` string from the base, so keep them:
     `-keep class com.hereliesaz.quicloc.lockdown.** { *; }`.
   - The core SMS + location permissions stay in the base on purpose: they're driven by a
     manifest `SmsReceiver` the system delivers broadcasts to, and the app must answer `loc` the
     moment it's installed. Other optional perms (`READ_CONTACTS`, the `BIND_*` signature
     permissions) were intentionally left in the base — see the PR discussion.
-- **R8 / resource shrinking: deferred.** `isMinifyEnabled` is still `false`. Enabling R8 +
-  `shrinkResources` is the realistic size win, but this is a safety app that uses
-  `android-smsmms` (third-party, may use reflection) and Tink-backed `EncryptedSharedPreferences`,
-  so it must be **device-tested** before shipping. Start from a conservative keep set:
-  ```
-  -keep class com.klinker.android.send_message.** { *; }   # android-smsmms
-  -keep class com.google.crypto.tink.** { *; }              # EncryptedSharedPreferences
-  -keep class com.hereliesaz.quicloc.** extends android.content.BroadcastReceiver { *; }
-  -keep class com.hereliesaz.quicloc.** extends android.app.Service { *; }
-  ```
+- **R8 / resource shrinking: enabled.** `isMinifyEnabled` and `isShrinkResources` are true in `release` builds to optimize performance and reduce APK size. ProGuard rules are configured in `app/proguard-rules.pro`.
   (Compose and CameraX ship their own consumer ProGuard rules.)
 - **Play in-app updates (Play Core):** an optional future enhancement; not wired up.
 
@@ -14678,6 +14688,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.addCallback
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -14747,6 +14758,7 @@ class TrackingLockActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         failCount = savedInstanceState?.getInt("FAIL_COUNT", 0) ?: 0
 
         // Show this activity over the keyguard and wake the screen, but DO
@@ -14841,7 +14853,9 @@ fun LockScreenUI(onPinEntered: (String) -> Unit) {
     var pin by remember { mutableStateOf("") }
 
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .systemBarsPadding(),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -15227,8 +15241,8 @@ android.enableAppCompileTimeRClass=false
 android.usesSdkInManifest.disallowed=false
 android.uniquePackageNames=false
 android.dependency.useConstraints=true
-android.r8.strictFullModeForKeepRules=false
-android.r8.optimizedResourceShrinking=false
+android.r8.strictFullModeForKeepRules=true
+android.r8.optimizedResourceShrinking=true
 android.builtInKotlin=false
 android.newDsl=false
 
