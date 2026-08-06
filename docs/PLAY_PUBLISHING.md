@@ -60,23 +60,14 @@ debug APKs for sideloading.
     `loc <passphrase>` just doesn't start tracking; core `loc` still replies). On the **APK** path
     confirm the fused feature is present and works. Also verify the base AAB manifest carries no
     `CAMERA`/`USE_FULL_SCREEN_INTENT` and no lockdown components.
-  - **Note for R8:** if `isMinifyEnabled` is ever turned on, the module's components are addressed by
+  - **Note for R8:** `isMinifyEnabled` is true, so the module's components are addressed by
     `ComponentName` string from the base, so keep them:
     `-keep class com.hereliesaz.quicloc.lockdown.** { *; }`.
   - The core SMS + location permissions stay in the base on purpose: they're driven by a
     manifest `SmsReceiver` the system delivers broadcasts to, and the app must answer `loc` the
     moment it's installed. Other optional perms (`READ_CONTACTS`, the `BIND_*` signature
     permissions) were intentionally left in the base — see the PR discussion.
-- **R8 / resource shrinking: deferred.** `isMinifyEnabled` is still `false`. Enabling R8 +
-  `shrinkResources` is the realistic size win, but this is a safety app that uses
-  `android-smsmms` (third-party, may use reflection) and Tink-backed `EncryptedSharedPreferences`,
-  so it must be **device-tested** before shipping. Start from a conservative keep set:
-  ```
-  -keep class com.klinker.android.send_message.** { *; }   # android-smsmms
-  -keep class com.google.crypto.tink.** { *; }              # EncryptedSharedPreferences
-  -keep class com.hereliesaz.quicloc.** extends android.content.BroadcastReceiver { *; }
-  -keep class com.hereliesaz.quicloc.** extends android.app.Service { *; }
-  ```
+- **R8 / resource shrinking: enabled.** `isMinifyEnabled` and `isShrinkResources` are true in `release` builds to optimize performance and reduce APK size. ProGuard rules are configured in `app/proguard-rules.pro`.
   (Compose and CameraX ship their own consumer ProGuard rules.)
 - **Play in-app updates (Play Core):** an optional future enhancement; not wired up.
 

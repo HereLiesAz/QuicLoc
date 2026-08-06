@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -28,6 +29,7 @@ import androidx.compose.ui.unit.dp
 class WidgetHelpActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         val whitelistManager = WhitelistManager(this)
         val myNumber = whitelistManager.getMyNumber()
         val starredCount = whitelistManager.getStarredNumbers().size
@@ -70,7 +72,8 @@ fun WidgetHelpUI(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onFinished,
-            ),
+            )
+            .systemBarsPadding(),
         contentAlignment = Alignment.Center
     ) {
         Surface(
