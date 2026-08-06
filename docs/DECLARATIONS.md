@@ -20,7 +20,7 @@ Select: **No — SMS access is needed but it is not a messaging app**
 
 **Describe why your app needs SMS permissions:**
 
-> QuicLoc is an emergency safety app letting trusted contacts locate an incapacitated user. RECEIVE_SMS passively monitors for an SOS trigger word from an encrypted whitelist. SEND_SMS automatically replies with GPS coordinates. SMS Intent APIs cannot be used because the device may be locked or out of reach during an emergency. The app works autonomously without user interaction. No SMS data is stored, read, or shared. See linked video.
+> QuicLoc is an emergency safety app. RECEIVE_SMS monitors for an SOS trigger word from an encrypted whitelist; SEND_SMS auto-replies with GPS coordinates. The SMS Retriever API cannot be used because it requires messages to contain an 11-character app hash, which is impossible for natural emergency texts sent by human contacts. Intents cannot be used as the device may be unattended. No data is stored.
 
 **Video instructions:**
 > **CRITICAL:** You MUST provide a video link here, even though the form says it's optional. Google Play will automatically reject the declaration without one.
@@ -33,7 +33,18 @@ Select: **No — SMS access is needed but it is not a messaging app**
 
 ---
 
-## 2. Notification Listener Permission Declaration
+## 2. Contacts Permissions Declaration (READ_CONTACTS)
+
+**Location in Play Console:**
+> App content -> Sensitive app permissions -> Contacts Permissions
+
+**Describe why your app needs Contacts permissions:**
+
+> QuicLoc requires READ_CONTACTS to autonomously match incoming chat app notifications (e.g., WhatsApp, Telegram) against the user's phone-number-based whitelist. Because chat notifications only display contact names (e.g., "Mom") and not raw phone numbers, the app must look up the incoming name in the device's Contacts in the background to verify if they are a trusted sender. The Android Contact Picker cannot be used because this lookup happens automatically in the background while the device is unattended or locked.
+
+---
+
+## 3. Notification Listener Permission Declaration
 
 **Location in Play Console:**
 > App content → Sensitive app permissions → Notification access
