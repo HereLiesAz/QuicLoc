@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    71c1756043d51cfaa621484b9fca066c1e1f0d47
-  Timestamp: 2026-08-06 12:32:49 UTC
+  Commit:    2bf0d10d5589af1d605b699642f1e76fea49b79e
+  Timestamp: 2026-08-06 12:35:44 UTC
 ======================================================
 
 
@@ -1272,8 +1272,7 @@ jobs:
           echo "Package: $APP_ID"
 
           resp="$RUNNER_TEMP/edit.json"
-          http=$(curl -sS -o "$resp" -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer $token" "$api/edits")
+          http=$(curl -sS -o "$resp" -w "%{http_code}" -X POST -H "Authorization: Bearer $token" "$api/edits")
           echo "Play API edits.insert -> HTTP $http"
           echo "Response body:"; cat "$resp"; echo
           if [ "$http" != "200" ] && [ "$http" != "201" ]; then
