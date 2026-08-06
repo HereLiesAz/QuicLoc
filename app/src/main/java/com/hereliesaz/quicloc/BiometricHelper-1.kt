@@ -49,6 +49,7 @@ object BiometricHelper {
 
         val executor = ContextCompat.getMainExecutor(activity)
 
+        // codeql[java/android/insecure-local-authentication] Background SMS replies cannot use a biometric-locked KeyStore key.
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 onSuccess()
