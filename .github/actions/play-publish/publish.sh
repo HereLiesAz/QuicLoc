@@ -125,7 +125,7 @@ if [ -n "$draft_tracks" ]; then
   for tr in $draft_tracks; do
     release_json="$tmp/release-${tr}.json"
     rel=$(make_release draft "$version_code" "$release_name" "$release_notes")
-    jq -n --argjson r "$rel" '{"releases': [$rel]}' > "$release_json" 2>/dev/null || echo "{\"releases\":[$rel]}" > "$release_json"
+    jq -n --argjson r "$rel" '{"releases": [$r]}' > "$release_json" 2>/dev/null || echo "{\"releases\":[$rel]}" > "$release_json"
     url="$api/edits/${edit_id}/tracks/${tr}"
     http=$(req PUT "$url" "$tmp/track-${tr}.json" "$release_json")
     if [ "$http" != "200" ]; then
@@ -142,7 +142,7 @@ fi
 if [ -n "$completed_track" ]; then
   release_json="$tmp/release-${completed_track}.json"
   rel=$(make_release completed "$version_code" "$release_name" "$release_notes")
-  jq -n --argjson r "$rel" '{"releases': [$rel]}' > "$release_json" 2>/dev/null || echo "{\"releases\":[$rel]}" > "$release_json"
+  jq -n --argjson r "$rel" '{"releases": [$r]}' > "$release_json" 2>/dev/null || echo "{\"releases\":[$rel]}" > "$release_json"
   url="$api/edits/${edit_id}/tracks/${completed_track}"
   http=$(req PUT "$url" "$tmp/track-${completed_track}.json" "$release_json")
   if [ "$http" != "200" ]; then
