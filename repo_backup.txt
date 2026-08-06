@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    94f39239960366bd2bf2d6c088edd819931572aa
-  Timestamp: 2026-08-06 12:24:50 UTC
+  Commit:    71c1756043d51cfaa621484b9fca066c1e1f0d47
+  Timestamp: 2026-08-06 12:32:49 UTC
 ======================================================
 
 
@@ -2621,6 +2621,7 @@ object BiometricHelper {
 
         val executor = ContextCompat.getMainExecutor(activity)
 
+        // codeql[java/android/insecure-local-authentication] Background SMS replies cannot use a biometric-locked KeyStore key.
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 onSuccess()
@@ -12371,12 +12372,25 @@ each section below.
 **Location in Play Console:**
 > App content → Sensitive app permissions → SMS or Call Log
 
+**Core functionalities:**
+Select **ONLY**: `Physical safety / emergency alert apps (e.g., senior safety)`
+*(Do NOT select Device Automation or any other checkboxes, as checking multiple unaligned use cases will cause a rejection).*
+
 **Is your app's core functionality an SMS/MMS app, or does it require SMS access for a reason not available through the SMS Intent API?**
 Select: **No — SMS access is needed but it is not a messaging app**
 
 **Describe why your app needs SMS permissions:**
 
-> QuicLoc is a personal safety utility. It monitors incoming SMS messages solely to detect a user-defined trigger word ("loc" or "quicloc") sent by phone numbers the user has explicitly pre-approved in a private, encrypted whitelist. When the trigger word is detected from an approved number, the app automatically replies with the device's current GPS location as a Google Maps link. No SMS content is stored, logged, uploaded, or shared. The app never reads, modifies, or transmits any SMS message content other than detecting the trigger word and sending a single automated reply. SMS intent APIs cannot be used because the app must function passively in the background while the device is idle.
+> QuicLoc is an emergency safety app letting trusted contacts locate an incapacitated user. RECEIVE_SMS passively monitors for an SOS trigger word from an encrypted whitelist. SEND_SMS automatically replies with GPS coordinates. SMS Intent APIs cannot be used because the device may be locked or out of reach during an emergency. The app works autonomously without user interaction. No SMS data is stored, read, or shared. See linked video.
+
+**Video instructions:**
+> **CRITICAL:** You MUST provide a video link here, even though the form says it's optional. Google Play will automatically reject the declaration without one.
+> Record a short screen recording showing:
+> 1. Opening QuicLoc and adding a phone number to the whitelist
+> 2. Sending "loc" from another device via SMS to trigger a response
+> 3. The automatic GPS location SMS reply arriving on the sending device
+>
+> Upload this to YouTube (unlisted) and paste the link in the "Video instructions" field.
 
 ---
 
