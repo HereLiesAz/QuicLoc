@@ -31,18 +31,7 @@ Select: **No — SMS access is needed but it is not a messaging app**
 >
 > Upload this to YouTube (unlisted) and paste the link in the "Video instructions" field.
 
----
 
-## 2. Contacts Permissions Declaration (READ_CONTACTS)
-
-**Location in Play Console:**
-> App content -> Sensitive app permissions -> Contacts Permissions
-
-**Describe why your app needs Contacts permissions:**
-
-> QuicLoc requires READ_CONTACTS to autonomously match incoming chat app notifications (e.g., WhatsApp, Telegram) against the user's phone-number-based whitelist. Because chat notifications only display contact names (e.g., "Mom") and not raw phone numbers, the app must look up the incoming name in the device's Contacts in the background to verify if they are a trusted sender. The Android Contact Picker cannot be used because this lookup happens automatically in the background while the device is unattended or locked.
-
----
 
 ## 3. Notification Listener Permission Declaration
 

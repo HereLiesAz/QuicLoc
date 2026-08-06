@@ -188,15 +188,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 "is actually doing something, unless you switch on the reminder yourself.",
         ),
         PermissionRationale(
-            permission = Manifest.permission.READ_CONTACTS,
-            title = "Read your contacts",
-            whatFor = "Used by \"Pick from Contacts\" to read one contact's name and numbers and " +
-                "add them to your trusted list.",
-            ifSkipped = "You can still add people by typing their number or name in by hand.",
-            limits = "Only read at the moment you pick someone. Your address book is never " +
-                "copied, uploaded, or scanned in the background.",
-        ),
-        PermissionRationale(
             permission = Manifest.permission.READ_PHONE_NUMBERS,
             title = "Read this phone's own number",
             whatFor = "Fills in your own number automatically, so the widget's 2-tap parking " +
@@ -393,7 +384,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         if (FindMyPhone.isInstalled(this)) {
             list += runtime(Manifest.permission.CAMERA, "Camera")
         }
-        list += runtime(Manifest.permission.READ_CONTACTS, "Read Contacts")
         list += runtime(Manifest.permission.READ_PHONE_NUMBERS, "Read Phone Number")
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             list += runtime("android.permission.POST_NOTIFICATIONS", "Show Notifications")
@@ -829,9 +819,11 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     }
 
     private val contactPickerLauncher = registerForActivityResult(
-        ActivityResultContracts.PickContact()
-    ) { uri ->
-        if (uri != null) handleContactPicked(uri)
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            result.data?.data?.let { uri -> handleContactPicked(uri) }
+        }
     }
 
     @OptIn(ExperimentalMaterial3Api::class)
@@ -1376,53 +1368,33 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     // -------------------------------------------------------------------------
 
     private fun launchContactPicker() {
-        // Either we already have READ_CONTACTS, or we route through the
-        // rationale dialog first. The picker is launched whether the user
-        // grants or skips — without the permission we still get the display
-        // name back, just not the phone numbers.
-        promptRuntimePermission(Manifest.permission.READ_CONTACTS) { _ ->
-            beginSystemFlow()
-            contactPickerLauncher.launch(null)
-        }
+        val intent = android.content.Intent(
+            android.content.Intent.ACTION_PICK,
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+        )
+        beginSystemFlow()
+        contactPickerLauncher.launch(intent)
     }
 
     private fun handleContactPicked(uri: Uri) {
-        val contactProjection = arrayOf(
-            ContactsContract.Contacts._ID,
-            ContactsContract.Contacts.DISPLAY_NAME_PRIMARY
+        val projection = arrayOf(
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+            ContactsContract.CommonDataKinds.Phone.NUMBER
         )
-        contentResolver.query(uri, contactProjection, null, null, null)?.use { cursor ->
+        contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
             if (!cursor.moveToFirst()) return
-            val id = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.Contacts._ID))
-            val name = cursor.getString(
-                cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
-            ) ?: return
+            val name = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME))
+            val number = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER))
 
-            // Always store the display name — this is what notification-based apps send
-            whitelistManager.addNumber(name)
-
-            // Also store phone numbers for SMS matching
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
-                == PackageManager.PERMISSION_GRANTED
-            ) {
-                contentResolver.query(
-                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                    arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
-                    "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
-                    arrayOf(id),
-                    null
-                )?.use { phoneCursor ->
-                    while (phoneCursor.moveToNext()) {
-                        val number = phoneCursor.getString(
-                            phoneCursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                        )
-                        if (!number.isNullOrBlank()) whitelistManager.addNumber(number)
-                    }
-                }
+            if (!number.isNullOrBlank()) {
+                whitelistManager.addContact(name, number)
+            } else if (!name.isNullOrBlank()) {
+                whitelistManager.addContact(name, "")
             }
 
             numbersState.value = whitelistManager.getNumbers().toList()
-            Toast.makeText(this, "Added $name — they can now ask for your location", Toast.LENGTH_SHORT).show()
+            val toastName = name?.takeIf { it.isNotBlank() } ?: number ?: "Contact"
+            Toast.makeText(this, "Added $toastName — they can now ask for your location", Toast.LENGTH_SHORT).show()
         }
     }
 

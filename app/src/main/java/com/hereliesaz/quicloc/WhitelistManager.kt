@@ -1,37 +1,42 @@
 package com.hereliesaz.quicloc
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.provider.ContactsContract
 import android.telephony.PhoneNumberUtils
 import android.util.Log
-import androidx.core.content.ContextCompat
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import org.json.JSONObject
 
 /**
  * Owner of the sensitive on-device store: whitelist contacts, starred
  * priority list, your own number, find-my-phone passphrase and PIN, and the
  * onboarding-complete flag.
- *
- * Backed by `EncryptedSharedPreferences` (`quicloc_secure_prefs`) — values
- * AES-256-GCM, keys AES-256-SIV, master key in the Android Keystore. If
- * Keystore is unavailable (e.g. Direct Boot before user unlock), falls back
- * to a plain `quicloc_secure_prefs_fallback` so the app doesn't hard-crash.
- *
- * Every mutation method calls [BackupVault.snapshotAsync] so the
- * PIN-encrypted backup blob stays in sync. The vault debounces, so calling
- * `snapshotAsync` from a burst of mutations only writes the blob once.
- *
- * Also handles a one-time migration from a legacy plaintext
- * `quicloc_prefs` store, in case anyone is upgrading from a pre-encryption
- * build.
  */
 class WhitelistManager(context: Context) {
+
+    data class ContactEntry(val name: String?, val number: String) {
+        fun toJsonString(): String {
+            return JSONObject().apply {
+                put("name", name ?: "")
+                put("number", number)
+            }.toString()
+        }
+
+        companion object {
+            fun fromJsonString(jsonStr: String): ContactEntry? {
+                return try {
+                    val json = JSONObject(jsonStr)
+                    val name = json.optString("name", "").takeIf { it.isNotBlank() }
+                    val number = json.getString("number")
+                    ContactEntry(name, number)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        }
+    }
 
     companion object {
         private const val TAG = "QuicLoc.Whitelist"
@@ -44,12 +49,9 @@ class WhitelistManager(context: Context) {
         private const val KEY_PIN = "pin"
         private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
 
-        // Compiled once and shared, rather than per normalizeName() call.
         private val WHITESPACE_RUN = Regex("\\s+")
     }
 
-    // Held so mutation methods can re-snapshot the PIN-encrypted backup
-    // without needing a context passed in at each call site.
     private val appContext: Context = context.applicationContext
 
     private val prefs: SharedPreferences = createEncryptedPrefs(context).also {
@@ -73,18 +75,13 @@ class WhitelistManager(context: Context) {
         return prefs.getStringSet(KEY_STARRED, emptySet()) ?: emptySet()
     }
 
-    /**
-     * Star or un-star [number]. Returns `false` (without changing state) if
-     * the user is trying to star a 4th contact — the limit is 3, which
-     * matches the widget's 3-tap "Safety Check" semantics.
-     */
     fun toggleStarred(number: String): Boolean {
         val currentStarred = getStarredNumbers().toMutableSet()
         if (currentStarred.contains(number)) {
             currentStarred.remove(number)
         } else {
             if (currentStarred.size >= 3) {
-                return false // Limit reached
+                return false
             }
             currentStarred.add(number)
         }
@@ -93,55 +90,64 @@ class WhitelistManager(context: Context) {
         return true
     }
 
-    /**
-     * Add a phone number **or display name** to the whitelist. If the input
-     * contains at least one digit, it is normalized through [cleanPhoneNumber]
-     * (digits and `+` only). If it contains no digits at all (i.e. it is a
-     * display name like "Mom"), the trimmed original string is stored as-is
-     * so notification-based matching via [isWhitelistedByName] works.
-     * Duplicates are silently ignored (`Set` semantics).
-     */
-    fun addNumber(number: String) {
-        val clean = cleanPhoneNumber(number)
-        val toStore = if (clean.isEmpty()) number.trim() else clean
-        if (toStore.isNotEmpty()) {
-            val numbers = getNumbers().toMutableSet()
-            numbers.add(toStore)
-            saveNumbers(numbers)
-            BackupVault.snapshotAsync(appContext)
-        }
+    fun addContact(name: String?, number: String) {
+        val cleanNum = cleanPhoneNumber(number)
+        if (cleanNum.isEmpty() && name.isNullOrBlank()) return
+
+        val finalName = name?.trim()?.takeIf { it.isNotBlank() }
+        val finalNumber = if (cleanNum.isNotEmpty()) cleanNum else number.trim()
+        val entry = ContactEntry(finalName, finalNumber)
+
+        val currentJsonSet = prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
+        val mutableSet = currentJsonSet.toMutableSet()
+        
+        mutableSet.add(entry.toJsonString())
+
+        saveNumbers(mutableSet)
+        BackupVault.snapshotAsync(appContext)
     }
 
-    /**
-     * Remove a number from both the whitelist and the starred set (so the
-     * starred set doesn't end up referencing nonexistent entries).
-     */
-    fun removeNumber(number: String) {
-        val numbers = getNumbers().toMutableSet()
-        numbers.remove(number)
-        saveNumbers(numbers)
+    fun addNumber(number: String) {
+        addContact(null, number)
+    }
 
-        // Also remove from starred if deleted
-        val currentStarred = getStarredNumbers().toMutableSet()
-        if (currentStarred.contains(number)) {
-            currentStarred.remove(number)
-            prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+    fun removeNumber(number: String) {
+        val currentJsonSet = prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
+        // If the number param is actually a JSON string (due to MainActivity list displaying JSON string)
+        if (number.startsWith("{")) {
+            val mutableSet = currentJsonSet.toMutableSet()
+            mutableSet.remove(number)
+            saveNumbers(mutableSet)
+
+            val entry = ContactEntry.fromJsonString(number)
+            if (entry != null) {
+                val currentStarred = getStarredNumbers().toMutableSet()
+                if (currentStarred.contains(entry.number)) {
+                    currentStarred.remove(entry.number)
+                    prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+                }
+            }
+        } else {
+            val newSet = currentJsonSet.filterNot { jsonStr ->
+                val entry = ContactEntry.fromJsonString(jsonStr)
+                entry != null && entry.number == number
+            }.toSet()
+            saveNumbers(newSet)
+
+            val currentStarred = getStarredNumbers().toMutableSet()
+            if (currentStarred.contains(number)) {
+                currentStarred.remove(number)
+                prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+            }
         }
         BackupVault.snapshotAsync(appContext)
     }
 
-    /**
-     * Used by [BackupVault] during restore. Bypasses the cleanPhoneNumber
-     * normalization so display-name entries survive a round trip.
-     */
     fun replaceAllNumbers(numbers: Set<String>) {
         prefs.edit().putStringSet(KEY_WHITELIST, numbers).apply()
         BackupVault.snapshotAsync(appContext)
     }
 
-    /**
-     * Used by [BackupVault] during restore.
-     */
     fun replaceStarred(starred: Set<String>) {
         prefs.edit().putStringSet(KEY_STARRED, starred).apply()
         BackupVault.snapshotAsync(appContext)
@@ -156,11 +162,6 @@ class WhitelistManager(context: Context) {
         BackupVault.snapshotAsync(appContext)
     }
 
-    /**
-     * Synchronously clears the single-use passphrase. Use this from the
-     * trigger path so a crash between trigger and reboot can't leave the
-     * passphrase reusable.
-     */
     @SuppressLint("ApplySharedPref")
     fun clearPassphraseSync() {
         prefs.edit().remove(KEY_PASSPHRASE).commit()
@@ -185,134 +186,51 @@ class WhitelistManager(context: Context) {
         BackupVault.snapshotAsync(appContext)
     }
 
-    /**
-     * The full whitelist. Entries may be either normalized phone numbers
-     * (from [addNumber]) or arbitrary strings (display names, restored
-     * entries via [replaceAllNumbers]). Matching against incoming
-     * SMS/notification senders uses [isWhitelisted] or [isWhitelistedByName]
-     * respectively.
-     */
+    fun getContacts(): List<ContactEntry> {
+        val strings = prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
+        return strings.mapNotNull { ContactEntry.fromJsonString(it) }
+    }
+
     fun getNumbers(): Set<String> {
         return prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
     }
 
-    /**
-     * Used for SMS: matches by phone number, tolerating formatting differences
-     * (+1, dashes, spaces, etc.)
-     */
     fun isWhitelisted(number: String): Boolean {
         val cleanIncoming = cleanPhoneNumber(number)
         if (matchesMyNumber(cleanIncoming)) return true
-        return getNumbers().any { whitelisted ->
-            PhoneNumberUtils.compare(cleanIncoming, whitelisted)
+        return getContacts().any { entry ->
+            PhoneNumberUtils.compare(cleanIncoming, cleanPhoneNumber(entry.number))
         }
     }
 
-    /**
-     * The user's own number is always implicitly whitelisted, so a `loc` they
-     * send from another device (or to themselves) is answered without having to
-     * add it to the list manually. [getMyNumber] is set during onboarding.
-     */
     private fun matchesMyNumber(cleanIncoming: String): Boolean {
         val myNumber = getMyNumber()
         return myNumber.isNotEmpty() && PhoneNumberUtils.compare(cleanIncoming, myNumber)
     }
 
-    /**
-     * Used for notifications: matches by display name OR phone number.
-     * Notification senders almost always show a contact *name* rather than a
-     * raw number, while the whitelist often holds *numbers* (e.g. added via the
-     * contact picker, or typed in). Matching strategy, cheapest first:
-     *
-     *   1. Direct string equality against a whitelist entry (covers whitelisting
-     *      a display name like "Mom" when the notification shows exactly "Mom").
-     *   2. Phone-number compare (covers apps that surface a raw number).
-     *   3. Contacts resolution: look up the incoming display name in the device
-     *      Contacts, and if any of that contact's phone numbers is whitelisted,
-     *      it's a match. This is what makes a *number-only* whitelist work for
-     *      WhatsApp / Messenger / Google Voice, where the sender is a name.
-     *
-     * Step 3 requires `READ_CONTACTS`; without it we degrade to steps 1–2 (the
-     * previous behavior).
-     */
     fun isWhitelistedByName(displayName: String): Boolean {
         val nameNorm = normalizeName(displayName)
         val cleanIncoming = cleanPhoneNumber(displayName)
-        val numbers = getNumbers()
+        val contacts = getContacts()
 
-        // The user's own number is always allowed (covers a notification that
-        // surfaces the raw number).
         if (matchesMyNumber(cleanIncoming)) return true
 
-        val directMatch = numbers.any { entry ->
-            // Username/handle match is format- and case-insensitive (so "@mom",
-            // "mom", and "Mom" all match), falling back to a phone-number compare
-            // for entries that are numbers.
-            normalizeName(entry) == nameNorm ||
-                PhoneNumberUtils.compare(cleanIncoming, cleanPhoneNumber(entry))
+        val directMatch = contacts.any { entry ->
+            val entryNameNorm = entry.name?.let { normalizeName(it) } ?: ""
+            entryNameNorm == nameNorm ||
+                PhoneNumberUtils.compare(cleanIncoming, cleanPhoneNumber(entry.number))
         }
-        if (directMatch) return true
-
-        // Resolve the notification's display name to the contact's phone
-        // numbers, then check those against the whitelist (and the user's own
-        // number, for a self-message that shows up as a contact name).
-        val contactNumbers = resolveContactNumbers(displayName)
-        return contactNumbers.any { contactNumber ->
-            matchesMyNumber(cleanPhoneNumber(contactNumber)) ||
-                numbers.any { entry -> PhoneNumberUtils.compare(contactNumber, entry) }
-        }
+        return directMatch
     }
 
-    /**
-     * Public wrapper over [resolveContactNumbers] so callers (e.g.
-     * [NotificationListener]'s cross-path dedupe) can map a notification's
-     * display name to the contact's phone numbers. Empty without `READ_CONTACTS`.
-     */
-    fun numbersForName(displayName: String): List<String> = resolveContactNumbers(displayName)
-
-    /**
-     * Looks up [displayName] in the device Contacts and returns every phone
-     * number associated with the matching contact(s). Uses
-     * [ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI], which matches
-     * on name prefix — so "Mom ❤️" still resolves the contact named "Mom".
-     * Returns empty if `READ_CONTACTS` isn't granted or nothing matches.
-     */
-    private fun resolveContactNumbers(displayName: String): List<String> {
-        val name = displayName.trim()
-        if (name.isEmpty()) return emptyList()
-        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.READ_CONTACTS)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            return emptyList()
-        }
-
-        val uri = Uri.withAppendedPath(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI,
-            Uri.encode(name)
-        )
-        val results = mutableListOf<String>()
-        return try {
-            appContext.contentResolver.query(
-                uri,
-                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
-                null, null, null
-            )?.use { cursor ->
-                val numberIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                if (numberIdx < 0) return@use
-                while (cursor.moveToNext()) {
-                    cursor.getString(numberIdx)?.takeIf { it.isNotBlank() }?.let { results.add(it) }
-                }
-            }
-            results
-        } catch (e: Exception) {
-            Log.e(TAG, "Contact lookup failed for '$name'", e)
-            emptyList()
-        }
+    fun numbersForName(displayName: String): List<String> {
+        val nameNorm = normalizeName(displayName)
+        val contacts = getContacts()
+        return contacts.filter { entry ->
+            val entryNameNorm = entry.name?.let { normalizeName(it) } ?: ""
+            entryNameNorm == nameNorm
+        }.map { it.number }
     }
-
-    // -------------------------------------------------------------------------
-    // Internal helpers
-    // -------------------------------------------------------------------------
 
     private fun saveNumbers(numbers: Set<String>) {
         prefs.edit().putStringSet(KEY_WHITELIST, numbers).apply()
@@ -322,21 +240,8 @@ class WhitelistManager(context: Context) {
         return number.replace(Regex("[^0-9+]"), "")
     }
 
-    /**
-     * Normalizes a username / display name for case- and format-insensitive
-     * matching of chat/social senders: strips a single leading "@" (so
-     * "@hereliesaz" matches "hereliesaz"), collapses internal whitespace, trims,
-     * and lowercases. Applied to BOTH the stored entry and the incoming sender at
-     * match time, so it works for existing whitelist entries with no migration.
-     * Phone numbers are matched separately via [cleanPhoneNumber] /
-     * [PhoneNumberUtils.compare], so this only governs name matching.
-     */
     private fun normalizeName(s: String): String =
         s.trim().removePrefix("@").trim().replace(WHITESPACE_RUN, " ").lowercase()
-
-    // -------------------------------------------------------------------------
-    // Encryption setup
-    // -------------------------------------------------------------------------
 
     private fun createEncryptedPrefs(context: Context): SharedPreferences {
         return try {
@@ -352,29 +257,34 @@ class WhitelistManager(context: Context) {
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
         } catch (e: Exception) {
-            // If the Keystore is unavailable (e.g. after a factory reset with
-            // Direct Boot), fall back to plaintext so the app doesn't hard-crash.
-            // The next cold boot after the user unlocks will recreate the key.
             Log.e(TAG, "Failed to create EncryptedSharedPreferences, falling back to plaintext", e)
             context.getSharedPreferences(ENCRYPTED_PREFS_FILE + "_fallback", Context.MODE_PRIVATE)
         }
     }
 
-    // -------------------------------------------------------------------------
-    // One-time migration from old plaintext prefs
-    // -------------------------------------------------------------------------
-
     private fun migrateLegacyPrefs(context: Context, encryptedPrefs: SharedPreferences) {
         val legacyPrefs = context.getSharedPreferences(LEGACY_PREFS_FILE, Context.MODE_PRIVATE)
-        val legacyNumbers = legacyPrefs.getStringSet(KEY_WHITELIST, null) ?: return
+        val legacyNumbers = legacyPrefs.getStringSet(KEY_WHITELIST, null) ?: emptySet()
 
-        // Only migrate if the encrypted store is empty and legacy store has data
         val alreadyMigrated = encryptedPrefs.contains(KEY_WHITELIST)
+        
         if (!alreadyMigrated && legacyNumbers.isNotEmpty()) {
-            Log.i(TAG, "Migrating ${legacyNumbers.size} entries from plaintext to encrypted prefs")
             encryptedPrefs.edit().putStringSet(KEY_WHITELIST, legacyNumbers).apply()
-            // Wipe the old plaintext store
             legacyPrefs.edit().clear().apply()
+        }
+
+        val currentSet = encryptedPrefs.getStringSet(KEY_WHITELIST, null) ?: emptySet()
+        val needsJsonMigration = currentSet.any { !it.startsWith("{") }
+        if (needsJsonMigration) {
+            val jsonSet = currentSet.map { str ->
+                if (str.startsWith("{")) {
+                    str
+                } else {
+                    ContactEntry(null, str).toJsonString()
+                }
+            }.toSet()
+            encryptedPrefs.edit().putStringSet(KEY_WHITELIST, jsonSet).apply()
+            Log.i(TAG, "Migrated ${jsonSet.size} entries to JSON format")
         }
     }
 }
