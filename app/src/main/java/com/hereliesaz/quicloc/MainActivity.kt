@@ -13,6 +13,7 @@ import android.provider.Settings
 import android.text.TextUtils
 import android.widget.Toast
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
@@ -836,6 +837,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         whitelistManager = WhitelistManager(this)
         numbersState.value = whitelistManager.getNumbers().toList()

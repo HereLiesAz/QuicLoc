@@ -9,6 +9,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.addCallback
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -78,6 +79,7 @@ class TrackingLockActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         failCount = savedInstanceState?.getInt("FAIL_COUNT", 0) ?: 0
 
         // Show this activity over the keyguard and wake the screen, but DO
@@ -172,7 +174,9 @@ fun LockScreenUI(onPinEntered: (String) -> Unit) {
     var pin by remember { mutableStateOf("") }
 
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .systemBarsPadding(),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
