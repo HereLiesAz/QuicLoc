@@ -145,8 +145,7 @@ jobs:
           echo "Package: $APP_ID"
 
           resp="$RUNNER_TEMP/edit.json"
-          http=$(curl -sS -o "$resp" -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer $token" "$api/edits")
+          http=$(curl -sS -o "$resp" -w "%{http_code}" -X POST -H "Authorization: Bearer $token" "$api/edits")
           echo "Play API edits.insert -> HTTP $http"
           echo "Response body:"; cat "$resp"; echo
           if [ "$http" != "200" ] && [ "$http" != "201" ]; then
