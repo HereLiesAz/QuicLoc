@@ -33,7 +33,7 @@ Select: **No — SMS access is needed but it is not a messaging app**
 
 
 
-## 3. Notification Listener Permission Declaration
+## 2. Notification Listener Permission Declaration
 
 **Location in Play Console:**
 > App content → Sensitive app permissions → Notification access
@@ -47,7 +47,7 @@ Select: **Yes**
 
 ---
 
-## 3. Background Location Declaration
+## 3. Background Location Declaration (Location permissions)
 
 **Location in Play Console:**
 > App content → Sensitive app permissions → Background location

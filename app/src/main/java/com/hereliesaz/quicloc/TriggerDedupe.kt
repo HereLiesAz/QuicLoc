@@ -29,7 +29,8 @@ object TriggerDedupe {
     // Timestamp of the most recent carrier-SMS trigger handled by SmsReceiver.
     // The default SMS app posts a notification for that same carrier SMS, which
     // NotificationListener also sees. When that notification only carries a
-    // contact *name* and READ_CONTACTS isn't granted to resolve it to a number,
+    // contact *name* that doesn't resolve to a number in the local whitelist
+    // (QuicLoc holds no READ_CONTACTS permission to look it up live),
     // the number-based dedupe above can't match — so this coarse time signal is
     // the fallback that still collapses the duplicate (the SMS and its
     // default-app notification always arrive within a second or two of each

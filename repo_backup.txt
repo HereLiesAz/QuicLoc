@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    fce566ba6515b703faddb093ada699d5065e6e94
-  Timestamp: 2026-08-06 14:20:41 UTC
+  Branch:    claude/permissions-declaration-form-mashva
+  Commit:    cb9c9f0331615a78f09880755d45c1a3e69e0c07
+  Timestamp: 2026-08-12 02:27:13 UTC
 ======================================================
 
 
@@ -1665,7 +1665,6 @@ Every permission maps to one feature, and the app shows its live status with a G
 | `ACCESS_BACKGROUND_LOCATION` | Answer while the app is closed — the point of the app |
 | `POST_NOTIFICATIONS` | Show the foreground-service notification while a reply is in flight (Android 13+) |
 | `USE_BIOMETRIC` / `USE_FINGERPRINT` | Lock the settings screen (a QuicLoc PIN works as an alternative) |
-| `READ_CONTACTS` | Only for "Pick from Contacts" — optional |
 | `READ_PHONE_NUMBERS` | Only to auto-fill your own number for the parking widget — optional |
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | Detect the trigger in non-SMS messaging apps |
 
@@ -8873,7 +8872,8 @@ object TriggerDedupe {
     // Timestamp of the most recent carrier-SMS trigger handled by SmsReceiver.
     // The default SMS app posts a notification for that same carrier SMS, which
     // NotificationListener also sees. When that notification only carries a
-    // contact *name* and READ_CONTACTS isn't granted to resolve it to a number,
+    // contact *name* that doesn't resolve to a number in the local whitelist
+    // (QuicLoc holds no READ_CONTACTS permission to look it up live),
     // the number-based dedupe above can't match — so this coarse time signal is
     // the fallback that still collapses the duplicate (the SMS and its
     // default-app notification always arrive within a second or two of each
@@ -9458,6 +9458,10 @@ import org.json.JSONObject
 class WhitelistManager(context: Context) {
 
     data class ContactEntry(val name: String?, val number: String) {
+        /** The token users see for this entry and use to remove/star it. */
+        val displayToken: String
+            get() = name?.takeIf { it.isNotBlank() } ?: number
+
         fun toJsonString(): String {
             return JSONObject().apply {
                 put("name", name ?: "")
@@ -9467,13 +9471,24 @@ class WhitelistManager(context: Context) {
 
         companion object {
             fun fromJsonString(jsonStr: String): ContactEntry? {
+                if (jsonStr.isBlank()) return null
                 return try {
                     val json = JSONObject(jsonStr)
                     val name = json.optString("name", "").takeIf { it.isNotBlank() }
-                    val number = json.getString("number")
+                    val number = json.optString("number", "")
                     ContactEntry(name, number)
                 } catch (e: Exception) {
-                    null
+                    // A plain (non-JSON) token: pre-migration legacy data, or a
+                    // value round-tripped through BackupVault, which stores and
+                    // restores display tokens rather than JSON (see
+                    // WhitelistManager.replaceAllNumbers). Classify it the same
+                    // way addNumber does: no digits means it's a display name.
+                    val trimmed = jsonStr.trim()
+                    if (trimmed.any { it.isDigit() }) {
+                        ContactEntry(null, trimmed)
+                    } else {
+                        ContactEntry(trimmed, "")
+                    }
                 }
             }
         }
@@ -9548,40 +9563,50 @@ class WhitelistManager(context: Context) {
         BackupVault.snapshotAsync(appContext)
     }
 
+    /**
+     * Adds a single free-form whitelist token. A token with no digits at all
+     * (e.g. "Mom", "@dril") is a display name/handle with no phone number;
+     * anything else is treated as a phone number.
+     */
     fun addNumber(number: String) {
-        addContact(null, number)
+        val trimmed = number.trim()
+        if (trimmed.isEmpty()) return
+        if (cleanPhoneNumber(trimmed).isEmpty()) {
+            addContact(trimmed, "")
+        } else {
+            addContact(null, trimmed)
+        }
     }
 
-    fun removeNumber(number: String) {
+    fun removeNumber(token: String) {
         val currentJsonSet = prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
-        // If the number param is actually a JSON string (due to MainActivity list displaying JSON string)
-        if (number.startsWith("{")) {
+        // Legacy callers that still pass a raw JSON blob.
+        if (token.startsWith("{")) {
             val mutableSet = currentJsonSet.toMutableSet()
-            mutableSet.remove(number)
+            mutableSet.remove(token)
             saveNumbers(mutableSet)
 
-            val entry = ContactEntry.fromJsonString(number)
+            val entry = ContactEntry.fromJsonString(token)
             if (entry != null) {
-                val currentStarred = getStarredNumbers().toMutableSet()
-                if (currentStarred.contains(entry.number)) {
-                    currentStarred.remove(entry.number)
-                    prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
-                }
+                unstar(entry.displayToken)
             }
         } else {
             val newSet = currentJsonSet.filterNot { jsonStr ->
                 val entry = ContactEntry.fromJsonString(jsonStr)
-                entry != null && entry.number == number
+                entry != null && entry.displayToken == token
             }.toSet()
             saveNumbers(newSet)
-
-            val currentStarred = getStarredNumbers().toMutableSet()
-            if (currentStarred.contains(number)) {
-                currentStarred.remove(number)
-                prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
-            }
+            unstar(token)
         }
         BackupVault.snapshotAsync(appContext)
+    }
+
+    private fun unstar(token: String) {
+        val currentStarred = getStarredNumbers().toMutableSet()
+        if (currentStarred.contains(token)) {
+            currentStarred.remove(token)
+            prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+        }
     }
 
     fun replaceAllNumbers(numbers: Set<String>) {
@@ -9633,20 +9658,28 @@ class WhitelistManager(context: Context) {
     }
 
     fun getNumbers(): Set<String> {
-        return prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
+        return getContacts().map { it.displayToken }.toSet()
     }
 
     fun isWhitelisted(number: String): Boolean {
         val cleanIncoming = cleanPhoneNumber(number)
         if (matchesMyNumber(cleanIncoming)) return true
-        return getContacts().any { entry ->
-            PhoneNumberUtils.compare(cleanIncoming, cleanPhoneNumber(entry.number))
-        }
+        return getContacts().any { entry -> numbersMatch(cleanIncoming, entry.number) }
     }
 
     private fun matchesMyNumber(cleanIncoming: String): Boolean {
-        val myNumber = getMyNumber()
-        return myNumber.isNotEmpty() && PhoneNumberUtils.compare(cleanIncoming, myNumber)
+        return numbersMatch(cleanIncoming, getMyNumber())
+    }
+
+    /**
+     * [PhoneNumberUtils.compare] treats two blank strings as equal, so without
+     * this guard a name-only whitelist entry (empty number) would match any
+     * incoming number that also cleans to empty — a whitelist bypass.
+     */
+    private fun numbersMatch(cleanA: String, rawB: String): Boolean {
+        val cleanB = cleanPhoneNumber(rawB)
+        if (cleanA.isEmpty() || cleanB.isEmpty()) return false
+        return PhoneNumberUtils.compare(cleanA, cleanB)
     }
 
     fun isWhitelistedByName(displayName: String): Boolean {
@@ -9656,21 +9689,19 @@ class WhitelistManager(context: Context) {
 
         if (matchesMyNumber(cleanIncoming)) return true
 
-        val directMatch = contacts.any { entry ->
-            val entryNameNorm = entry.name?.let { normalizeName(it) } ?: ""
-            entryNameNorm == nameNorm ||
-                PhoneNumberUtils.compare(cleanIncoming, cleanPhoneNumber(entry.number))
+        return contacts.any { entry ->
+            (nameNorm.isNotEmpty() && normalizeName(entry.name.orEmpty()) == nameNorm) ||
+                numbersMatch(cleanIncoming, entry.number)
         }
-        return directMatch
     }
 
     fun numbersForName(displayName: String): List<String> {
         val nameNorm = normalizeName(displayName)
-        val contacts = getContacts()
-        return contacts.filter { entry ->
-            val entryNameNorm = entry.name?.let { normalizeName(it) } ?: ""
-            entryNameNorm == nameNorm
-        }.map { it.number }
+        if (nameNorm.isEmpty()) return emptyList()
+        return getContacts()
+            .filter { entry -> normalizeName(entry.name.orEmpty()) == nameNorm }
+            .map { it.number }
+            .filter { it.isNotEmpty() }
     }
 
     private fun saveNumbers(numbers: Set<String>) {
@@ -11493,11 +11524,7 @@ class TutorialsTest {
 
 package com.hereliesaz.quicloc
 
-import android.Manifest
-import android.app.Application
 import android.content.Context
-import android.net.Uri
-import android.provider.ContactsContract
 import androidx.test.core.app.ApplicationProvider
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -11508,9 +11535,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import org.robolectric.fakes.RoboCursor
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -11672,37 +11697,28 @@ class WhitelistManagerTest {
     }
 
     /**
-     * The chat-app fix: the whitelist holds only a phone *number*, but the
-     * notification surfaces a contact *name*. With READ_CONTACTS granted, the
-     * name resolves through Contacts to the number, which is whitelisted.
+     * The chat-app fix: a notification shows the sender's contact *name*
+     * ("Mom ❤️"), not a phone number. "Pick from Contacts" (no READ_CONTACTS
+     * needed — see MainActivity.launchContactPicker) stores the name+number
+     * pair locally via addContact, and isWhitelistedByName matches against
+     * that local record — never a live Contacts query.
      */
     @Test
-    fun `isWhitelistedByName resolves a contact name to a whitelisted number`() {
-        grantContacts()
-        // Notification shows "Mom ❤️"; the contact's number is +15551234567.
-        stubContactNumbers("Mom ❤️", "+15551234567")
-        whitelist.addNumber("+15551234567")
-
+    fun `isWhitelistedByName matches a name stored via addContact`() {
+        whitelist.addContact("Mom ❤️", "+15551234567")
         assertTrue(whitelist.isWhitelistedByName("Mom ❤️"))
     }
 
     @Test
-    fun `isWhitelistedByName rejects a contact whose number isn't whitelisted`() {
-        grantContacts()
-        stubContactNumbers("Stranger", "+15559999999")
-        whitelist.addNumber("+15551234567")
-
+    fun `isWhitelistedByName rejects a name that was never stored`() {
+        whitelist.addContact("Mom ❤️", "+15551234567")
         assertFalse(whitelist.isWhitelistedByName("Stranger"))
     }
 
     @Test
-    fun `isWhitelistedByName without READ_CONTACTS falls back to direct matching`() {
-        // No permission granted: contact resolution is skipped, so a
-        // number-only whitelist can't match a name.
-        stubContactNumbers("Mom", "+15551234567")
-        whitelist.addNumber("+15551234567")
-
-        assertFalse(whitelist.isWhitelistedByName("Mom"))
+    fun `numbersForName returns the stored number for a matching name`() {
+        whitelist.addContact("Mom ❤️", "+15551234567")
+        assertEquals(listOf("+15551234567"), whitelist.numbersForName("Mom ❤️"))
     }
 
     // ---- own number is implicitly whitelisted ---------------------------
@@ -11720,23 +11736,6 @@ class WhitelistManagerTest {
     fun `unset own number does not match`() {
         // myNumber defaults to empty — must not whitelist everyone.
         assertFalse(whitelist.isWhitelisted("+15551234567"))
-    }
-
-    private fun grantContacts() {
-        shadowOf(context as Application).grantPermissions(Manifest.permission.READ_CONTACTS)
-    }
-
-    /** Registers a contacts lookup result for [displayName] → [numbers]. */
-    private fun stubContactNumbers(displayName: String, vararg numbers: String) {
-        val uri = Uri.withAppendedPath(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI,
-            Uri.encode(displayName)
-        )
-        // ShadowContentResolver.setCursor requires Robolectric's BaseCursor.
-        val cursor = RoboCursor()
-        cursor.setColumnNames(listOf(ContactsContract.CommonDataKinds.Phone.NUMBER))
-        cursor.setResults(numbers.map { arrayOf<Any>(it) }.toTypedArray())
-        shadowOf(context.contentResolver).setCursor(uri, cursor)
     }
 
     // ---- bulk replace (used by BackupVault restore) ---------------------
@@ -12272,7 +12271,7 @@ Select: **No — SMS access is needed but it is not a messaging app**
 
 
 
-## 3. Notification Listener Permission Declaration
+## 2. Notification Listener Permission Declaration
 
 **Location in Play Console:**
 > App content → Sensitive app permissions → Notification access
@@ -12286,7 +12285,7 @@ Select: **Yes**
 
 ---
 
-## 3. Background Location Declaration
+## 3. Background Location Declaration (Location permissions)
 
 **Location in Play Console:**
 > App content → Sensitive app permissions → Background location
@@ -12696,14 +12695,6 @@ Requested **separately**, after the user has granted foreground location, becaus
 
 Code: `MainActivity.checkBackgroundLocationPermission` → `backgroundLocationLauncher`.
 
-### Contacts
-
-| Permission | Why |
-|---|---|
-| `READ_CONTACTS` | Optional — only used by the "Pick from Contacts" button to populate the whitelist |
-
-Requested on demand (when the user taps "Pick from Contacts") — `MainActivity.launchContactPicker`. If denied, the picker still opens via `ActivityResultContracts.PickContact()`; we just won't be able to enumerate the contact's phone numbers, only their display name.
-
 ### Own phone number
 
 | Permission | Why |
@@ -12769,7 +12760,17 @@ The battery optimization exemption requires a Play Console disclosure — see [D
 
 ## Permissions explicitly NOT requested
 
-- `READ_PHONE_STATE` / `READ_PHONE_NUMBERS` — we use the Phone Number Hint API instead, which doesn't need permission.
+- `READ_CONTACTS` — the "Pick from Contacts" button uses `Intent.ACTION_PICK` against
+  `ContactsContract.CommonDataKinds.Phone.CONTENT_URI` (`MainActivity.launchContactPicker`). The
+  system Contacts app handles the picker UI and returns a result `Uri` the caller can query without
+  holding `READ_CONTACTS` itself — standard `ACTION_PICK` grant behavior. The picked name and number
+  are copied into the local whitelist (`WhitelistManager.addContact`); QuicLoc never queries the
+  Contacts provider outside that one picker result, and chat-notification sender matching
+  (`WhitelistManager.isWhitelistedByName`) compares against those locally stored names, not a live
+  contacts lookup.
+- `READ_PHONE_STATE` — we don't need general phone/telephony state. Own-number lookup uses the
+  optional `READ_PHONE_NUMBERS` runtime permission (see "Own phone number" above) with the Phone
+  Number Hint API as the no-permission fallback, never `READ_PHONE_STATE`.
 - `READ_SMS` — we only receive new SMS, never read the user's SMS history.
 - `WRITE_SMS` — `SmsManager.sendTextMessage` doesn't need it.
 - `WAKE_LOCK` — FGS keeps the process alive; we don't need a manual wake lock.
@@ -12850,8 +12851,10 @@ debug APKs for sideloading.
     `-keep class com.hereliesaz.quicloc.lockdown.** { *; }`.
   - The core SMS + location permissions stay in the base on purpose: they're driven by a
     manifest `SmsReceiver` the system delivers broadcasts to, and the app must answer `loc` the
-    moment it's installed. Other optional perms (`READ_CONTACTS`, the `BIND_*` signature
-    permissions) were intentionally left in the base — see the PR discussion.
+    moment it's installed. `READ_CONTACTS` is not declared anywhere in the app — the "Pick from
+    Contacts" button uses `Intent.ACTION_PICK`, which needs no permission (see
+    [PERMISSIONS.md](PERMISSIONS.md)). The `BIND_*` signature permissions (Notification Listener,
+    Device Admin) were intentionally left in the base/module — see the PR discussion.
 - **R8 / resource shrinking: enabled.** `isMinifyEnabled` and `isShrinkResources` are true in `release` builds to optimize performance and reduce APK size. ProGuard rules are configured in `app/proguard-rules.pro`.
   (Compose and CameraX ship their own consumer ProGuard rules.)
 - **Play in-app updates (Play Core):** an optional future enhancement; not wired up.

@@ -80,14 +80,6 @@ Requested **separately**, after the user has granted foreground location, becaus
 
 Code: `MainActivity.checkBackgroundLocationPermission` → `backgroundLocationLauncher`.
 
-### Contacts
-
-| Permission | Why |
-|---|---|
-| `READ_CONTACTS` | Optional — only used by the "Pick from Contacts" button to populate the whitelist |
-
-Requested on demand (when the user taps "Pick from Contacts") — `MainActivity.launchContactPicker`. If denied, the picker still opens via `ActivityResultContracts.PickContact()`; we just won't be able to enumerate the contact's phone numbers, only their display name.
-
 ### Own phone number
 
 | Permission | Why |
@@ -153,7 +145,17 @@ The battery optimization exemption requires a Play Console disclosure — see [D
 
 ## Permissions explicitly NOT requested
 
-- `READ_PHONE_STATE` / `READ_PHONE_NUMBERS` — we use the Phone Number Hint API instead, which doesn't need permission.
+- `READ_CONTACTS` — the "Pick from Contacts" button uses `Intent.ACTION_PICK` against
+  `ContactsContract.CommonDataKinds.Phone.CONTENT_URI` (`MainActivity.launchContactPicker`). The
+  system Contacts app handles the picker UI and returns a result `Uri` the caller can query without
+  holding `READ_CONTACTS` itself — standard `ACTION_PICK` grant behavior. The picked name and number
+  are copied into the local whitelist (`WhitelistManager.addContact`); QuicLoc never queries the
+  Contacts provider outside that one picker result, and chat-notification sender matching
+  (`WhitelistManager.isWhitelistedByName`) compares against those locally stored names, not a live
+  contacts lookup.
+- `READ_PHONE_STATE` — we don't need general phone/telephony state. Own-number lookup uses the
+  optional `READ_PHONE_NUMBERS` runtime permission (see "Own phone number" above) with the Phone
+  Number Hint API as the no-permission fallback, never `READ_PHONE_STATE`.
 - `READ_SMS` — we only receive new SMS, never read the user's SMS history.
 - `WRITE_SMS` — `SmsManager.sendTextMessage` doesn't need it.
 - `WAKE_LOCK` — FGS keeps the process alive; we don't need a manual wake lock.

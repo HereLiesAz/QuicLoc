@@ -110,7 +110,6 @@ Every permission maps to one feature, and the app shows its live status with a G
 | `ACCESS_BACKGROUND_LOCATION` | Answer while the app is closed — the point of the app |
 | `POST_NOTIFICATIONS` | Show the foreground-service notification while a reply is in flight (Android 13+) |
 | `USE_BIOMETRIC` / `USE_FINGERPRINT` | Lock the settings screen (a QuicLoc PIN works as an alternative) |
-| `READ_CONTACTS` | Only for "Pick from Contacts" — optional |
 | `READ_PHONE_NUMBERS` | Only to auto-fill your own number for the parking widget — optional |
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | Detect the trigger in non-SMS messaging apps |
 
