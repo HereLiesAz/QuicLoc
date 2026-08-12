@@ -65,8 +65,10 @@ debug APKs for sideloading.
     `-keep class com.hereliesaz.quicloc.lockdown.** { *; }`.
   - The core SMS + location permissions stay in the base on purpose: they're driven by a
     manifest `SmsReceiver` the system delivers broadcasts to, and the app must answer `loc` the
-    moment it's installed. Other optional perms (`READ_CONTACTS`, the `BIND_*` signature
-    permissions) were intentionally left in the base — see the PR discussion.
+    moment it's installed. `READ_CONTACTS` is not declared anywhere in the app — the "Pick from
+    Contacts" button uses `Intent.ACTION_PICK`, which needs no permission (see
+    [PERMISSIONS.md](PERMISSIONS.md)). The `BIND_*` signature permissions (Notification Listener,
+    Device Admin) were intentionally left in the base/module — see the PR discussion.
 - **R8 / resource shrinking: enabled.** `isMinifyEnabled` and `isShrinkResources` are true in `release` builds to optimize performance and reduce APK size. ProGuard rules are configured in `app/proguard-rules.pro`.
   (Compose and CameraX ship their own consumer ProGuard rules.)
 - **Play in-app updates (Play Core):** an optional future enhancement; not wired up.

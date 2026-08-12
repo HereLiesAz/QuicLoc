@@ -17,6 +17,10 @@ import org.json.JSONObject
 class WhitelistManager(context: Context) {
 
     data class ContactEntry(val name: String?, val number: String) {
+        /** The token users see for this entry and use to remove/star it. */
+        val displayToken: String
+            get() = name?.takeIf { it.isNotBlank() } ?: number
+
         fun toJsonString(): String {
             return JSONObject().apply {
                 put("name", name ?: "")
@@ -26,13 +30,24 @@ class WhitelistManager(context: Context) {
 
         companion object {
             fun fromJsonString(jsonStr: String): ContactEntry? {
+                if (jsonStr.isBlank()) return null
                 return try {
                     val json = JSONObject(jsonStr)
                     val name = json.optString("name", "").takeIf { it.isNotBlank() }
-                    val number = json.getString("number")
+                    val number = json.optString("number", "")
                     ContactEntry(name, number)
                 } catch (e: Exception) {
-                    null
+                    // A plain (non-JSON) token: pre-migration legacy data, or a
+                    // value round-tripped through BackupVault, which stores and
+                    // restores display tokens rather than JSON (see
+                    // WhitelistManager.replaceAllNumbers). Classify it the same
+                    // way addNumber does: no digits means it's a display name.
+                    val trimmed = jsonStr.trim()
+                    if (trimmed.any { it.isDigit() }) {
+                        ContactEntry(null, trimmed)
+                    } else {
+                        ContactEntry(trimmed, "")
+                    }
                 }
             }
         }
@@ -107,40 +122,50 @@ class WhitelistManager(context: Context) {
         BackupVault.snapshotAsync(appContext)
     }
 
+    /**
+     * Adds a single free-form whitelist token. A token with no digits at all
+     * (e.g. "Mom", "@dril") is a display name/handle with no phone number;
+     * anything else is treated as a phone number.
+     */
     fun addNumber(number: String) {
-        addContact(null, number)
+        val trimmed = number.trim()
+        if (trimmed.isEmpty()) return
+        if (cleanPhoneNumber(trimmed).isEmpty()) {
+            addContact(trimmed, "")
+        } else {
+            addContact(null, trimmed)
+        }
     }
 
-    fun removeNumber(number: String) {
+    fun removeNumber(token: String) {
         val currentJsonSet = prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
-        // If the number param is actually a JSON string (due to MainActivity list displaying JSON string)
-        if (number.startsWith("{")) {
+        // Legacy callers that still pass a raw JSON blob.
+        if (token.startsWith("{")) {
             val mutableSet = currentJsonSet.toMutableSet()
-            mutableSet.remove(number)
+            mutableSet.remove(token)
             saveNumbers(mutableSet)
 
-            val entry = ContactEntry.fromJsonString(number)
+            val entry = ContactEntry.fromJsonString(token)
             if (entry != null) {
-                val currentStarred = getStarredNumbers().toMutableSet()
-                if (currentStarred.contains(entry.number)) {
-                    currentStarred.remove(entry.number)
-                    prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
-                }
+                unstar(entry.displayToken)
             }
         } else {
             val newSet = currentJsonSet.filterNot { jsonStr ->
                 val entry = ContactEntry.fromJsonString(jsonStr)
-                entry != null && entry.number == number
+                entry != null && entry.displayToken == token
             }.toSet()
             saveNumbers(newSet)
-
-            val currentStarred = getStarredNumbers().toMutableSet()
-            if (currentStarred.contains(number)) {
-                currentStarred.remove(number)
-                prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
-            }
+            unstar(token)
         }
         BackupVault.snapshotAsync(appContext)
+    }
+
+    private fun unstar(token: String) {
+        val currentStarred = getStarredNumbers().toMutableSet()
+        if (currentStarred.contains(token)) {
+            currentStarred.remove(token)
+            prefs.edit().putStringSet(KEY_STARRED, currentStarred).apply()
+        }
     }
 
     fun replaceAllNumbers(numbers: Set<String>) {
@@ -192,20 +217,28 @@ class WhitelistManager(context: Context) {
     }
 
     fun getNumbers(): Set<String> {
-        return prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
+        return getContacts().map { it.displayToken }.toSet()
     }
 
     fun isWhitelisted(number: String): Boolean {
         val cleanIncoming = cleanPhoneNumber(number)
         if (matchesMyNumber(cleanIncoming)) return true
-        return getContacts().any { entry ->
-            PhoneNumberUtils.compare(cleanIncoming, cleanPhoneNumber(entry.number))
-        }
+        return getContacts().any { entry -> numbersMatch(cleanIncoming, entry.number) }
     }
 
     private fun matchesMyNumber(cleanIncoming: String): Boolean {
-        val myNumber = getMyNumber()
-        return myNumber.isNotEmpty() && PhoneNumberUtils.compare(cleanIncoming, myNumber)
+        return numbersMatch(cleanIncoming, getMyNumber())
+    }
+
+    /**
+     * [PhoneNumberUtils.compare] treats two blank strings as equal, so without
+     * this guard a name-only whitelist entry (empty number) would match any
+     * incoming number that also cleans to empty — a whitelist bypass.
+     */
+    private fun numbersMatch(cleanA: String, rawB: String): Boolean {
+        val cleanB = cleanPhoneNumber(rawB)
+        if (cleanA.isEmpty() || cleanB.isEmpty()) return false
+        return PhoneNumberUtils.compare(cleanA, cleanB)
     }
 
     fun isWhitelistedByName(displayName: String): Boolean {
@@ -215,21 +248,19 @@ class WhitelistManager(context: Context) {
 
         if (matchesMyNumber(cleanIncoming)) return true
 
-        val directMatch = contacts.any { entry ->
-            val entryNameNorm = entry.name?.let { normalizeName(it) } ?: ""
-            entryNameNorm == nameNorm ||
-                PhoneNumberUtils.compare(cleanIncoming, cleanPhoneNumber(entry.number))
+        return contacts.any { entry ->
+            (nameNorm.isNotEmpty() && normalizeName(entry.name.orEmpty()) == nameNorm) ||
+                numbersMatch(cleanIncoming, entry.number)
         }
-        return directMatch
     }
 
     fun numbersForName(displayName: String): List<String> {
         val nameNorm = normalizeName(displayName)
-        val contacts = getContacts()
-        return contacts.filter { entry ->
-            val entryNameNorm = entry.name?.let { normalizeName(it) } ?: ""
-            entryNameNorm == nameNorm
-        }.map { it.number }
+        if (nameNorm.isEmpty()) return emptyList()
+        return getContacts()
+            .filter { entry -> normalizeName(entry.name.orEmpty()) == nameNorm }
+            .map { it.number }
+            .filter { it.isNotEmpty() }
     }
 
     private fun saveNumbers(numbers: Set<String>) {
