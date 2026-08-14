@@ -219,14 +219,41 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         } else it
     }
 
+    /** Whether unlock() has already auto-walked the permission chain this process lifetime. */
+    private var hasRunPermissionChainThisSession = false
+
     /** Set when the launcher fires, called once the system dialog dismisses. */
     private var afterPermissionResult: (granted: Boolean) -> Unit = {}
+
+    /** Which permission the most recent [singlePermissionLauncher] launch was for. */
+    private var lastRequestedPermission: String? = null
+
+    /** Records [lastRequestedPermission], then launches the request. */
+    private fun launchPermissionRequest(permission: String) {
+        lastRequestedPermission = permission
+        singlePermissionLauncher.launch(permission)
+    }
 
     private val singlePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         val next = afterPermissionResult
         afterPermissionResult = {}
+        // shouldShowRequestPermissionRationale() only returns false once
+        // Android has decided it will no longer show its own request dialog
+        // for this permission ("Don't ask again", or enough plain denials on
+        // some OEMs) -- checked here, right after a request, it reliably
+        // detects "that dialog we just tried to show never actually
+        // appeared". Without this, re-tapping "Grant" from the rationale
+        // dialog silently no-ops forever with zero visible feedback.
+        val permission = lastRequestedPermission
+        if (!granted && permission != null && !shouldShowRequestPermissionRationale(permission)) {
+            Toast.makeText(
+                this,
+                "Android won't ask again for this one — grant it from the app's Settings page instead.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
         next(granted)
     }
 
@@ -276,7 +303,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             // Unknown permission — fall back to launching directly with no rationale.
             afterPermissionResult = onAfter
             beginSystemFlow()
-            singlePermissionLauncher.launch(permission)
+            launchPermissionRequest(permission)
             return
         }
         pendingRationaleState.value = RationaleDialogState(
@@ -291,7 +318,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 pendingRationaleState.value = null
                 afterPermissionResult = onAfter
                 beginSystemFlow()
-                singlePermissionLauncher.launch(permission)
+                launchPermissionRequest(permission)
             },
             onSkip = {
                 pendingRationaleState.value = null
@@ -323,6 +350,16 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
     // Compose state — hoisted so biometric callback and launchers can update it
     private var authState = mutableStateOf(false)
+    // Hoisted to the activity, not a remember{} inside the composable tree:
+    // `view` used to live in a remember{} inside the `else` branch of
+    // `if (!authenticated) {...} else {...}`. Compose tears down and rebuilds
+    // that whole branch's remembered state every time `authenticated` flips
+    // false -> true, which happens on every ordinary re-authentication (a ​
+    // plain Home-button press backgrounds the activity and clears authState;
+    // see onPause). The result was silently landing back on the default
+    // screen after every unlock, discarding whatever screen the user was on.
+    // Living here instead survives that.
+    private var viewState = mutableStateOf<MainView>(MainView.Config)
     private var numbersState = mutableStateOf<List<String>>(emptyList())
     // How many whitelist entries actually have a dialable phone number, as
     // opposed to numbersState.size (which counts name-only entries too —
@@ -845,6 +882,10 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         enableEdgeToEdge()
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         whitelistManager = WhitelistManager(this)
+        viewState.value = if (!whitelistManager.isOnboardingCompleted())
+            MainView.TutorialDetail(Tutorials.MAIN_ID, fromOnboarding = true)
+        else
+            MainView.Config
         numbersState.value = whitelistManager.getNumbers().toList()
         dialableCountState.value = whitelistManager.getDialableNumbers().size
         starredState.value = whitelistManager.getStarredNumbers()
@@ -898,17 +939,18 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                     var currentPassphrase by remember { mutableStateOf(whitelistManager.getPassphrase() ?: "") }
                     var currentPin by remember { mutableStateOf(whitelistManager.getPin() ?: "") }
 
-                    var notificationAccessGranted by remember {
-                        mutableStateOf(isNotificationListenerEnabled())
+                    // Derived from permissionStatuses (refreshed every onResume)
+                    // instead of its own remember{} snapshot -- a standalone
+                    // snapshot here never updated after granting/revoking the
+                    // permission in system Settings, since returning from that
+                    // Settings screen is a round-trip this activity treats as
+                    // "expected" and doesn't rebuild this composable subtree.
+                    // Deriving it means it can never disagree with the same
+                    // list the Setup Checklist and All Permissions table read.
+                    val notificationAccessGranted = permissionStatuses.any {
+                        it.key == PermKeys.NOTIF_LISTENER && it.state == PermStatus.GRANTED
                     }
-                    var view by remember {
-                        mutableStateOf<MainView>(
-                            if (!whitelistManager.isOnboardingCompleted())
-                                MainView.TutorialDetail(Tutorials.MAIN_ID, fromOnboarding = true)
-                            else
-                                MainView.Config
-                        )
-                    }
+                    var view by viewState
 
                     val showLaunchRestore by showLaunchRestoreState
                     val pendingImportUri by pendingImportUriState
@@ -1328,7 +1370,18 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         isAuthenticated = true
         authState.value = true
         pinGateState.value = false
-        checkPermissions()
+        // Only auto-walk the permission rationale chain once per process
+        // lifetime, not on every unlock. unlock() runs on every successful
+        // re-authentication -- an ordinary Home-button press backgrounds the
+        // activity and clears authState (see onPause), so without this gate,
+        // skipping (or simply not yet having reached) any one permission
+        // meant the full "Step 1 of N" dialog sequence re-fired every single
+        // time the user reopened the app. Missing permissions are still
+        // reachable any time via the Setup Checklist / All Permissions panel.
+        if (!hasRunPermissionChainThisSession) {
+            hasRunPermissionChainThisSession = true
+            checkPermissions()
+        }
     }
 
     /**
@@ -1529,7 +1582,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                     checkNotificationListenerPermission()
                 }
                 beginSystemFlow()
-                singlePermissionLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                launchPermissionRequest(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
             },
             onSkip = {
                 pendingRationaleState.value = null
