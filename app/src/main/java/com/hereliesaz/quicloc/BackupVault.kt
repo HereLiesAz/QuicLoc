@@ -1,6 +1,7 @@
 package com.hereliesaz.quicloc
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.net.Uri
 import android.util.Log
 import org.json.JSONArray
@@ -52,6 +53,19 @@ object BackupVault {
     private const val GCM_TAG_BITS = 128
     private const val GCM_TAG_BYTES = GCM_TAG_BITS / 8
     private const val HEADER_BYTES = 1 + SALT_BYTES + GCM_IV_BYTES
+
+    // Restore-attempt rate limiting. The PBKDF2 work factor makes offline
+    // brute force of an exported file expensive on its own, but a 4-6 digit
+    // PIN is still weak against someone guessing through the app's own UI —
+    // this bounds that path. Tracked in a small plaintext prefs file (just a
+    // counter + timestamp, not sensitive) so it's independent of PIN
+    // correctness and survives process death.
+    private const val ATTEMPTS_PREFS_FILE = "quicloc_backup_attempts"
+    private const val KEY_FAILED_COUNT = "failed_count"
+    private const val KEY_LOCKED_UNTIL = "locked_until"
+    private const val MAX_ATTEMPTS_BEFORE_LOCKOUT = 5
+    private const val BASE_LOCKOUT_MS = 30_000L
+    private const val MAX_LOCKOUT_MS = 60 * 60 * 1000L
 
     // Debounce window for snapshotAsync. Multiple mutations within this
     // span (a restore touches 6+ prefs in rapid succession; a UI batch
@@ -217,7 +231,56 @@ object BackupVault {
         }
     }
 
+    /**
+     * Milliseconds remaining before another restore attempt is allowed, or 0
+     * if none is currently locked out. Callers can poll this before showing
+     * a PIN prompt to avoid the round trip through [restoreFromBytes].
+     */
+    fun lockoutRemainingMs(context: Context): Long {
+        val until = attemptsPrefs(context).getLong(KEY_LOCKED_UNTIL, 0L)
+        val remaining = until - System.currentTimeMillis()
+        return if (remaining > 0) remaining else 0L
+    }
+
+    private fun attemptsPrefs(context: Context): SharedPreferences =
+        context.applicationContext.getSharedPreferences(ATTEMPTS_PREFS_FILE, Context.MODE_PRIVATE)
+
+    private fun recordFailedAttempt(context: Context) {
+        val prefs = attemptsPrefs(context)
+        val count = prefs.getInt(KEY_FAILED_COUNT, 0) + 1
+        val editor = prefs.edit().putInt(KEY_FAILED_COUNT, count)
+        if (count >= MAX_ATTEMPTS_BEFORE_LOCKOUT) {
+            val extraFailures = (count - MAX_ATTEMPTS_BEFORE_LOCKOUT).coerceAtMost(7)
+            val lockoutMs = (BASE_LOCKOUT_MS shl extraFailures).coerceAtMost(MAX_LOCKOUT_MS)
+            editor.putLong(KEY_LOCKED_UNTIL, System.currentTimeMillis() + lockoutMs)
+        }
+        editor.apply()
+    }
+
+    private fun resetAttempts(context: Context) {
+        attemptsPrefs(context).edit().clear().apply()
+    }
+
+    private fun formatLockoutDuration(ms: Long): String {
+        val totalSeconds = (ms + 999) / 1000
+        val minutes = totalSeconds / 60
+        val seconds = totalSeconds % 60
+        return when {
+            minutes > 0 && seconds > 0 -> "${minutes}m ${seconds}s"
+            minutes > 0 -> "${minutes}m"
+            else -> "${seconds}s"
+        }
+    }
+
     private fun restoreFromBytes(context: Context, bytes: ByteArray, pin: String): Result<RestoreSummary> {
+        val lockedFor = lockoutRemainingMs(context)
+        if (lockedFor > 0) {
+            return Result.failure(RestoreException(
+                RestoreException.Category.LOCKED_OUT,
+                "Too many incorrect PIN attempts. Try again in ${formatLockoutDuration(lockedFor)}."
+            ))
+        }
+
         // 1. Header sanity — distinguishable file-level errors. Wrong-PIN
         //    can never produce these because they don't touch the key.
         if (bytes.size < HEADER_BYTES + GCM_TAG_BYTES) {
@@ -253,6 +316,7 @@ object BackupVault {
         val plaintext = try {
             cipher.doFinal(ciphertext)
         } catch (e: Exception) {
+            recordFailedAttempt(context)
             return Result.failure(RestoreException(
                 RestoreException.Category.WRONG_PIN,
                 "Incorrect PIN. (If you're certain the PIN is right, the backup file may have been damaged in transit.)"
@@ -272,7 +336,9 @@ object BackupVault {
         }
 
         return try {
-            Result.success(applyJson(context, json))
+            val summary = applyJson(context, json)
+            resetAttempts(context)
+            Result.success(summary)
         } catch (e: Exception) {
             Result.failure(RestoreException(
                 RestoreException.Category.APPLY_ERROR,
@@ -365,6 +431,8 @@ object BackupVault {
             PARSE_ERROR,
             /** Decrypted + parsed, but writing to prefs threw. */
             APPLY_ERROR,
+            /** Too many wrong-PIN attempts recently; try again later. */
+            LOCKED_OUT,
         }
     }
 }
