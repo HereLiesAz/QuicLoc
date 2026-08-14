@@ -131,7 +131,7 @@ Kotlin + Jetpack Compose, single activity, no backend.
 
 - **`SmsReceiver`** — `BroadcastReceiver` for incoming SMS; matches trigger word against the whitelist, hands off to a foreground service.
 - **`NotificationListener`** — `NotificationListenerService` that watches messaging-app notifications and replies through their inline reply action.
-- **`LocationHelper`** — Fused Location Provider with a three-stage fallback: `getCurrentLocation()` → `lastLocation` → `requestLocationUpdates()` with a 15-second timeout.
+- **`LocationHelper`** — Fused Location Provider with a three-stage fallback: `getCurrentLocation()` → `lastLocation` → `requestLocationUpdates()` with a 30-second timeout.
 - **`WhitelistManager`** — trusted contacts in `EncryptedSharedPreferences` (AES-256-GCM, Android Keystore), with migration of any legacy plaintext data.
 - **`Readiness`** — pure-Kotlin derivation of the setup checklist from the live permission snapshot; the same data drives the Permissions table, so the two can't disagree.
 - **`BiometricHelper`** — wraps `BiometricPrompt` to gate the UI. Background components are unaffected by auth state.

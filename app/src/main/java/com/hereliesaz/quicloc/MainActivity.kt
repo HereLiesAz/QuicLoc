@@ -71,8 +71,8 @@ import kotlinx.coroutines.withContext
  *   - [History] — the request log ([HistoryScreen]).
  *   - [TutorialsHub] — list of all tutorials.
  *   - [TutorialDetail] — one tutorial's full body. [fromOnboarding] flips
- *     the confirm-button label ("Got it" vs "Done") and the back-target
- *     (return to Config to dismiss onboarding, vs return to hub).
+ *     the confirm-button label ("Set QuicLoc up" vs "Done") and the
+ *     back-target (return to Config to dismiss onboarding, vs return to hub).
  */
 sealed class MainView {
     data object Config : MainView()
@@ -3583,7 +3583,7 @@ fun TutorialsHubScreen(
  * Full text of a single tutorial in a scrollable column, with a sticky
  * confirm button at the bottom.
  *
- * @param confirmLabel "Got it" during onboarding, "Done" otherwise.
+ * @param confirmLabel "Set QuicLoc up" during onboarding, "Done" otherwise.
  * @param onBrowseAll Optional secondary action shown only on the
  *   first-launch tutorial — taps mark onboarding complete *and* jump to
  *   the tutorials hub so the user can read more if they want.

@@ -78,7 +78,7 @@ callback) requests CAMERA and prompts for Device Admin. This is how the base ins
 
 Requested **separately**, after the user has granted foreground location, because Android 11+ rejects bundling them. The user is sent to the system Location Settings screen and must explicitly tap "Allow all the time" — the app can't request this state directly.
 
-Code: `MainActivity.checkBackgroundLocationPermission` → `backgroundLocationLauncher`.
+Code: `MainActivity.checkBackgroundLocationPermission` → `singlePermissionLauncher`.
 
 ### Own phone number
 

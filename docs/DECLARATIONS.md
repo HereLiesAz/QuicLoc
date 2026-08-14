@@ -149,10 +149,10 @@ Select: **Yes**
 Fill in the Data safety form as follows:
 
 ### Does your app collect or share any of the required user data types?
-**No** — QuicLoc does not collect any data. It does not transmit any user data to the developer or any third party. The only outbound data is the location reply sent directly from the device to the requesting contact via SMS or notification reply, which is the explicit intended function of the app.
+**Yes — Location is shared (not collected).** Location is sent directly, device-to-device, to the trusted contact who requested it, via SMS or the messaging app's inline reply — this is the explicit, sole function of the app, and happens only in response to a request from a contact already on the user's own encrypted whitelist. It is never collected, stored, or transmitted to the developer, an analytics service, or any other third party. See [`PLAY_PUBLISHING.md`](PLAY_PUBLISHING.md#data-safety--privacy).
 
-### Data types to declare as NOT collected:
-- Location — not collected (obtained on demand, used in-memory, discarded)
+### Data types to declare:
+- **Location — Shared.** Purpose: App functionality. Required (it's the app's core function). Obtained on demand, held in memory only long enough to send the reply, then discarded — never written to disk or a server.
 - Personal info — not collected
 - Financial info — not collected
 - Health and fitness — not collected
