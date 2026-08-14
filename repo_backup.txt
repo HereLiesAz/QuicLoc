@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    e0350f2fbac526c5147607d9898f3df8e80135aa
-  Timestamp: 2026-08-12 23:15:52 UTC
+  Branch:    claude/permissions-declaration-form-mashva
+  Commit:    736af9c697b6c9bcd755659e3e7bf9b748c21796
+  Timestamp: 2026-08-14 19:47:08 UTC
 ======================================================
 
 
@@ -1555,10 +1555,10 @@ For more information, please refer to <https://unlicense.org>
 
 # QuicLoc
 
-**QuicLoc answers "where are you?" for you.**
+**QuicLoc lets people you trust check that you're safe, without you touching your phone.**
 
 1. You list the people you trust.
-2. One of them texts you the word **`loc`**.
+2. One of them texts you the word **`loc`** — to check in on you, or because you didn't answer.
 3. Your phone texts back a Google Maps link — by itself, screen off, app closed.
 
 Your location is fetched only at that moment, sent only to that person, and never stored anywhere. No server, no account, no tracking.
@@ -1567,7 +1567,7 @@ Your location is fetched only at that moment, sent only to that person, and neve
 
 ## Is this the app you want?
 
-**Yes, if** you're tired of "you home yet?" texts, want your partner or parent to be able to check on you without you touching your phone, or want a panic button that texts your location to people you've already chosen.
+**Yes, if** you want a partner or parent to be able to confirm you got home safe without you touching your phone, want a panic button that texts your location to people you've already chosen, or just want to stop typing "on my way" every time someone checks on you.
 
 **No, if** you want a live map of where someone is over time. That's Google Maps Live Location, and QuicLoc deliberately doesn't do it — nothing is streamed, logged, or kept.
 
@@ -1584,7 +1584,7 @@ The app has a live checklist at the top of its settings screen that tracks all o
 | 1 | **Turn QuicLoc on** | The master switch, first thing on the settings screen. While it's off, every trigger is ignored. |
 | 2 | **Grant text messages + location** | QuicLoc reads incoming texts to spot the trigger word, and texts back a maps link. |
 | 3 | **Set location to "Allow all the time"** | *The step people miss.* Android asks twice. "While using the app" means QuicLoc can only answer while you're looking at it — which defeats the point. |
-| 4 | **Add at least one trusted contact** | Nobody else can trigger anything. An empty list means QuicLoc ignores the entire world. |
+| 4 | **Add at least one emergency contact** | Nobody else can trigger anything. An empty list means QuicLoc ignores the entire world. |
 
 Then **test it**: have someone on your list text you `loc`. A Google Maps link should come back within a few seconds. If it doesn't, open **Diagnostics** in the app — it shows the message arriving and the exact reason QuicLoc did or didn't act.
 
@@ -1592,7 +1592,7 @@ Then **test it**: have someone on your list text you `loc`. A Google Maps link s
 
 - **Notification Access** — extends the trigger to WhatsApp, Telegram, Signal, Messenger and Google Messages. Without it, only plain text messages work.
 - **Battery optimisation exemption** — so a request at 3am isn't slept through. QuicLoc does no background work, so this costs no battery.
-- **Your own number + the home-screen widget** — for the parking / safety-check / emergency shortcuts below.
+- **Your own number + the home-screen widget** — for the safety-check / emergency / parking shortcuts below.
 
 Install from [Releases](../../releases). On first launch you'll authenticate with your fingerprint or device PIN, then be walked through the permissions one at a time — "Step 2 of 5", with a plain-English explanation of what each one is for, what breaks if you skip it, and what QuicLoc will never do with it. Skipping is fine — the checklist lets you come back to any of them.
 
@@ -1605,7 +1605,7 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 | Section | What's in it |
 |---|---|
 | **Setup checklist** | Live ✓/✗ for everything QuicLoc needs, each with a one-tap fix |
-| **1 · Trusted contacts** | Who's allowed to ask, priority ★ stars, add by contact / number / name |
+| **1 · Emergency contacts** | Who gets alerted, who's also allowed to ask, priority ★ stars, add by contact / number / name |
 | **2 · The trigger word** | What they send, which apps work, Notification Access |
 | **3 · Home screen widget** | Your own number, the tap patterns and what each one needs |
 | **4 · Your QuicLoc PIN** | Set / change / remove the PIN that unlocks the app and encrypts your backup |
@@ -1621,11 +1621,11 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 ## Features
 
 - **Answers automatically** — no prompt, no ring, no tap. Works with the screen off and the app closed.
-- **Trusted contacts only** — anyone not on your list is ignored silently; they're never told the app exists.
+- **Emergency contacts only** — anyone not on your list is ignored silently; they're never told the app exists. Every contact gets the widget's safety-check and emergency alerts; you separately choose which of them, if any, can also request your location themselves by texting the trigger word.
 - **Works across messaging apps** — SMS always; WhatsApp, Telegram, Signal, Google Messages, Messenger and any app with an inline notification reply once Notification Access is granted.
-- **Home screen widget** — tap it twice to text your parking spot to yourself (`#Parking`), three times to alert up to 3 starred contacts (`#SafetyCheck`), four times to alert everyone on your list (`#Emergency`). One tap opens a help screen showing which of those are ready to use. Taps must land within about half a second of each other.
+- **Home screen widget** — tap it three times for a safety check to up to 3 starred contacts (`#SafetyCheck`), four times for an emergency alert to everyone on your list (`#Emergency`), or twice to just text your own location to yourself, e.g. to find a parked car (`#Parking`). One tap opens a help screen showing which of those are ready to use. Taps must land within about half a second of each other.
 - **Master on/off switch** — pauses every trigger without uninstalling. Optionally mirrored in a persistent notification with a one-tap toggle.
-- **Encrypted contact list** — trusted contacts, your own number and starred contacts are stored with AES-256-GCM keyed by the Android Keystore. The data never leaves your device.
+- **Encrypted contact list** — emergency contacts, your own number and starred contacts are stored with AES-256-GCM keyed by the Android Keystore. The data never leaves your device.
 - **Locked settings, two ways in** — fingerprint, face or device PIN, *or* a 6-digit QuicLoc PIN of your own for when a fingerprint won't read or the phone has no lock screen at all. The same PIN encrypts your backup. Background answering is deliberately *not* gated, so it keeps working while the phone is locked.
 - **Every permission explains itself before it's asked** — what it's for, exactly what breaks if you skip it, what QuicLoc will never do with it, and what screen you're about to see. Skipping is always allowed; the checklist lets you come back.
 - **Reliable location** — three-stage fallback (fresh GPS fix → cached location → forced update) so a request answers even from a cold start indoors.
@@ -1686,7 +1686,7 @@ Kotlin + Jetpack Compose, single activity, no backend.
 
 - **`SmsReceiver`** — `BroadcastReceiver` for incoming SMS; matches trigger word against the whitelist, hands off to a foreground service.
 - **`NotificationListener`** — `NotificationListenerService` that watches messaging-app notifications and replies through their inline reply action.
-- **`LocationHelper`** — Fused Location Provider with a three-stage fallback: `getCurrentLocation()` → `lastLocation` → `requestLocationUpdates()` with a 15-second timeout.
+- **`LocationHelper`** — Fused Location Provider with a three-stage fallback: `getCurrentLocation()` → `lastLocation` → `requestLocationUpdates()` with a 30-second timeout.
 - **`WhitelistManager`** — trusted contacts in `EncryptedSharedPreferences` (AES-256-GCM, Android Keystore), with migration of any legacy plaintext data.
 - **`Readiness`** — pure-Kotlin derivation of the setup checklist from the live permission snapshot; the same data drives the Permissions table, so the two can't disagree.
 - **`BiometricHelper`** — wraps `BiometricPrompt` to gate the UI. Background components are unaffected by auth state.
@@ -2089,8 +2089,11 @@ dependencies {
 # FILE: app/proguard-rules.pro
 ######################################################
 
--keep class com.hereliesaz.quicloc.lockdown.** { *; }
--keep class com.klinker.android.send_message.** { *; }
+# The lockdown/klinker keep rules for :feature_findmyphone were removed here
+# because that module is currently excluded from the build (see the comment
+# in settings.gradle.kts). Restore them alongside re-enabling the module:
+#   -keep class com.hereliesaz.quicloc.lockdown.** { *; }
+#   -keep class com.klinker.android.send_message.** { *; }
 -keep class com.google.crypto.tink.** { *; }
 -keep class com.hereliesaz.quicloc.** extends android.content.BroadcastReceiver { *; }
 -keep class com.hereliesaz.quicloc.** extends android.app.Service { *; }
@@ -2177,7 +2180,6 @@ dependencies {
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
@@ -2326,6 +2328,7 @@ object AppSettings {
 package com.hereliesaz.quicloc
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.net.Uri
 import android.util.Log
 import org.json.JSONArray
@@ -2377,6 +2380,19 @@ object BackupVault {
     private const val GCM_TAG_BITS = 128
     private const val GCM_TAG_BYTES = GCM_TAG_BITS / 8
     private const val HEADER_BYTES = 1 + SALT_BYTES + GCM_IV_BYTES
+
+    // Restore-attempt rate limiting. The PBKDF2 work factor makes offline
+    // brute force of an exported file expensive on its own, but a 4-6 digit
+    // PIN is still weak against someone guessing through the app's own UI —
+    // this bounds that path. Tracked in a small plaintext prefs file (just a
+    // counter + timestamp, not sensitive) so it's independent of PIN
+    // correctness and survives process death.
+    private const val ATTEMPTS_PREFS_FILE = "quicloc_backup_attempts"
+    private const val KEY_FAILED_COUNT = "failed_count"
+    private const val KEY_LOCKED_UNTIL = "locked_until"
+    private const val MAX_ATTEMPTS_BEFORE_LOCKOUT = 5
+    private const val BASE_LOCKOUT_MS = 30_000L
+    private const val MAX_LOCKOUT_MS = 60 * 60 * 1000L
 
     // Debounce window for snapshotAsync. Multiple mutations within this
     // span (a restore touches 6+ prefs in rapid succession; a UI batch
@@ -2452,7 +2468,11 @@ object BackupVault {
 
         val json = JSONObject().apply {
             put("version", 1)
-            put("whitelist", JSONArray(whitelist.getNumbers().toList()))
+            // Full contact records (name + number), not just display tokens —
+            // getNumbers() collapses a name+number entry down to whichever one
+            // is the display token, so restoring from that would silently
+            // drop the number for any contact added via "Pick from Contacts".
+            put("whitelist", JSONArray(whitelist.getContacts().map { it.toJsonString() }))
             put("starred", JSONArray(whitelist.getStarredNumbers().toList()))
             put("my_number", whitelist.getMyNumber())
             put("passphrase", whitelist.getPassphrase() ?: JSONObject.NULL)
@@ -2538,7 +2558,56 @@ object BackupVault {
         }
     }
 
+    /**
+     * Milliseconds remaining before another restore attempt is allowed, or 0
+     * if none is currently locked out. Callers can poll this before showing
+     * a PIN prompt to avoid the round trip through [restoreFromBytes].
+     */
+    fun lockoutRemainingMs(context: Context): Long {
+        val until = attemptsPrefs(context).getLong(KEY_LOCKED_UNTIL, 0L)
+        val remaining = until - System.currentTimeMillis()
+        return if (remaining > 0) remaining else 0L
+    }
+
+    private fun attemptsPrefs(context: Context): SharedPreferences =
+        context.applicationContext.getSharedPreferences(ATTEMPTS_PREFS_FILE, Context.MODE_PRIVATE)
+
+    private fun recordFailedAttempt(context: Context) {
+        val prefs = attemptsPrefs(context)
+        val count = prefs.getInt(KEY_FAILED_COUNT, 0) + 1
+        val editor = prefs.edit().putInt(KEY_FAILED_COUNT, count)
+        if (count >= MAX_ATTEMPTS_BEFORE_LOCKOUT) {
+            val extraFailures = (count - MAX_ATTEMPTS_BEFORE_LOCKOUT).coerceAtMost(7)
+            val lockoutMs = (BASE_LOCKOUT_MS shl extraFailures).coerceAtMost(MAX_LOCKOUT_MS)
+            editor.putLong(KEY_LOCKED_UNTIL, System.currentTimeMillis() + lockoutMs)
+        }
+        editor.apply()
+    }
+
+    private fun resetAttempts(context: Context) {
+        attemptsPrefs(context).edit().clear().apply()
+    }
+
+    private fun formatLockoutDuration(ms: Long): String {
+        val totalSeconds = (ms + 999) / 1000
+        val minutes = totalSeconds / 60
+        val seconds = totalSeconds % 60
+        return when {
+            minutes > 0 && seconds > 0 -> "${minutes}m ${seconds}s"
+            minutes > 0 -> "${minutes}m"
+            else -> "${seconds}s"
+        }
+    }
+
     private fun restoreFromBytes(context: Context, bytes: ByteArray, pin: String): Result<RestoreSummary> {
+        val lockedFor = lockoutRemainingMs(context)
+        if (lockedFor > 0) {
+            return Result.failure(RestoreException(
+                RestoreException.Category.LOCKED_OUT,
+                "Too many incorrect PIN attempts. Try again in ${formatLockoutDuration(lockedFor)}."
+            ))
+        }
+
         // 1. Header sanity — distinguishable file-level errors. Wrong-PIN
         //    can never produce these because they don't touch the key.
         if (bytes.size < HEADER_BYTES + GCM_TAG_BYTES) {
@@ -2574,6 +2643,7 @@ object BackupVault {
         val plaintext = try {
             cipher.doFinal(ciphertext)
         } catch (e: Exception) {
+            recordFailedAttempt(context)
             return Result.failure(RestoreException(
                 RestoreException.Category.WRONG_PIN,
                 "Incorrect PIN. (If you're certain the PIN is right, the backup file may have been damaged in transit.)"
@@ -2593,7 +2663,9 @@ object BackupVault {
         }
 
         return try {
-            Result.success(applyJson(context, json))
+            val summary = applyJson(context, json)
+            resetAttempts(context)
+            Result.success(summary)
         } catch (e: Exception) {
             Result.failure(RestoreException(
                 RestoreException.Category.APPLY_ERROR,
@@ -2605,8 +2677,14 @@ object BackupVault {
     private fun applyJson(context: Context, json: JSONObject): RestoreSummary {
         val whitelist = WhitelistManager(context)
 
-        val numbers = json.optJSONArray("whitelist")?.toStringSet() ?: emptySet()
-        whitelist.replaceAllNumbers(numbers)
+        // Each element is a ContactEntry's JSON-string form (current backups),
+        // but WhitelistManager.ContactEntry.fromJsonString also accepts a
+        // plain display-token string for backups written before this field
+        // carried full contact records, classifying it the same way addNumber
+        // does (no digits -> name-only entry; otherwise -> number).
+        val whitelistTokens = json.optJSONArray("whitelist")?.toStringSet() ?: emptySet()
+        val contacts = whitelistTokens.mapNotNull { WhitelistManager.ContactEntry.fromJsonString(it) }
+        whitelist.replaceAllContacts(contacts)
 
         val starred = json.optJSONArray("starred")?.toStringSet() ?: emptySet()
         whitelist.replaceStarred(starred)
@@ -2626,7 +2704,7 @@ object BackupVault {
         whitelist.setOnboardingCompleted(json.optBoolean("onboarding_completed", false))
 
         return RestoreSummary(
-            whitelistCount = numbers.size,
+            whitelistCount = contacts.size,
             starredCount = starred.size,
             myNumberSet = whitelist.getMyNumber().isNotEmpty(),
             passphraseSet = passphrase != null,
@@ -2680,6 +2758,8 @@ object BackupVault {
             PARSE_ERROR,
             /** Decrypted + parsed, but writing to prefs threw. */
             APPLY_ERROR,
+            /** Too many wrong-PIN attempts recently; try again later. */
+            LOCKED_OUT,
         }
     }
 }
@@ -2791,7 +2871,6 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
         if (action != Intent.ACTION_BOOT_COMPLETED &&
-            action != Intent.ACTION_LOCKED_BOOT_COMPLETED &&
             action != "android.intent.action.QUICKBOOT_POWERON"
         ) return
         ReminderNotification.refresh(context)
@@ -2926,13 +3005,15 @@ class DiagnosticLogManager(context: Context) {
                 val masterKey = MasterKey.Builder(context)
                     .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                     .build()
-                EncryptedSharedPreferences.create(
+                val prefs = EncryptedSharedPreferences.create(
                     context,
                     PREFS_FILE,
                     masterKey,
                     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                 )
+                migratePlaintextFallback(context, "${PREFS_FILE}_fallback", prefs)
+                prefs
             } catch (e: Exception) {
                 Log.e(TAG, "Falling back to plaintext prefs for diagnostics", e)
                 context.getSharedPreferences("${PREFS_FILE}_fallback", Context.MODE_PRIVATE)
@@ -2978,7 +3059,13 @@ class DiagnosticLogManager(context: Context) {
     fun getEvents(): List<DiagnosticEvent> = readEvents()
 
     fun clear() {
-        prefs.edit().remove(KEY_EVENTS).apply()
+        // Must go through the same executor as record()/updateOutcome():
+        // clearing directly on the caller's thread could race a write already
+        // queued on the executor, which would finish afterward and silently
+        // resurrect the "cleared" log with whatever it had in hand.
+        executor.execute {
+            prefs.edit().remove(KEY_EVENTS).apply()
+        }
     }
 
     /** Flattens the log to shareable plain text for the Copy/Share button. */
@@ -3286,8 +3373,8 @@ object LocationHelper {
         fetchLocation(context,
             onSuccess = { location ->
                 val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
-                sendSms(context, phoneNumber, "QuicLoc Location:\n$mapsLink")
-                onResult?.invoke(true)
+                val sent = sendSms(context, phoneNumber, "QuicLoc Location:\n$mapsLink${locationAgeNote(location)}")
+                onResult?.invoke(sent)
             },
             onFailure = { msg ->
                 sendSms(context, phoneNumber, "QuicLoc Error: $msg")
@@ -3310,8 +3397,8 @@ object LocationHelper {
         fetchLocation(context,
             onSuccess = { location ->
                 val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
-                sendNotificationReply(context, replyAction, "QuicLoc: $mapsLink")
-                onResult?.invoke(true)
+                val sent = sendNotificationReply(context, replyAction, "QuicLoc: $mapsLink${locationAgeNote(location)}")
+                onResult?.invoke(sent)
             },
             onFailure = { msg ->
                 sendNotificationReply(context, replyAction, "QuicLoc Error: $msg")
@@ -3327,6 +3414,10 @@ object LocationHelper {
     @SuppressLint("MissingPermission")
     fun handleWidgetTaps(context: Context, tapCount: Int, onResult: ((succeeded: Boolean) -> Unit)? = null) {
         val whitelistManager = WhitelistManager(context)
+        // Real, dialable phone numbers only -- getNumbers()/getStarredNumbers()
+        // return *display tokens*, which are the contact's NAME for a
+        // name-only whitelist entry. Passing a name straight to SmsManager as
+        // a destination address doesn't send anything.
         val destinations = mutableListOf<String>()
         var suffix = ""
 
@@ -3337,15 +3428,15 @@ object LocationHelper {
             }
             suffix = " #Parking"
         } else if (tapCount == 3) {
-            destinations.addAll(whitelistManager.getStarredNumbers())
+            destinations.addAll(whitelistManager.getDialableStarredNumbers())
             suffix = " #SafetyCheck"
         } else if (tapCount >= 4) {
-            destinations.addAll(whitelistManager.getNumbers())
+            destinations.addAll(whitelistManager.getDialableNumbers())
             suffix = " #Emergency"
         }
 
         if (destinations.isEmpty()) {
-            Log.e(TAG, "No destinations configured for tap count $tapCount")
+            Log.e(TAG, "No dialable destinations configured for tap count $tapCount")
             onResult?.invoke(false)
             return
         }
@@ -3353,11 +3444,12 @@ object LocationHelper {
         fetchLocation(context,
             onSuccess = { location ->
                 val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
-                val message = "QuicLoc Location:\n$mapsLink$suffix"
-                for (dest in destinations) {
-                    sendSms(context, dest, message)
-                }
-                onResult?.invoke(true)
+                val message = "QuicLoc Location:\n$mapsLink${locationAgeNote(location)}$suffix"
+                // Report success only if every destination's send call actually
+                // went through -- History/Diagnostics should never claim an
+                // emergency alert succeeded when it silently didn't.
+                val allSent = destinations.map { sendSms(context, it, message) }.all { it }
+                onResult?.invoke(allSent)
             },
             onFailure = { msg ->
                 val message = "QuicLoc Error: $msg$suffix"
@@ -3397,11 +3489,18 @@ object LocationHelper {
         val deadline = System.currentTimeMillis() + LOCATION_TIMEOUT_MS
         val handler = Handler(Looper.getMainLooper())
         var done = false
+        // Stage 3's callback, if one gets registered, so the deadline handler
+        // can unregister it instead of leaking a live LocationCallback (and
+        // potentially keeping the GPS radio on) past the point this whole
+        // fetch has already given up.
+        var activeCallback: LocationCallback? = null
 
         fun finish(success: Boolean, location: Location? = null, msg: String = "") {
             if (done) return
             done = true
             handler.removeCallbacksAndMessages(null)
+            activeCallback?.let { fusedClient.removeLocationUpdates(it) }
+            activeCallback = null
             if (success && location != null) onSuccess(location) else onFailure(msg)
         }
 
@@ -3410,6 +3509,12 @@ object LocationHelper {
             finish(false, msg = "Location timed out after ${LOCATION_TIMEOUT_MS / 1000}s. Is GPS enabled?")
         }, LOCATION_TIMEOUT_MS)
 
+        // Each stage gets its own try/catch for SecurityException: they run
+        // inside async completion-listener callbacks, not lexically inside a
+        // single outer try block's protected frame, so revoking location
+        // permission in the gap between stages would otherwise crash the app
+        // (an uncaught SecurityException on a later stage) instead of failing
+        // gracefully like a permission that was never granted.
         try {
             // Stage 1
             val cts = CancellationTokenSource()
@@ -3422,65 +3527,101 @@ object LocationHelper {
                         finish(true, loc)
                     } else {
                         Log.w(TAG, "Stage 1 null — trying lastLocation")
-                        // Stage 2
-                        fusedClient.lastLocation.addOnCompleteListener { t2 ->
-                            if (done) return@addOnCompleteListener
-                            val loc2 = t2.result
-                            if (t2.isSuccessful && loc2 != null) {
-                                Log.d(TAG, "Stage 2 success (age ${System.currentTimeMillis() - loc2.time}ms)")
-                                finish(true, loc2)
-                            } else {
-                                Log.w(TAG, "Stage 2 null — requesting fresh update")
-                                // Stage 3
-                                val timeLeft = deadline - System.currentTimeMillis()
-                                if (timeLeft <= 0) {
-                                    finish(false, msg = "Location timed out before stage 3 could start.")
-                                    return@addOnCompleteListener
-                                }
-                                val request = LocationRequest.Builder(
-                                    Priority.PRIORITY_HIGH_ACCURACY, 1000L
-                                )
-                                    .setMaxUpdates(1)
-                                    .setWaitForAccurateLocation(false)
-                                    .setMaxUpdateDelayMillis(timeLeft)
-                                    .build()
-
-                                val callback = object : LocationCallback() {
-                                    override fun onLocationResult(result: LocationResult) {
-                                        fusedClient.removeLocationUpdates(this)
-                                        val loc3 = result.lastLocation
-                                        if (loc3 != null) {
-                                            Log.d(TAG, "Stage 3 success")
-                                            finish(true, loc3)
-                                        } else {
-                                            finish(false, msg = "Could not obtain a location fix.")
-                                        }
+                        try {
+                            // Stage 2
+                            fusedClient.lastLocation.addOnCompleteListener { t2 ->
+                                if (done) return@addOnCompleteListener
+                                val loc2 = t2.result
+                                if (t2.isSuccessful && loc2 != null) {
+                                    Log.d(TAG, "Stage 2 success (age ${System.currentTimeMillis() - loc2.time}ms)")
+                                    finish(true, loc2)
+                                } else {
+                                    Log.w(TAG, "Stage 2 null — requesting fresh update")
+                                    // Stage 3
+                                    val timeLeft = deadline - System.currentTimeMillis()
+                                    if (timeLeft <= 0) {
+                                        finish(false, msg = "Location timed out before stage 3 could start.")
+                                        return@addOnCompleteListener
                                     }
+                                    val request = LocationRequest.Builder(
+                                        Priority.PRIORITY_HIGH_ACCURACY, 1000L
+                                    )
+                                        .setMaxUpdates(1)
+                                        .setWaitForAccurateLocation(false)
+                                        .setMaxUpdateDelayMillis(timeLeft)
+                                        .build()
 
-                                    override fun onLocationAvailability(avail: LocationAvailability) {
-                                        if (!avail.isLocationAvailable) {
+                                    val callback = object : LocationCallback() {
+                                        override fun onLocationResult(result: LocationResult) {
+                                            activeCallback = null
                                             fusedClient.removeLocationUpdates(this)
-                                            finish(false, msg = "Location services are disabled on this device.")
+                                            val loc3 = result.lastLocation
+                                            if (loc3 != null) {
+                                                Log.d(TAG, "Stage 3 success")
+                                                finish(true, loc3)
+                                            } else {
+                                                finish(false, msg = "Could not obtain a location fix.")
+                                            }
+                                        }
+
+                                        override fun onLocationAvailability(avail: LocationAvailability) {
+                                            if (!avail.isLocationAvailable) {
+                                                activeCallback = null
+                                                fusedClient.removeLocationUpdates(this)
+                                                finish(false, msg = "Location services are disabled on this device.")
+                                            }
                                         }
                                     }
+                                    try {
+                                        activeCallback = callback
+                                        fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
+                                    } catch (e: SecurityException) {
+                                        Log.e(TAG, "Missing location permission (stage 3)", e)
+                                        activeCallback = null
+                                        finish(false, msg = "Location permission not granted.")
+                                    }
                                 }
-                                fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
                             }
+                        } catch (e: SecurityException) {
+                            Log.e(TAG, "Missing location permission (stage 2)", e)
+                            finish(false, msg = "Location permission not granted.")
                         }
                     }
                 }
         } catch (e: SecurityException) {
-            Log.e(TAG, "Missing location permission", e)
+            Log.e(TAG, "Missing location permission (stage 1)", e)
             finish(false, msg = "Location permission not granted.")
         }
+    }
+
+    /**
+     * A short note to append to a location reply when the fix might be
+     * noticeably stale (Stage 2's cached `lastLocation`), so the recipient
+     * doesn't mistake an old position for a live one. Silent for a fresh fix.
+     */
+    private fun locationAgeNote(location: Location): String {
+        val ageMs = System.currentTimeMillis() - location.time
+        if (ageMs < 60_000L) return ""
+        val ageMin = ageMs / 60_000L
+        return " (as of ~$ageMin min ago)"
     }
 
     // -------------------------------------------------------------------------
     // SMS sending
     // -------------------------------------------------------------------------
 
-    private fun sendSms(context: Context, phoneNumber: String, message: String) {
-        try {
+    /**
+     * @return Whether the send call was actually issued to the radio without
+     *   throwing. `sentIntent` is intentionally null (no PendingIntent-based
+     *   delivery-report wiring exists), so this does NOT confirm carrier-level
+     *   delivery — only that we didn't fail synchronously (SmsManager missing,
+     *   a malformed destination address, SEND_SMS revoked, etc). That's still
+     *   a real improvement over the previous unconditional "true": those
+     *   synchronous failures are exactly what happens when, e.g., a
+     *   destination address is malformed.
+     */
+    private fun sendSms(context: Context, phoneNumber: String, message: String): Boolean {
+        return try {
             val smsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                 context.getSystemService(SmsManager::class.java)
             } else {
@@ -3494,11 +3635,14 @@ object LocationHelper {
                 } else {
                     smsManager.sendTextMessage(phoneNumber, null, message, null, null)
                 }
+                true
             } else {
                 Log.e(TAG, "Failed to get SmsManager")
+                false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to send SMS", e)
+            Log.e(TAG, "Failed to send SMS to $phoneNumber", e)
+            false
         }
     }
 
@@ -3506,13 +3650,14 @@ object LocationHelper {
     // Notification inline reply
     // -------------------------------------------------------------------------
 
+    /** @return Whether the reply's PendingIntent was actually sent without throwing. */
     private fun sendNotificationReply(
         context: Context,
         action: Notification.Action,
         replyText: String
-    ) {
-        try {
-            val remoteInputs = action.remoteInputs ?: return
+    ): Boolean {
+        return try {
+            val remoteInputs = action.remoteInputs ?: return false
             val intent = Intent()
             val bundle = Bundle()
             for (remoteInput in remoteInputs) {
@@ -3521,8 +3666,10 @@ object LocationHelper {
             RemoteInput.addResultsToIntent(remoteInputs, intent, bundle)
             action.actionIntent.send(context, 0, intent)
             Log.d(TAG, "Sent notification reply: $replyText")
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send notification reply", e)
+            false
         }
     }
 }
@@ -3619,21 +3766,52 @@ class LocationReplyService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        ServiceCompat.startForeground(
-            this,
-            NOTIF_ID,
-            buildNotification("Fetching location…"),
-            if (android.os.Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
-        )
+        // Android 14+ rejects starting a location-typed foreground service
+        // without ACCESS_FINE_LOCATION/ACCESS_COARSE_LOCATION already granted
+        // -- and this service can be started by a bare widget tap before the
+        // user has ever granted anything. Without this check, that throws
+        // here in onCreate() and crashes the whole process instead of the
+        // graceful "no location permission" failure LocationHelper already
+        // produces once the permission check happens downstream.
+        val hasLocationPermission =
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val fgsType = if (android.os.Build.VERSION.SDK_INT >= 34 && hasLocationPermission) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        } else 0
+        try {
+            ServiceCompat.startForeground(this, NOTIF_ID, buildNotification("Fetching location…"), fgsType)
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed", e)
+            stopSelf()
+        }
     }
 
     // For handling widget taps (delay to distinguish single/double/triple taps)
     private var widgetTapCount = 0
-    private var widgetStartId = -1
     private val widgetTapHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    // How many async fetch/send operations this service instance is currently
+    // tracking, across ALL intake paths (SMS, notification, widget taps).
+    // Service.stopSelf(startId) alone can't express "don't stop while
+    // something else I started is still running" -- it only knows about the
+    // single most-recent start request delivered to onStartCommand. Multiple
+    // triggers can land on the SAME running service instance (e.g. a widget
+    // tap arriving while an earlier SMS-triggered fetch is still in flight,
+    // or two overlapping widget tap bursts), so every exit path goes through
+    // maybeStopSelf() instead of calling stopSelf(startId) directly.
+    private val activeOperations = java.util.concurrent.atomic.AtomicInteger(0)
+
+    private fun maybeStopSelf() {
+        if (activeOperations.get() <= 0) {
+            stopSelf()
+        }
+    }
     private val widgetTapRunnable = Runnable {
         val count = widgetTapCount
-        val startId = widgetStartId
         widgetTapCount = 0
         Log.d(TAG, "Widget tap timer expired, tap count: $count")
 
@@ -3662,22 +3840,39 @@ class LocationReplyService : Service() {
             }
             startActivity(intent)
             // A single tap only opens help — there's no location reply, so stop
-            // the service once the status has faded.
-            widgetTapHandler.postDelayed({ stopSelf(startId) }, 3000)
+            // the service once the status has faded (unless something else
+            // this instance started, e.g. an in-flight emergency send from an
+            // earlier tap burst, is still running).
+            widgetTapHandler.postDelayed({ maybeStopSelf() }, 3000)
             return@Runnable
         }
 
         if (count < 2) {
-            stopSelf(startId)
+            maybeStopSelf()
             return@Runnable
         }
 
-        // Counts >= 2: fetch the location (up to 30s) and send, THEN stop the
-        // service and clear the status — so the send always completes.
+        // Counts >= 2 actually transmit the location. Respect the master
+        // switch here specifically (not for the count==1 help screen, which
+        // sends nothing and stays useful for self-diagnosing why the switch
+        // is off) -- the setup checklist tells the user that toggling QuicLoc
+        // off silences every trigger including the widget, so a stray or
+        // pocket tap must not send a location behind that promise.
+        if (!AppSettings.isEnabled(applicationContext)) {
+            Log.d(TAG, "QuicLoc disabled — ignoring widget tap ($count)")
+            updateWidgetStatus(this, "Off")
+            widgetTapHandler.postDelayed({ updateWidgetStatus(this, null); maybeStopSelf() }, 3000)
+            return@Runnable
+        }
+
+        // Fetch the location (up to 30s) and send, THEN stop the service and
+        // clear the status — so the send always completes.
+        activeOperations.incrementAndGet()
         LocationHelper.handleWidgetTaps(this, count) { succeeded ->
             RequestHistoryManager(this).record("Widget ($count taps)", "Widget", succeeded)
             updateWidgetStatus(this, null)
-            stopSelf(startId)
+            activeOperations.decrementAndGet()
+            maybeStopSelf()
         }
     }
 
@@ -3738,33 +3933,34 @@ class LocationReplyService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) {
-            stopSelf(startId)
+            maybeStopSelf()
             return START_NOT_STICKY
         }
 
         // Hard gate: if user disabled QuicLoc between trigger and service
-        // start, abort. Widget taps are user-initiated so they still fire.
+        // start, abort. Widget taps are user-initiated so they still fire —
+        // the widget-specific master-switch gate (only for taps that
+        // actually send, i.e. count >= 2) lives in widgetTapRunnable instead.
         if (intent.action != ACTION_WIDGET_TAP && !AppSettings.isEnabled(applicationContext)) {
             Log.d(TAG, "QuicLoc disabled — aborting reply")
             intent.getStringExtra(EXTRA_DIAG_ID)?.let {
                 DiagnosticLogManager(this).updateOutcome(it, DiagOutcome.APP_DISABLED,
                     "QuicLoc was toggled off before the reply could be sent")
             }
-            stopSelf(startId)
+            maybeStopSelf()
             return START_NOT_STICKY
         }
 
         if (intent.action == ACTION_WIDGET_TAP) {
             widgetTapCount++
             performHapticFeedback()
-            widgetStartId = startId
             widgetTapHandler.removeCallbacks(widgetTapRunnable)
             widgetTapHandler.postDelayed(widgetTapRunnable, 400)
             return START_NOT_STICKY
         }
 
         val sender = intent.getStringExtra(EXTRA_SENDER) ?: run {
-            stopSelf(startId)
+            maybeStopSelf()
             return START_NOT_STICKY
         }
         val source = intent.getStringExtra(EXTRA_SOURCE) ?: "Unknown"
@@ -3775,13 +3971,15 @@ class LocationReplyService : Service() {
 
         when (replyMode) {
             "sms" -> {
+                activeOperations.incrementAndGet()
                 LocationHelper.getCurrentLocationAndReply(
                     context = this,
                     phoneNumber = sender,
                     onResult = { succeeded ->
                         RequestHistoryManager(this).record(sender, source, succeeded)
                         patchDiag(diagId, succeeded, source)
-                        stopSelf(startId)
+                        activeOperations.decrementAndGet()
+                        maybeStopSelf()
                     }
                 )
             }
@@ -3795,9 +3993,10 @@ class LocationReplyService : Service() {
                         DiagnosticLogManager(this).updateOutcome(it, DiagOutcome.NO_PENDING_ACTION,
                             "The reply action expired before the service could use it")
                     }
-                    stopSelf(startId)
+                    maybeStopSelf()
                     return START_NOT_STICKY
                 }
+                activeOperations.incrementAndGet()
                 LocationHelper.getCurrentLocationAndReplyViaNotification(
                     context = this,
                     replyAction = action,
@@ -3805,11 +4004,12 @@ class LocationReplyService : Service() {
                     onResult = { succeeded ->
                         RequestHistoryManager(this).record(sender, source, succeeded)
                         patchDiag(diagId, succeeded, source)
-                        stopSelf(startId)
+                        activeOperations.decrementAndGet()
+                        maybeStopSelf()
                     }
                 )
             }
-            else -> stopSelf(startId)
+            else -> maybeStopSelf()
         }
 
         return START_NOT_STICKY
@@ -3871,6 +4071,7 @@ import android.os.Bundle
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.text.TextUtils
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -3916,6 +4117,7 @@ import androidx.fragment.app.FragmentActivity
 import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest
 import com.google.android.gms.auth.api.identity.Identity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -3929,8 +4131,8 @@ import kotlinx.coroutines.withContext
  *   - [History] — the request log ([HistoryScreen]).
  *   - [TutorialsHub] — list of all tutorials.
  *   - [TutorialDetail] — one tutorial's full body. [fromOnboarding] flips
- *     the confirm-button label ("Got it" vs "Done") and the back-target
- *     (return to Config to dismiss onboarding, vs return to hub).
+ *     the confirm-button label ("Set QuicLoc up" vs "Done") and the
+ *     back-target (return to Config to dismiss onboarding, vs return to hub).
  */
 sealed class MainView {
     data object Config : MainView()
@@ -4070,22 +4272,49 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.ACCESS_COARSE_LOCATION,
         // CAMERA is intentionally NOT here — it lives in the on-demand
-        // :feature_camera module and is requested only after that module is
-        // downloaded during find-my-phone setup (see onSavePassphrase).
+        // :feature_findmyphone module and is requested only after that
+        // module is downloaded during find-my-phone setup (see onSavePassphrase).
     ).let {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             it + "android.permission.POST_NOTIFICATIONS"
         } else it
     }
 
+    /** Whether unlock() has already auto-walked the permission chain this process lifetime. */
+    private var hasRunPermissionChainThisSession = false
+
     /** Set when the launcher fires, called once the system dialog dismisses. */
     private var afterPermissionResult: (granted: Boolean) -> Unit = {}
+
+    /** Which permission the most recent [singlePermissionLauncher] launch was for. */
+    private var lastRequestedPermission: String? = null
+
+    /** Records [lastRequestedPermission], then launches the request. */
+    private fun launchPermissionRequest(permission: String) {
+        lastRequestedPermission = permission
+        singlePermissionLauncher.launch(permission)
+    }
 
     private val singlePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         val next = afterPermissionResult
         afterPermissionResult = {}
+        // shouldShowRequestPermissionRationale() only returns false once
+        // Android has decided it will no longer show its own request dialog
+        // for this permission ("Don't ask again", or enough plain denials on
+        // some OEMs) -- checked here, right after a request, it reliably
+        // detects "that dialog we just tried to show never actually
+        // appeared". Without this, re-tapping "Grant" from the rationale
+        // dialog silently no-ops forever with zero visible feedback.
+        val permission = lastRequestedPermission
+        if (!granted && permission != null && !shouldShowRequestPermissionRationale(permission)) {
+            Toast.makeText(
+                this,
+                "Android won't ask again for this one — grant it from the app's Settings page instead.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
         next(granted)
     }
 
@@ -4135,7 +4364,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             // Unknown permission — fall back to launching directly with no rationale.
             afterPermissionResult = onAfter
             beginSystemFlow()
-            singlePermissionLauncher.launch(permission)
+            launchPermissionRequest(permission)
             return
         }
         pendingRationaleState.value = RationaleDialogState(
@@ -4150,7 +4379,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 pendingRationaleState.value = null
                 afterPermissionResult = onAfter
                 beginSystemFlow()
-                singlePermissionLauncher.launch(permission)
+                launchPermissionRequest(permission)
             },
             onSkip = {
                 pendingRationaleState.value = null
@@ -4182,8 +4411,29 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
     // Compose state — hoisted so biometric callback and launchers can update it
     private var authState = mutableStateOf(false)
+    // Hoisted to the activity, not a remember{} inside the composable tree:
+    // `view` used to live in a remember{} inside the `else` branch of
+    // `if (!authenticated) {...} else {...}`. Compose tears down and rebuilds
+    // that whole branch's remembered state every time `authenticated` flips
+    // false -> true, which happens on every ordinary re-authentication (a ​
+    // plain Home-button press backgrounds the activity and clears authState;
+    // see onPause). The result was silently landing back on the default
+    // screen after every unlock, discarding whatever screen the user was on.
+    // Living here instead survives that.
+    private var viewState = mutableStateOf<MainView>(MainView.Config)
     private var numbersState = mutableStateOf<List<String>>(emptyList())
+    // How many whitelist entries actually have a dialable phone number, as
+    // opposed to numbersState.size (which counts name-only entries too —
+    // those can't ever satisfy an SMS trigger or the widget's SMS fan-out).
+    // Kept in lockstep with numbersState everywhere it's refreshed.
+    private var dialableCountState = mutableStateOf(0)
     private var starredState = mutableStateOf<Set<String>>(emptySet())
+    // Per-contact "can request my location by texting" flag, keyed by
+    // displayToken. Every contact is an emergency contact regardless of this
+    // flag; it only narrows who the trigger word actually works from. A
+    // separate state field (not derived from numbersState) because it can
+    // change without the token list itself changing.
+    private var canRequestLocationByTokenState = mutableStateOf<Map<String, Boolean>>(emptyMap())
     private var myNumberState = mutableStateOf("")
     private var enabledState = mutableStateOf(true)
     private var reminderNotifState = mutableStateOf(false)
@@ -4668,8 +4918,16 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         importBackupLauncher.launch(arrayOf("*/*"))
     }
 
+    /** True unless every entry sharing this token was explicitly set to alerts-only. */
+    private fun computeCanRequestLocationByToken(): Map<String, Boolean> =
+        whitelistManager.getContacts()
+            .groupBy({ it.displayToken }) { it.canRequestLocation }
+            .mapValues { (_, flags) -> flags.all { it } }
+
     private fun refreshAllStateAfterRestore() {
         numbersState.value = whitelistManager.getNumbers().toList()
+        dialableCountState.value = whitelistManager.getDialableNumbers().size
+        canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
         starredState.value = whitelistManager.getStarredNumbers()
         myNumberState.value = whitelistManager.getMyNumber()
         enabledState.value = AppSettings.isEnabled(this)
@@ -4689,10 +4947,22 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The unlock PIN keypad, the QuicLoc PIN/passphrase fields, and the
+        // whitelist are all rendered somewhere in this activity -- without
+        // FLAG_SECURE, Android's default screenshot-for-recents behavior
+        // captures that content into the task-switcher thumbnail, visible to
+        // anyone with physical access to an unlocked phone.
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         enableEdgeToEdge()
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         whitelistManager = WhitelistManager(this)
+        viewState.value = if (!whitelistManager.isOnboardingCompleted())
+            MainView.TutorialDetail(Tutorials.MAIN_ID, fromOnboarding = true)
+        else
+            MainView.Config
         numbersState.value = whitelistManager.getNumbers().toList()
+        dialableCountState.value = whitelistManager.getDialableNumbers().size
+        canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
         starredState.value = whitelistManager.getStarredNumbers()
         myNumberState.value = whitelistManager.getMyNumber()
         enabledState.value = AppSettings.isEnabled(this)
@@ -4733,6 +5003,18 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 } else {
 
                     val numbersList by numbersState
+                    val dialableCount by dialableCountState
+                    // The whitelist row only ever showed a displayToken --
+                    // the contact's NAME when one is set, hiding which actual
+                    // phone number(s) are authorized for that row. Derived
+                    // (not separately tracked state) so it recomputes exactly
+                    // when numbersList already does.
+                    val numbersByToken = remember(numbersList) {
+                        whitelistManager.getContacts()
+                            .filter { it.number.isNotEmpty() }
+                            .groupBy({ it.displayToken }, { it.number })
+                    }
+                    val canRequestLocationByToken by canRequestLocationByTokenState
                     val starredSet by starredState
                     val myNumber by myNumberState
                     val enabled by enabledState
@@ -4743,17 +5025,18 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                     var currentPassphrase by remember { mutableStateOf(whitelistManager.getPassphrase() ?: "") }
                     var currentPin by remember { mutableStateOf(whitelistManager.getPin() ?: "") }
 
-                    var notificationAccessGranted by remember {
-                        mutableStateOf(isNotificationListenerEnabled())
+                    // Derived from permissionStatuses (refreshed every onResume)
+                    // instead of its own remember{} snapshot -- a standalone
+                    // snapshot here never updated after granting/revoking the
+                    // permission in system Settings, since returning from that
+                    // Settings screen is a round-trip this activity treats as
+                    // "expected" and doesn't rebuild this composable subtree.
+                    // Deriving it means it can never disagree with the same
+                    // list the Setup Checklist and All Permissions table read.
+                    val notificationAccessGranted = permissionStatuses.any {
+                        it.key == PermKeys.NOTIF_LISTENER && it.state == PermStatus.GRANTED
                     }
-                    var view by remember {
-                        mutableStateOf<MainView>(
-                            if (!whitelistManager.isOnboardingCompleted())
-                                MainView.TutorialDetail(Tutorials.MAIN_ID, fromOnboarding = true)
-                            else
-                                MainView.Config
-                        )
-                    }
+                    var view by viewState
 
                     val showLaunchRestore by showLaunchRestoreState
                     val pendingImportUri by pendingImportUriState
@@ -4971,6 +5254,9 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             QuicLocScreen(
                                 modifier = Modifier.padding(innerPadding),
                                 numbersList = numbersList,
+                                dialableCount = dialableCount,
+                                numbersByToken = numbersByToken,
+                                canRequestLocationByToken = canRequestLocationByToken,
                                 starredSet = starredSet,
                                 myNumber = myNumber,
                                 notificationAccessGranted = notificationAccessGranted,
@@ -5031,13 +5317,21 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     if (number.isNotBlank()) {
                                         whitelistManager.addNumber(number)
                                         numbersState.value = whitelistManager.getNumbers().toList()
+                                        dialableCountState.value = whitelistManager.getDialableNumbers().size
+                                        canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
                                         Toast.makeText(this, "Added — they can now ask for your location", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 onRemoveNumber = { number ->
                                     whitelistManager.removeNumber(number)
                                     numbersState.value = whitelistManager.getNumbers().toList()
+                                    dialableCountState.value = whitelistManager.getDialableNumbers().size
+                                    canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
                                     starredState.value = whitelistManager.getStarredNumbers()
+                                },
+                                onToggleCanRequestLocation = { token, newState ->
+                                    whitelistManager.setCanRequestLocation(token, newState)
+                                    canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
                                 },
                                 onPickContact = { launchContactPicker() },
                                 onOpenTutorials = { view = MainView.TutorialsHub },
@@ -5170,7 +5464,18 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         isAuthenticated = true
         authState.value = true
         pinGateState.value = false
-        checkPermissions()
+        // Only auto-walk the permission rationale chain once per process
+        // lifetime, not on every unlock. unlock() runs on every successful
+        // re-authentication -- an ordinary Home-button press backgrounds the
+        // activity and clears authState (see onPause), so without this gate,
+        // skipping (or simply not yet having reached) any one permission
+        // meant the full "Step 1 of N" dialog sequence re-fired every single
+        // time the user reopened the app. Missing permissions are still
+        // reachable any time via the Setup Checklist / All Permissions panel.
+        if (!hasRunPermissionChainThisSession) {
+            hasRunPermissionChainThisSession = true
+            checkPermissions()
+        }
     }
 
     /**
@@ -5228,33 +5533,71 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     // -------------------------------------------------------------------------
 
     private fun launchContactPicker() {
+        // Pick a CONTACT, not a single phone row: ACTION_PICK against the
+        // Phone content URI forces the system picker to resolve to exactly
+        // one number, so a contact with a mobile AND a home number would only
+        // ever get the one the user happened to tap. Picking the contact
+        // itself lets handleContactPicked enumerate every number on file.
         val intent = android.content.Intent(
             android.content.Intent.ACTION_PICK,
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+            ContactsContract.Contacts.CONTENT_URI
         )
         beginSystemFlow()
         contactPickerLauncher.launch(intent)
     }
 
     private fun handleContactPicked(uri: Uri) {
-        val projection = arrayOf(
-            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-            ContactsContract.CommonDataKinds.Phone.NUMBER
-        )
-        contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-            if (!cursor.moveToFirst()) return
-            val name = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME))
-            val number = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER))
+        try {
+            val contactCursor = contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.Contacts._ID, ContactsContract.Contacts.DISPLAY_NAME),
+                null, null, null
+            ) ?: return
+            contactCursor.use { cursor ->
+                if (!cursor.moveToFirst()) return
+                val idIdx = cursor.getColumnIndex(ContactsContract.Contacts._ID)
+                val nameIdx = cursor.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME)
+                if (idIdx < 0) return
+                val contactId = cursor.getString(idIdx)
+                val name = if (nameIdx >= 0) cursor.getString(nameIdx) else null
 
-            if (!number.isNullOrBlank()) {
-                whitelistManager.addContact(name, number)
-            } else if (!name.isNullOrBlank()) {
-                whitelistManager.addContact(name, "")
+                val numbers = mutableListOf<String>()
+                contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                    "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                    arrayOf(contactId),
+                    null
+                )?.use { phoneCursor ->
+                    val numberIdx = phoneCursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                    if (numberIdx >= 0) {
+                        while (phoneCursor.moveToNext()) {
+                            phoneCursor.getString(numberIdx)?.takeIf { it.isNotBlank() }?.let { numbers.add(it) }
+                        }
+                    }
+                }
+
+                // One whitelist entry per number, all sharing this contact's
+                // name -- WhitelistManager matches by name OR any of a
+                // contact's numbers, and the UI still shows a single row for
+                // the shared display name, so this doesn't create duplicates
+                // on screen while still answering from any of their numbers.
+                if (numbers.isNotEmpty()) {
+                    for (number in numbers.distinct()) {
+                        whitelistManager.addContact(name, number)
+                    }
+                } else if (!name.isNullOrBlank()) {
+                    whitelistManager.addContact(name, "")
+                }
+
+                numbersState.value = whitelistManager.getNumbers().toList()
+                dialableCountState.value = whitelistManager.getDialableNumbers().size
+                canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
+                val toastName = name?.takeIf { it.isNotBlank() } ?: numbers.firstOrNull() ?: "Contact"
+                Toast.makeText(this, "Added $toastName — they can now ask for your location", Toast.LENGTH_SHORT).show()
             }
-
-            numbersState.value = whitelistManager.getNumbers().toList()
-            val toastName = name?.takeIf { it.isNotBlank() } ?: number ?: "Contact"
-            Toast.makeText(this, "Added $toastName — they can now ask for your location", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Couldn't read that contact — try again.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -5334,7 +5677,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                     checkNotificationListenerPermission()
                 }
                 beginSystemFlow()
-                singlePermissionLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                launchPermissionRequest(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
             },
             onSkip = {
                 pendingRationaleState.value = null
@@ -5683,6 +6026,9 @@ fun BiometricGateScreen(
 fun QuicLocScreen(
     modifier: Modifier = Modifier,
     numbersList: List<String>,
+    dialableCount: Int = numbersList.size,
+    numbersByToken: Map<String, List<String>> = emptyMap(),
+    canRequestLocationByToken: Map<String, Boolean> = emptyMap(),
     starredSet: Set<String>,
     myNumber: String,
     notificationAccessGranted: Boolean,
@@ -5705,6 +6051,7 @@ fun QuicLocScreen(
     onRequestNotificationAccess: () -> Unit,
     onAddNumber: (String) -> Unit,
     onRemoveNumber: (String) -> Unit,
+    onToggleCanRequestLocation: (String, Boolean) -> Unit = { _, _ -> },
     onPickContact: () -> Unit,
     onOpenTutorials: () -> Unit = {},
     onOpenHistory: () -> Unit = {},
@@ -5721,13 +6068,18 @@ fun QuicLocScreen(
     val scrollState = rememberScrollState()
 
     val pinSet = currentPin.isNotBlank()
+    // Absent from the map defaults to true (can-request) — matches
+    // ContactEntry.canRequestLocation's own default for entries added before
+    // this existed, or not yet reflected in this snapshot.
+    val sharingCount = numbersList.count { canRequestLocationByToken[it] != false }
 
     // Same source of truth as the All Permissions table — the checklist and the
     // table can never disagree.
-    val setupSteps = remember(enabled, numbersList.size, myNumber, permissionStatuses, pinSet) {
+    val setupSteps = remember(enabled, numbersList.size, dialableCount, myNumber, permissionStatuses, pinSet) {
         Readiness.steps(
             enabled = enabled,
             whitelistCount = numbersList.size,
+            dialableWhitelistCount = dialableCount,
             myNumber = myNumber,
             permissions = permissionStatuses,
             pinSet = pinSet,
@@ -5793,21 +6145,23 @@ fun QuicLocScreen(
         )
 
         // ------------------------------------------------------------------
-        // 1 — Trusted contacts
+        // 1 — Emergency contacts
         // ------------------------------------------------------------------
         SectionCard(
             number = sectionNo("contacts"),
-            title = "Trusted contacts",
-            subtitle = "Who is allowed to ask where you are",
+            title = "Emergency contacts",
+            subtitle = "Who gets alerted, and who can ask",
             statusText = if (numbersList.isEmpty())
                 "Nobody yet — QuicLoc will ignore every request"
             else
-                "${numbersList.size} allowed · ${starredSet.size} of 3 starred",
+                "${numbersList.size} emergency · $sharingCount can ask · ${starredSet.size} of 3 starred",
             statusOk = numbersList.isNotEmpty(),
         ) {
             Text(
-                text = "Only the people listed here can trigger a reply. Anyone else who texts " +
-                    "the trigger word is ignored silently — they aren't told the app exists.",
+                text = "Everyone here gets your location when you tap the widget for a safety " +
+                    "check or an emergency alert. People marked \"can ask\" can also request it " +
+                    "themselves by texting the trigger word — anyone else who texts it is ignored " +
+                    "silently, without being told the app exists.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -5860,14 +6214,45 @@ fun QuicLocScreen(
                 modifier = Modifier.padding(top = 4.dp)
             )
 
+            Spacer(modifier = Modifier.height(12.dp))
+            // Adding someone to the whitelist only does half the job — they
+            // also have to know the trigger word in the first place. Nothing
+            // else in the app ever tells a new contact that.
+            val inviteContext = LocalContext.current
+            OutlinedButton(
+                onClick = {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(
+                            Intent.EXTRA_TEXT,
+                            "Hey — I use QuicLoc so you can check on me. Text me the word " +
+                                "\"loc\" any time (as its own message) and I'll text back my " +
+                                "location automatically."
+                        )
+                    }
+                    inviteContext.startActivity(Intent.createChooser(send, "Tell them what to text"))
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Tell them what to text")
+            }
+            Text(
+                text = "Adding someone here only lets them ask — they still need to know the " +
+                    "word. Send them this so they do.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "Allowed to ask (${numbersList.size})",
+                text = "Emergency contacts (${numbersList.size})",
                 style = MaterialTheme.typography.titleSmall,
             )
             Text(
                 text = "★ marks a priority contact — the widget's 3-tap safety check goes to " +
-                    "these (up to 3). Everyone here gets the 4-tap emergency alert.",
+                    "these (up to 3). Everyone here gets the 4-tap emergency alert. Tap a " +
+                    "contact's \"can ask\" / \"alerts only\" line to flip it.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
@@ -5888,15 +6273,39 @@ fun QuicLocScreen(
                 // rendering is fine.
                 numbersList.forEach { number ->
                     val isStarred = starredSet.contains(number)
+                    // number is a displayToken: the contact's NAME when one
+                    // is set, which otherwise leaves no way to tell which
+                    // actual phone number is authorized for this row.
+                    val realNumbers = numbersByToken[number].orEmpty()
+                    val canRequest = canRequestLocationByToken[number] != false
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = number,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = number,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            if (realNumbers.isNotEmpty()) {
+                                Text(
+                                    text = realNumbers.joinToString(", "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Text(
+                                text = if (canRequest) "Can ask" else "Alerts only",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (canRequest)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.clickable {
+                                    onToggleCanRequestLocation(number, !canRequest)
+                                }
+                            )
+                        }
                         IconButton(onClick = { onToggleStar(number) }) {
                             Icon(
                                 imageVector = if (isStarred) Icons.Default.Star else Icons.Outlined.Star,
@@ -6020,10 +6429,10 @@ fun QuicLocScreen(
             statusOk = null,
         ) {
             Text(
-                text = "The widget is for sending your own location on purpose — parking spot, " +
-                    "safety check, emergency. Tap it repeatedly; the count decides who gets it. " +
-                    "Each tap must land within about half a second of the last one, and buzzes " +
-                    "to confirm.",
+                text = "The widget is for sending your own location on purpose — a safety check, " +
+                    "an emergency alert, or just finding your car. Tap it repeatedly; the count " +
+                    "decides who gets it. Each tap must land within about half a second of the " +
+                    "last one, and buzzes to confirm.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -6086,9 +6495,10 @@ fun QuicLocScreen(
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        text = "Used by the 2-tap parking reminder only. This is YOUR number — " +
-                            "it is not a trusted contact and does not let anyone request your " +
-                            "location.",
+                        text = "Used by the 2-tap parking reminder. QuicLoc also always treats " +
+                            "this number as trusted — handy for testing the trigger word by " +
+                            "texting yourself from another device you own. It's still just your " +
+                            "own number: nobody else can use it to request your location.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
@@ -7277,7 +7687,7 @@ fun TutorialsHubScreen(
  * Full text of a single tutorial in a scrollable column, with a sticky
  * confirm button at the bottom.
  *
- * @param confirmLabel "Got it" during onboarding, "Done" otherwise.
+ * @param confirmLabel "Set QuicLoc up" during onboarding, "Done" otherwise.
  * @param onBrowseAll Optional secondary action shown only on the
  *   first-launch tutorial — taps mark onboarding complete *and* jump to
  *   the tutorials hub so the user can read more if they want.
@@ -7452,9 +7862,18 @@ fun DiagnosticsScreen(
     // Load + decrypt off the composition thread so navigating here never janks.
     var events by remember { mutableStateOf<List<DiagnosticEvent>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
+    // New events are written by SmsReceiver/NotificationListener/
+    // LocationReplyService — all background components this screen has no
+    // direct signal from. Poll while the screen is open so a trigger that
+    // arrives while the user is already looking at this screen (exactly the
+    // troubleshooting workflow this screen exists for) actually shows up,
+    // instead of only appearing after navigating away and back.
     LaunchedEffect(diagManager) {
-        events = withContext(Dispatchers.IO) { diagManager.getEvents() }
-        loaded = true
+        while (true) {
+            events = withContext(Dispatchers.IO) { diagManager.getEvents() }
+            loaded = true
+            delay(2000)
+        }
     }
     var captureAll by remember { mutableStateOf(initialCaptureAll) }
 
@@ -7653,15 +8072,24 @@ private fun StatusRow(label: String, ok: Boolean, value: String? = null) {
  * timeout, missing reply action, etc.) render on `errorContainer` with a
  * `✗` marker so they stand out.
  *
- * Data source: [RequestHistoryManager.getHistory], read once on first
- * composition. Capped at 100 entries (oldest evicted on insert).
+ * Data source: [RequestHistoryManager.getHistory], polled while this screen
+ * is open so a request handled by a background component (SmsReceiver,
+ * NotificationListener, LocationReplyService) while the user already has
+ * this screen open still shows up, not just on the next navigation here.
+ * Capped at 100 entries (oldest evicted on insert).
  */
 @Composable
 fun HistoryScreen(
     modifier: Modifier = Modifier,
     historyManager: RequestHistoryManager
 ) {
-    val history = remember { historyManager.getHistory() }
+    var history by remember { mutableStateOf(historyManager.getHistory()) }
+    LaunchedEffect(historyManager) {
+        while (true) {
+            delay(2000)
+            history = historyManager.getHistory()
+        }
+    }
 
     Column(
         modifier = modifier
@@ -7834,7 +8262,8 @@ class NotificationListener : NotificationListenerService() {
             return
         }
 
-        val extraction = extractMessages(notification)
+        val isDefaultSmsApp = pkg == android.provider.Telephony.Sms.getDefaultSmsPackage(applicationContext)
+        val extraction = extractMessages(notification, isDefaultSmsApp)
         val candidates = extraction.messages
         if (candidates.isEmpty()) {
             if (captureAll) recordDiag(pkg, "", "", DiagOutcome.NO_MESSAGES_EXTRACTED,
@@ -7875,7 +8304,12 @@ class NotificationListener : NotificationListenerService() {
 
         Log.d(TAG, "msg from $sender via $pkg: '$body'")
 
-        val passphrase = whitelist.getPassphrase()
+        // The entire find-my-phone feature (and thus the passphrase) lives in
+        // the on-demand :feature_findmyphone module, which isn't shipped while
+        // FindMyPhone.ENABLED is false — skip this check entirely rather than
+        // decrypting/consuming a passphrase (and swallowing the message) for a
+        // feature that can't act on a match anyway.
+        val passphrase = if (FindMyPhone.ENABLED) whitelist.getPassphrase() else null
         val isPassphraseTrigger = !passphrase.isNullOrEmpty() &&
             (body == "$TRIGGER_PLAIN ${passphrase.lowercase()}" ||
              body == "$TRIGGER_PREFIXED ${passphrase.lowercase()}")
@@ -7904,11 +8338,12 @@ class NotificationListener : NotificationListenerService() {
             return
         }
 
-        if (!whitelist.isWhitelistedByName(sender)) {
+        if (!whitelist.isWhitelistedByName(sender, trustName = latest.verifiedContact)) {
             Log.d(TAG, "Sender '$sender' not whitelisted, ignoring.")
             recordDiag(pkg, sender, body, DiagOutcome.WHITELIST_NO_MATCH_BY_NAME,
-                "Trigger '$body' from \"$sender\" via $pkg, but sender not in whitelist. " +
-                    "Whitelist: [${whitelist.getNumbers().joinToString(", ")}]",
+                "Trigger '$body' from \"$sender\" via $pkg, but sender not in whitelist" +
+                    (if (!latest.verifiedContact) " (sender identity unverified — a name match alone isn't trusted)" else "") +
+                    ". Contacts who can request: [${whitelist.getSharingNumbers().joinToString(", ")}]",
                 triggerMatched = true, whitelistMatched = false, extractionPath = extraction.path)
             return
         }
@@ -7917,8 +8352,7 @@ class NotificationListener : NotificationListenerService() {
         // notification is the duplicate of that SMS — dedupe against it. (RCS
         // and chat apps never fire SmsReceiver, so they fall through and reply
         // as normal; only the default SMS app's package is checked here.)
-        val defaultSms = android.provider.Telephony.Sms.getDefaultSmsPackage(applicationContext)
-        if (pkg == defaultSms) {
+        if (isDefaultSmsApp) {
             val candidates = buildList {
                 add(sender)
                 addAll(whitelist.numbersForName(sender))
@@ -7928,16 +8362,19 @@ class NotificationListener : NotificationListenerService() {
             // number-match it, so the time fallback must apply even if contact
             // resolution happened to add numbers that didn't match the SMS.
             val hasNumber = sender.any { it.isDigit() }
-            // Suppress if we can tie this notification to a number SmsReceiver
-            // already handled. When the notification gives us only a contact name
-            // we can't resolve to a number (no READ_CONTACTS), number matching is
-            // impossible — fall back to: did SmsReceiver handle ANY carrier
-            // trigger in the last few seconds? The carrier SMS and its default-app
-            // notification always arrive within ~1-2s, so this reliably collapses
-            // the duplicate without needing contacts. (RCS / chat apps don't fire
-            // SmsReceiver, so there's no recent carrier trigger and they reply.)
+            // The coarse "did SmsReceiver handle ANY carrier trigger recently"
+            // fallback is only safe to use when there's exactly one contact
+            // *able to trigger an SMS in the first place* — otherwise "a"
+            // recent carrier trigger might belong to a DIFFERENT contact than
+            // this notification's, and we'd silently drop this sender's
+            // legitimate reply instead of just double-texting (the much safer
+            // failure mode for a safety app). Alerts-only contacts can't
+            // cause a carrier trigger at all (SmsReceiver's isWhitelisted
+            // check excludes them), so they don't count toward the ambiguity.
+            val onlyOneWhitelistedContact = whitelist.getContacts().count { it.canRequestLocation } == 1
             val alreadyHandledViaSms = TriggerDedupe.wasRecentlyHandled(candidates) ||
-                (!hasNumber && TriggerDedupe.carrierTriggerHandledWithin(SMS_NOTIF_DEDUPE_WINDOW_MS))
+                (!hasNumber && onlyOneWhitelistedContact &&
+                    TriggerDedupe.carrierTriggerHandledWithin(SMS_NOTIF_DEDUPE_WINDOW_MS))
             if (alreadyHandledViaSms) {
                 Log.d(TAG, "Duplicate of an SMS already handled — skipping notification from $pkg")
                 recordDiag(pkg, sender, body, DiagOutcome.DUPLICATE_SUPPRESSED,
@@ -8021,8 +8458,23 @@ class NotificationListener : NotificationListenerService() {
     /**
      * One extracted message with its sender and body. Group chats and
      * multi-message bundles produce multiple of these; we keep the latest.
+     *
+     * @property verifiedContact Whether [sender] is known to actually
+     *   identify the sender rather than being an arbitrary string the sender
+     *   (or the message body) controls. True only when the posting app
+     *   attached an `androidx.core.app.Person` with a non-null `uri` — the
+     *   platform's documented way to link a message to a real Contacts
+     *   provider entry. Everything else (a self-set chat-app display name for
+     *   an unsaved contact, or a "sender" parsed out of the raw message text)
+     *   is untrusted, and [WhitelistManager.isWhitelistedByName] will not
+     *   authorize a reply on a name match alone for it — see that method's
+     *   doc for why.
      */
-    private data class IncomingMessage(val sender: String, val body: String)
+    private data class IncomingMessage(
+        val sender: String,
+        val body: String,
+        val verifiedContact: Boolean = false,
+    )
 
     /**
      * The result of [extractMessages] plus which branch produced it, so the
@@ -8032,7 +8484,15 @@ class NotificationListener : NotificationListenerService() {
      */
     private data class Extraction(val path: String, val messages: List<IncomingMessage>)
 
-    private fun extractMessages(notification: Notification): Extraction {
+    /**
+     * @param isDefaultSmsApp Whether this notification came from the phone's
+     *   default SMS/RCS app — for that specific app the platform resolves the
+     *   notification title from the phone's own local Contacts (or shows the
+     *   raw sender number when unresolved), so an arbitrary remote party can't
+     *   set it themselves the way a chat-app profile display name can. Used
+     *   to decide whether the PlainText path's sender is trustworthy.
+     */
+    private fun extractMessages(notification: Notification, isDefaultSmsApp: Boolean): Extraction {
         val extras: Bundle = notification.extras ?: return Extraction("None", emptyList())
         val notifTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
 
@@ -8050,10 +8510,22 @@ class NotificationListener : NotificationListenerService() {
                         // For incoming, person.name is the sender. In 1:1 chats
                         // some apps leave person null and put the sender in the
                         // conversation title — fall back to that.
-                        val sender = m.person?.name?.toString().orEmpty()
+                        val personName = m.person?.name?.toString().orEmpty()
+                        val sender = personName
                             .ifEmpty { style.conversationTitle?.toString().orEmpty() }
                             .ifEmpty { notifTitle }
-                        IncomingMessage(sender = sender, body = m.text?.toString().orEmpty())
+                        // Only trust this sender string when it's literally the
+                        // platform-resolved Person's name AND that Person
+                        // carries a Contacts-provider URI — i.e. the posting
+                        // app itself vouches this message came from a saved
+                        // contact, not an arbitrary self-declared display name
+                        // an attacker could set to impersonate a whitelist entry.
+                        val verified = personName.isNotEmpty() && m.person?.uri != null
+                        IncomingMessage(
+                            sender = sender,
+                            body = m.text?.toString().orEmpty(),
+                            verifiedContact = verified,
+                        )
                     })
                 }
             }
@@ -8062,6 +8534,8 @@ class NotificationListener : NotificationListenerService() {
         }
 
         // 2. EXTRA_TEXT_LINES — used by some apps for bundled inbox-style.
+        //    The sender here is split out of the raw message text itself, so
+        //    it's never trustworthy (see parseSenderColonBody).
         val lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
         if (lines != null && lines.isNotEmpty()) {
             return Extraction("TextLines", lines.mapNotNull { line ->
@@ -8080,7 +8554,9 @@ class NotificationListener : NotificationListenerService() {
             text = text.substringAfter("$notifTitle: ")
         }
 
-        return Extraction("PlainText", listOf(IncomingMessage(sender = notifTitle, body = text)))
+        return Extraction("PlainText", listOf(
+            IncomingMessage(sender = notifTitle, body = text, verifiedContact = isDefaultSmsApp)
+        ))
     }
 
     /**
@@ -8110,6 +8586,115 @@ class NotificationListener : NotificationListenerService() {
 
 
 ######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/PhoneNumbers.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+/**
+ * Shared strict phone-number comparison, used anywhere QuicLoc decides whether
+ * two numbers refer to the same person (whitelist matching, cross-intake
+ * dedupe).
+ *
+ * We deliberately do NOT use `android.telephony.PhoneNumberUtils.compare`.
+ * Besides treating two blank strings as equal, it falls back to a loose match
+ * on the trailing ~7 digits when a strict match fails — which lets two
+ * *different* real phone numbers that merely share an area-code-sized suffix
+ * match each other. For a whitelist gate, that's a bypass: an unrelated
+ * number could be treated as a trusted contact. We instead require an exact
+ * digit match, tolerating only a missing/extra leading US "+1" trunk code.
+ */
+object PhoneNumbers {
+
+    /** Strips everything except digits and a leading '+'. */
+    fun clean(number: String): String = number.replace(Regex("[^0-9+]"), "")
+
+    /**
+     * True if [rawA] and [rawB] are the same number. Both are cleaned first;
+     * either being empty after cleaning is never a match (an empty string
+     * must never match another empty string here — that would let a
+     * name-only whitelist entry, whose number is "", match any sender whose
+     * "number" also cleans to empty).
+     */
+    fun match(rawA: String, rawB: String): Boolean {
+        val cleanA = clean(rawA).removePrefix("+")
+        val cleanB = clean(rawB).removePrefix("+")
+        if (cleanA.isEmpty() || cleanB.isEmpty()) return false
+        if (cleanA == cleanB) return true
+        val shorter = if (cleanA.length <= cleanB.length) cleanA else cleanB
+        val longer = if (cleanA.length <= cleanB.length) cleanB else cleanA
+        return shorter.length >= 10 && longer.length == shorter.length + 1 &&
+            longer.startsWith("1") && longer.substring(1) == shorter
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/PrefsFallbackMigration.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
+
+/**
+ * If a Keystore/EncryptedSharedPreferences init failure ever forced writes
+ * into a plaintext `_fallback` file (see each manager's `createEncryptedPrefs`),
+ * and Keystore is working again by the time this runs, recovers that data
+ * into the real encrypted store instead of leaving it silently orphaned.
+ *
+ * Without this, data written during a transient Keystore failure (a real,
+ * documented AndroidX Security / Keystore failure mode -- e.g. after an OS
+ * upgrade) is lost the moment Keystore starts working again on a later
+ * launch: the manager starts reading from the now-empty real store, and
+ * nothing ever looks at the fallback file again.
+ *
+ * @param encryptedPrefs The just-created real encrypted store. Must NOT be
+ *   the fallback file itself (i.e. only call this on the success path of
+ *   `createEncryptedPrefs`, never from its catch branch).
+ */
+fun migratePlaintextFallback(
+    context: Context,
+    fallbackFileName: String,
+    encryptedPrefs: SharedPreferences,
+) {
+    val fallback = context.getSharedPreferences(fallbackFileName, Context.MODE_PRIVATE)
+    val fallbackData = fallback.all
+    if (fallbackData.isEmpty()) return
+
+    val editor = encryptedPrefs.edit()
+    var migratedAny = false
+    for ((key, value) in fallbackData) {
+        // Never clobber data the real store already has -- if both somehow
+        // have the same key, the encrypted store's copy is the newer one
+        // (it's only reachable once Keystore is healthy again, which is
+        // strictly after whatever wrote the fallback entry).
+        if (encryptedPrefs.contains(key)) continue
+        migratedAny = true
+        when (value) {
+            is String -> editor.putString(key, value)
+            is Boolean -> editor.putBoolean(key, value)
+            is Int -> editor.putInt(key, value)
+            is Long -> editor.putLong(key, value)
+            is Float -> editor.putFloat(key, value)
+            is Set<*> -> {
+                @Suppress("UNCHECKED_CAST")
+                editor.putStringSet(key, value as Set<String>)
+            }
+            else -> Unit
+        }
+    }
+    if (migratedAny) {
+        editor.apply()
+        Log.i("QuicLoc.PrefsFallback", "Recovered ${fallbackData.size} key(s) from $fallbackFileName into encrypted storage")
+    }
+    fallback.edit().clear().apply()
+}
+
+
+######################################################
 # FILE: app/src/main/java/com/hereliesaz/quicloc/QuicLocApp.kt
 ######################################################
 
@@ -8118,8 +8703,8 @@ package com.hereliesaz.quicloc
 /**
  * Application subclass extending [com.google.android.play.core.splitcompat.SplitCompatApplication]
  * so code and resources from on-demand dynamic feature modules (currently
- * `:feature_camera`) can be loaded in-process after they're installed via
- * `SplitInstall`, without requiring a fresh process start.
+ * `:feature_findmyphone`) can be loaded in-process after they're installed
+ * via `SplitInstall`, without requiring a fresh process start.
  *
  * SplitCompatApplication already calls `SplitCompat.install(...)` in its
  * `attachBaseContext`, so no override is needed here.
@@ -8276,6 +8861,15 @@ object Readiness {
      * Build the checklist. Steps whose underlying permission isn't present in
      * [permissions] (background location below Android 10, notifications below
      * Android 13) are skipped entirely rather than reported as missing.
+     *
+     * @param whitelistCount Total whitelist entries, including name-only ones
+     *   (added by typing a handle with no phone number) -- shown for context.
+     * @param dialableWhitelistCount Whitelist entries that have an actual
+     *   phone number. Defaults to [whitelistCount] for callers (and tests)
+     *   that don't distinguish, but real callers should pass the true count:
+     *   a whitelist made up entirely of name-only entries can never satisfy
+     *   an SMS trigger (SmsReceiver only number-matches) or the widget's SMS
+     *   fan-out, so it should not be reported as "done".
      */
     fun steps(
         enabled: Boolean,
@@ -8283,6 +8877,7 @@ object Readiness {
         myNumber: String,
         permissions: List<PermissionStatus>,
         pinSet: Boolean = false,
+        dialableWhitelistCount: Int = whitelistCount,
     ): List<SetupStep> {
         val byKey = permissions.associateBy { it.key }
         fun state(key: String): PermStatus? = byKey[key]?.state
@@ -8347,8 +8942,9 @@ object Readiness {
             steps += SetupStep(
                 id = "post-notifications",
                 title = "Allow notifications",
-                detail = "QuicLoc shows a short-lived notification while a reply is being sent. " +
-                    "Android kills the reply mid-send if it can't post one.",
+                detail = "QuicLoc shows a short-lived notification while a reply is being sent, " +
+                    "as Android requires for this kind of background work. Without it the reply " +
+                    "still goes out, but the notification itself won't show.",
                 state = if (granted(PERM_POST_NOTIFICATIONS)) StepState.DONE else StepState.TODO,
                 required = true,
                 actionKey = PERM_POST_NOTIFICATIONS,
@@ -8359,12 +8955,34 @@ object Readiness {
         steps += SetupStep(
             id = "whitelist",
             title = "Add at least one trusted contact",
-            detail = "Only people on your list can ask. With an empty list QuicLoc ignores " +
-                "everyone, including you.",
-            state = if (whitelistCount > 0) StepState.DONE else StepState.TODO,
+            detail = if (whitelistCount > 0 && dialableWhitelistCount == 0)
+                "Every contact on your list was added by name only, with no phone number. " +
+                    "That can't answer a text or the widget — add one with a real number, " +
+                    "e.g. via \"Pick from Contacts\"."
+            else
+                "Only people on your list can ask. With an empty list QuicLoc ignores " +
+                    "everyone, including you.",
+            state = if (dialableWhitelistCount > 0) StepState.DONE else StepState.TODO,
             required = true,
             actionKey = PermKeys.ADD_CONTACT,
             actionLabel = "Add",
+        )
+
+        // Required, not just recommended: Android's Doze/App Standby can put a
+        // sleeping app's broadcast receivers and background work on ice, and a
+        // request that arrives while that's happening can simply be missed.
+        // For a safety app, "ready" has to mean this is actually exempted, not
+        // just that the user hasn't been shown the option yet.
+        steps += SetupStep(
+            id = "battery",
+            title = "Exempt QuicLoc from battery optimisation",
+            detail = "Android puts sleeping apps on ice; a request that arrives while QuicLoc is " +
+                "asleep can be missed entirely. QuicLoc does no background work of its own, so " +
+                "the exemption costs you nothing.",
+            state = if (granted(PermKeys.BATTERY)) StepState.DONE else StepState.TODO,
+            required = true,
+            actionKey = PermKeys.BATTERY,
+            actionLabel = "Allow",
         )
 
         // ---- Recommended, not required -------------------------------------
@@ -8378,18 +8996,6 @@ object Readiness {
             required = false,
             actionKey = PermKeys.NOTIF_LISTENER,
             actionLabel = "Turn on",
-        )
-
-        steps += SetupStep(
-            id = "battery",
-            title = "Exempt QuicLoc from battery optimisation",
-            detail = "Optional but strongly recommended. Android puts sleeping apps on ice; a " +
-                "request that arrives at 3am can be missed. QuicLoc does no background work, so " +
-                "the exemption costs you nothing.",
-            state = if (granted(PermKeys.BATTERY)) StepState.DONE else StepState.TODO,
-            required = false,
-            actionKey = PermKeys.BATTERY,
-            actionLabel = "Allow",
         )
 
         steps += SetupStep(
@@ -8675,13 +9281,15 @@ class RequestHistoryManager(context: Context) {
             val masterKey = MasterKey.Builder(context)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build()
-            EncryptedSharedPreferences.create(
+            val prefs = EncryptedSharedPreferences.create(
                 context,
                 PREFS_FILE,
                 masterKey,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
+            migratePlaintextFallback(context, "${PREFS_FILE}_fallback", prefs)
+            prefs
         } catch (e: Exception) {
             Log.e(TAG, "Falling back to plaintext prefs for history", e)
             context.getSharedPreferences("${PREFS_FILE}_fallback", Context.MODE_PRIVATE)
@@ -8792,7 +9400,7 @@ class SmsReceiver : BroadcastReceiver() {
                 if (looksLikeTrigger) diag.record(buildEvent(sender, body,
                     DiagOutcome.WHITELIST_NO_MATCH_BY_NUMBER,
                     "Trigger '$body' from $sender, but number not in whitelist. " +
-                        "Whitelist: [${whitelistManager.getNumbers().joinToString(", ")}]",
+                        "Contacts who can request: [${whitelistManager.getSharingNumbers().joinToString(", ")}]",
                     triggerMatched = true, whitelistMatched = false))
                 continue
             }
@@ -8967,7 +9575,6 @@ class ToggleReceiver : BroadcastReceiver() {
 
 package com.hereliesaz.quicloc
 
-import android.telephony.PhoneNumberUtils
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -8983,8 +9590,9 @@ import java.util.concurrent.ConcurrentHashMap
  * the duplicate always arrives within a second or two, never across a process
  * restart. Whichever path handles a sender first calls [markHandled]; the other
  * sees [wasRecentlyHandled] and defers. Matching is by phone number with
- * [PhoneNumberUtils.compare] so formatting differences (`(504) 326-9451` vs
- * `5043269451`) still collapse to one.
+ * [PhoneNumbers.match] so formatting differences (`(504) 326-9451` vs
+ * `5043269451`) still collapse to one, without treating two different real
+ * numbers as the same one.
  */
 object TriggerDedupe {
 
@@ -9020,8 +9628,7 @@ object TriggerDedupe {
     /**
      * Records that a `loc` reply was just dispatched for [number]. Non-numeric
      * inputs (e.g. a contact display name that a caller passes through) are
-     * ignored — only phone numbers are meaningful keys, and
-     * [PhoneNumberUtils.compare] is undefined on non-numeric strings.
+     * ignored — only phone numbers are meaningful keys.
      */
     fun markHandled(number: String) {
         if (!hasDigits(number)) return
@@ -9032,7 +9639,7 @@ object TriggerDedupe {
 
     /**
      * True if any (numeric) candidate in [candidates] matches a number handled
-     * within the window. Numbers are compared with [PhoneNumberUtils.compare] so
+     * within the window. Numbers are compared with [PhoneNumbers.match] so
      * differing formats still match; non-numeric candidates are skipped.
      */
     fun wasRecentlyHandled(candidates: Collection<String>): Boolean {
@@ -9040,7 +9647,7 @@ object TriggerDedupe {
         val numbers = candidates.filter { hasDigits(it) }
         if (numbers.isEmpty()) return false
         return handled.any { (stored, ts) ->
-            now - ts < WINDOW_MS && numbers.any { PhoneNumberUtils.compare(it, stored) }
+            now - ts < WINDOW_MS && numbers.any { PhoneNumbers.match(it, stored) }
         }
     }
 
@@ -9273,7 +9880,7 @@ Tap pattern — each tap has to land within about half a second of the last one,
 
 The widget vibrates on each tap to confirm, and shows the action label briefly once the taps stop.
 
-Each pattern fetches a fresh GPS fix before sending — even if you're indoors with poor signal, the three-stage fallback (cached → fresh → forced) usually gets a position within 15 seconds.
+Each pattern fetches a fresh GPS fix before sending — even if you're indoors with poor signal, the three-stage fallback (cached → fresh → forced) usually gets a position within 30 seconds.
 
 If a tap count has nothing to send to — no own number, no starred contacts, no trusted contacts — nothing is sent. The widget help screen (1 tap) shows which of the four are ready.
 """.trim(),
@@ -9379,11 +9986,11 @@ Location
 • Coarse Location: fallback when GPS isn't available (indoors, denied sky view). Same usage window as Fine.
 • Background Location ("Allow all the time"): the entire point of QuicLoc is to respond while the screen is off and the app is closed. Android 11+ won't let apps ask for this directly, so you'll be sent to the system Location Settings screen to flip it manually. Without it, QuicLoc only works while you happen to have the app open.
 
-Camera
+${if (FindMyPhone.ENABLED) """Camera
 
 • Camera: in find-my-phone (passphrase) mode, after 3 failed PIN attempts the front camera silently captures one frame of whoever is holding your phone and sends it to the requester via MMS. This is delivered as an optional add-on module that downloads only when you set up find-my-phone — so QuicLoc doesn't ask for camera access at all unless you use that feature. Granted right after the download (before the lock screen can ever need it).
 
-Authentication
+""" else ""}Authentication
 
 • Biometric: gates the QuicLoc configuration UI behind your fingerprint or face. The background services keep working regardless, but no one can change your whitelist or PIN without unlocking the app.
 • Use Fingerprint: the legacy (pre-Android 9) name for the same capability. Both are declared so older devices are covered.
@@ -9396,22 +10003,21 @@ Foreground services (keep work alive when the screen is off)
 Notifications
 
 • Post Notifications (Android 13+): required to show the foreground-service notification while a reply is in flight, the optional always-on reminder, and the tracking-active alert. Without it, services would be killed silently by the system.
-• Full-Screen Intent: lets the find-my-phone trigger surface a full-screen lock activity (cover-screen mode) when Device Admin isn't granted. On Android 14+ you'll also need to enable "Full screen notifications" for QuicLoc in system Settings.
-
+${if (FindMyPhone.ENABLED) "• Full-Screen Intent: lets the find-my-phone trigger surface a full-screen lock activity (cover-screen mode) when Device Admin isn't granted. On Android 14+ you'll also need to enable \"Full screen notifications\" for QuicLoc in system Settings.\n" else ""}
 System integration
 
 • Boot Completed: lets QuicLoc re-post the persistent reminder notification after a reboot if you've opted into it. It does not auto-start any services beyond that notification.
 • Vibrate: short haptic confirmation when you tap the home-screen widget, so you know the request actually fired.
 • Internet + Network State: required transitively by Google Play Services (the fused location provider and the Phone Number Hint API). QuicLoc itself makes no HTTP calls — there is no backend.
 
-Contacts (optional)
+Picking a contact from your address book (optional)
 
-• Read Contacts: only used by the "Pick from Contacts" button when you're populating the whitelist. Skip it and you can still type numbers and names manually.
-
+• No permission needed: "Pick from Contacts" uses Android's own contact picker, which hands QuicLoc just the one contact you chose — QuicLoc never requests, and doesn't declare, the Contacts permission. Skip it and you can still type numbers and names manually.
+${if (FindMyPhone.ENABLED) """
 Device Admin (optional, special access)
 
 • Bind Device Admin: only consumed by lockNow() so the find-my-phone passphrase can actually lock the screen instead of just covering it. Cannot wipe data, change your PIN, or block uninstall. Revocable any time in Settings → Security → Device admin apps.
-
+""" else ""}
 Protected (background reliability)
 
 These keep QuicLoc reachable when the device is idle. Granting them is the difference between "QuicLoc answers a request at 3am while your phone is in your bag" and "QuicLoc answers if you happen to have the app open."
@@ -9568,7 +10174,6 @@ package com.hereliesaz.quicloc
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
-import android.telephony.PhoneNumberUtils
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
@@ -9581,7 +10186,22 @@ import org.json.JSONObject
  */
 class WhitelistManager(context: Context) {
 
-    data class ContactEntry(val name: String?, val number: String) {
+    /**
+     * @param canRequestLocation Whether this contact is authorized to
+     *   request the location by sending the trigger word. Every contact —
+     *   regardless of this flag — still receives the home-screen widget's
+     *   safety-check / emergency alerts; that's the superset "emergency
+     *   contacts" list. `false` marks an "alerts only" contact: someone who
+     *   should be notified in an emergency but who can't themselves ask for
+     *   the location by texting. Defaults to `true` so existing entries (and
+     *   anything restored from an older backup with no such field) keep
+     *   today's behavior.
+     */
+    data class ContactEntry(
+        val name: String?,
+        val number: String,
+        val canRequestLocation: Boolean = true,
+    ) {
         /** The token users see for this entry and use to remove/star it. */
         val displayToken: String
             get() = name?.takeIf { it.isNotBlank() } ?: number
@@ -9590,6 +10210,7 @@ class WhitelistManager(context: Context) {
             return JSONObject().apply {
                 put("name", name ?: "")
                 put("number", number)
+                put("can_request_location", canRequestLocation)
             }.toString()
         }
 
@@ -9600,7 +10221,8 @@ class WhitelistManager(context: Context) {
                     val json = JSONObject(jsonStr)
                     val name = json.optString("name", "").takeIf { it.isNotBlank() }
                     val number = json.optString("number", "")
-                    ContactEntry(name, number)
+                    val canRequestLocation = json.optBoolean("can_request_location", true)
+                    ContactEntry(name, number, canRequestLocation)
                 } catch (e: Exception) {
                     // A plain (non-JSON) token: pre-migration legacy data, or a
                     // value round-tripped through BackupVault, which stores and
@@ -9670,13 +10292,13 @@ class WhitelistManager(context: Context) {
         return true
     }
 
-    fun addContact(name: String?, number: String) {
+    fun addContact(name: String?, number: String, canRequestLocation: Boolean = true) {
         val cleanNum = cleanPhoneNumber(number)
         if (cleanNum.isEmpty() && name.isNullOrBlank()) return
 
         val finalName = name?.trim()?.takeIf { it.isNotBlank() }
         val finalNumber = if (cleanNum.isNotEmpty()) cleanNum else number.trim()
-        val entry = ContactEntry(finalName, finalNumber)
+        val entry = ContactEntry(finalName, finalNumber, canRequestLocation)
 
         val currentJsonSet = prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
         val mutableSet = currentJsonSet.toMutableSet()
@@ -9725,6 +10347,28 @@ class WhitelistManager(context: Context) {
         BackupVault.snapshotAsync(appContext)
     }
 
+    /**
+     * Flips whether the contact(s) identified by [token] (a [ContactEntry.displayToken])
+     * are allowed to request the location by texting, without touching their
+     * name, number, or whether they're starred. A token can back more than
+     * one entry (e.g. a name with two numbers on file) — all of them move
+     * together so the row this corresponds to in the UI stays one consistent
+     * state rather than silently splitting.
+     */
+    fun setCanRequestLocation(token: String, canRequestLocation: Boolean) {
+        val currentJsonSet = prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
+        val newSet = currentJsonSet.mapNotNull { jsonStr ->
+            val entry = ContactEntry.fromJsonString(jsonStr) ?: return@mapNotNull jsonStr
+            if (entry.displayToken == token) {
+                entry.copy(canRequestLocation = canRequestLocation).toJsonString()
+            } else {
+                jsonStr
+            }
+        }.toSet()
+        saveNumbers(newSet)
+        BackupVault.snapshotAsync(appContext)
+    }
+
     private fun unstar(token: String) {
         val currentStarred = getStarredNumbers().toMutableSet()
         if (currentStarred.contains(token)) {
@@ -9735,6 +10379,18 @@ class WhitelistManager(context: Context) {
 
     fun replaceAllNumbers(numbers: Set<String>) {
         prefs.edit().putStringSet(KEY_WHITELIST, numbers).apply()
+        BackupVault.snapshotAsync(appContext)
+    }
+
+    /**
+     * Like [replaceAllNumbers], but takes full [ContactEntry] records instead
+     * of bare tokens — used by [BackupVault] restore so a contact added via
+     * "Pick from Contacts" (name AND number) keeps its number after
+     * restoring on a new device, instead of losing it the way round-tripping
+     * through [getNumbers]'s display tokens would.
+     */
+    fun replaceAllContacts(contacts: List<ContactEntry>) {
+        prefs.edit().putStringSet(KEY_WHITELIST, contacts.map { it.toJsonString() }.toSet()).apply()
         BackupVault.snapshotAsync(appContext)
     }
 
@@ -9776,6 +10432,13 @@ class WhitelistManager(context: Context) {
         BackupVault.snapshotAsync(appContext)
     }
 
+    /**
+     * Every emergency contact — the full superset the widget's safety-check
+     * and emergency alerts fan out to, regardless of each entry's
+     * [ContactEntry.canRequestLocation]. Use [getSharingNumbers] or filter
+     * by that field when "who can text me for my location" is what's
+     * actually needed.
+     */
     fun getContacts(): List<ContactEntry> {
         val strings = prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
         return strings.mapNotNull { ContactEntry.fromJsonString(it) }
@@ -9785,28 +10448,67 @@ class WhitelistManager(context: Context) {
         return getContacts().map { it.displayToken }.toSet()
     }
 
+    /**
+     * Real, dialable phone numbers for every emergency contact that has one
+     * — deliberately including alerts-only entries: the widget's own taps
+     * are the one path an alerts-only contact CAN be reached through, since
+     * they can't request the location for themselves. Name-only entries
+     * (added by typing a handle with no digits, e.g. "Mom") are excluded —
+     * [ContactEntry.displayToken] would return their *name*, and sending SMS
+     * to that literal string as a destination address silently fails.
+     * Callers that need to actually text the whitelist (the widget's SMS
+     * fan-out) must use this instead of [getNumbers].
+     */
+    fun getDialableNumbers(): List<String> =
+        getContacts().mapNotNull { it.number.takeIf(String::isNotEmpty) }
+
+    /** [getDialableNumbers], restricted to starred entries. */
+    fun getDialableStarredNumbers(): List<String> {
+        val starred = getStarredNumbers()
+        return getContacts()
+            .filter { it.displayToken in starred }
+            .mapNotNull { it.number.takeIf(String::isNotEmpty) }
+    }
+
     fun isWhitelisted(number: String): Boolean {
         val cleanIncoming = cleanPhoneNumber(number)
         if (matchesMyNumber(cleanIncoming)) return true
-        return getContacts().any { entry -> numbersMatch(cleanIncoming, entry.number) }
+        return getContacts().any { entry ->
+            entry.canRequestLocation && numbersMatch(cleanIncoming, entry.number)
+        }
     }
+
+    /**
+     * Display tokens of contacts allowed to request the location by texting
+     * — i.e. [getContacts] filtered to [ContactEntry.canRequestLocation].
+     * Narrower than [getNumbers], which returns every emergency contact
+     * including alerts-only ones. Used where "who could plausibly have sent
+     * this trigger" matters, e.g. diagnostic messages.
+     */
+    fun getSharingNumbers(): Set<String> =
+        getContacts().filter { it.canRequestLocation }.map { it.displayToken }.toSet()
 
     private fun matchesMyNumber(cleanIncoming: String): Boolean {
         return numbersMatch(cleanIncoming, getMyNumber())
     }
 
-    /**
-     * [PhoneNumberUtils.compare] treats two blank strings as equal, so without
-     * this guard a name-only whitelist entry (empty number) would match any
-     * incoming number that also cleans to empty — a whitelist bypass.
-     */
-    private fun numbersMatch(cleanA: String, rawB: String): Boolean {
-        val cleanB = cleanPhoneNumber(rawB)
-        if (cleanA.isEmpty() || cleanB.isEmpty()) return false
-        return PhoneNumberUtils.compare(cleanA, cleanB)
-    }
+    private fun numbersMatch(cleanA: String, rawB: String): Boolean = PhoneNumbers.match(cleanA, rawB)
 
-    fun isWhitelistedByName(displayName: String): Boolean {
+    /**
+     * @param trustName Whether the caller has verified [displayName] actually
+     *   identifies the sender (e.g. resolved from the platform's Contacts
+     *   provider by the posting app), rather than being an arbitrary,
+     *   sender-controlled string (a self-set chat-app display name, or text
+     *   parsed out of the message body itself). When `false`, a name match is
+     *   never sufficient on its own — only an exact number match (or matching
+     *   the user's own number) authorizes the reply. Without this, anyone
+     *   could get a whitelisted user's location by setting their own display
+     *   name in any chat app to a name in that user's whitelist (e.g. "Mom")
+     *   and sending the trigger word — a real whitelist bypass, since chat
+     *   apps don't cryptographically verify a sender's self-declared identity
+     *   to this app.
+     */
+    fun isWhitelistedByName(displayName: String, trustName: Boolean = true): Boolean {
         val nameNorm = normalizeName(displayName)
         val cleanIncoming = cleanPhoneNumber(displayName)
         val contacts = getContacts()
@@ -9814,8 +10516,10 @@ class WhitelistManager(context: Context) {
         if (matchesMyNumber(cleanIncoming)) return true
 
         return contacts.any { entry ->
-            (nameNorm.isNotEmpty() && normalizeName(entry.name.orEmpty()) == nameNorm) ||
-                numbersMatch(cleanIncoming, entry.number)
+            entry.canRequestLocation && (
+                (trustName && nameNorm.isNotEmpty() && normalizeName(entry.name.orEmpty()) == nameNorm) ||
+                    numbersMatch(cleanIncoming, entry.number)
+            )
         }
     }
 
@@ -9845,13 +10549,18 @@ class WhitelistManager(context: Context) {
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build()
 
-            EncryptedSharedPreferences.create(
+            val prefs = EncryptedSharedPreferences.create(
                 context,
                 ENCRYPTED_PREFS_FILE,
                 masterKey,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
+            // Recover anything written to the plaintext fallback during an
+            // earlier, transient Keystore failure -- otherwise it's silently
+            // orphaned forever the moment Keystore starts working again.
+            migratePlaintextFallback(context, ENCRYPTED_PREFS_FILE + "_fallback", prefs)
+            prefs
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create EncryptedSharedPreferences, falling back to plaintext", e)
             context.getSharedPreferences(ENCRYPTED_PREFS_FILE + "_fallback", Context.MODE_PRIVATE)
@@ -9892,7 +10601,9 @@ class WhitelistManager(context: Context) {
 
 package com.hereliesaz.quicloc
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -9908,6 +10619,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 
 /**
  * Shown when the widget is tapped exactly once — the most likely accidental
@@ -9924,8 +10636,22 @@ class WidgetHelpActivity : ComponentActivity() {
         enableEdgeToEdge()
         val whitelistManager = WhitelistManager(this)
         val myNumber = whitelistManager.getMyNumber()
-        val starredCount = whitelistManager.getStarredNumbers().size
-        val whitelistCount = whitelistManager.getNumbers().size
+        // Dialable counts, not raw entry counts: a name-only whitelist entry
+        // (no phone number) can't actually receive an SMS, so counting it
+        // here would show a green checkmark for a tap that sends nothing —
+        // see LocationHelper.handleWidgetTaps, which already only texts
+        // dialable numbers.
+        val starredCount = whitelistManager.getDialableStarredNumbers().size
+        val whitelistCount = whitelistManager.getDialableNumbers().size
+        val hasSendSms = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.SEND_SMS
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasLocation = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED || ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val appEnabled = AppSettings.isEnabled(this)
 
         setContent {
             QuicLocTheme {
@@ -9933,6 +10659,9 @@ class WidgetHelpActivity : ComponentActivity() {
                     myNumber = myNumber,
                     starredCount = starredCount,
                     whitelistCount = whitelistCount,
+                    hasSendSms = hasSendSms,
+                    hasLocation = hasLocation,
+                    appEnabled = appEnabled,
                     onOpenSettings = {
                         startActivity(
                             Intent(this, MainActivity::class.java)
@@ -9952,6 +10681,9 @@ fun WidgetHelpUI(
     myNumber: String,
     starredCount: Int,
     whitelistCount: Int,
+    hasSendSms: Boolean = true,
+    hasLocation: Boolean = true,
+    appEnabled: Boolean = true,
     onOpenSettings: () -> Unit,
     onFinished: () -> Unit,
 ) {
@@ -9994,6 +10726,17 @@ fun WidgetHelpUI(
                     modifier = Modifier.padding(top = 8.dp, bottom = 16.dp)
                 )
 
+                // Prerequisites shared by every tap count that actually sends
+                // (2, 3, 4): the master switch, SEND_SMS, and location. Any
+                // one of these missing means that tap does nothing, no matter
+                // how the whitelist/starred/my-number counts look.
+                fun sharedBlocker(): String? = when {
+                    !appEnabled -> "QuicLoc is turned off — turn it on in settings first."
+                    !hasSendSms -> "QuicLoc needs SMS permission first."
+                    !hasLocation -> "QuicLoc needs location permission first."
+                    else -> null
+                }
+
                 TapExplanation(
                     taps = "1 tap",
                     what = "Shows this screen. Nothing is sent.",
@@ -10003,29 +10746,29 @@ fun WidgetHelpUI(
                 TapExplanation(
                     taps = "2 taps",
                     what = "Parking — texts your location to yourself, tagged #Parking.",
-                    requirement = if (myNumber.isBlank())
+                    requirement = sharedBlocker() ?: if (myNumber.isBlank())
                         "Set your own phone number in QuicLoc first."
                     else
                         "Goes to $myNumber.",
-                    ok = myNumber.isNotBlank(),
+                    ok = sharedBlocker() == null && myNumber.isNotBlank(),
                 )
                 TapExplanation(
                     taps = "3 taps",
                     what = "Safety check — texts your starred contacts, tagged #SafetyCheck.",
-                    requirement = if (starredCount == 0)
-                        "Star at least one trusted contact in QuicLoc first."
+                    requirement = sharedBlocker() ?: if (starredCount == 0)
+                        "Star at least one trusted contact with a phone number in QuicLoc first."
                     else
                         "Goes to $starredCount starred contact${if (starredCount == 1) "" else "s"}.",
-                    ok = starredCount > 0,
+                    ok = sharedBlocker() == null && starredCount > 0,
                 )
                 TapExplanation(
                     taps = "4 taps",
                     what = "Emergency — texts everyone on your trusted list, tagged #Emergency.",
-                    requirement = if (whitelistCount == 0)
-                        "Add at least one trusted contact in QuicLoc first."
+                    requirement = sharedBlocker() ?: if (whitelistCount == 0)
+                        "Add at least one trusted contact with a phone number in QuicLoc first."
                     else
                         "Goes to all $whitelistCount trusted contact${if (whitelistCount == 1) "" else "s"}.",
-                    ok = whitelistCount > 0,
+                    ok = sharedBlocker() == null && whitelistCount > 0,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -10501,7 +11244,7 @@ private fun TapExplanation(
     <!-- Shown in the home-screen widget picker, where the only chance to
          explain what the widget is for is the label + description pair. -->
     <string name="widget_label">QuicLoc — send my location</string>
-    <string name="widget_description">Tap twice to text your parking spot to yourself, three times for a safety check to your starred contacts, four times for an emergency alert to everyone on your list.</string>
+    <string name="widget_description">Tap three times for a safety check to your starred contacts, four times for an emergency alert to everyone on your list, or twice to text your own location to yourself.</string>
     <!-- Title shown by Play for the on-demand find-my-phone feature module. -->
     <string name="feature_findmyphone_title">QuicLoc Find My Phone</string>
     <string name="device_admin_label">QuicLoc Lockdown</string>
@@ -10568,6 +11311,8 @@ private fun TapExplanation(
     <exclude domain="sharedpref" path="quicloc_secure_prefs_fallback.xml" />
     <exclude domain="sharedpref" path="quicloc_history.xml" />
     <exclude domain="sharedpref" path="quicloc_history_fallback.xml" />
+    <exclude domain="sharedpref" path="quicloc_diagnostics.xml" />
+    <exclude domain="sharedpref" path="quicloc_diagnostics_fallback.xml" />
     <exclude domain="sharedpref" path="quicloc_tracking_state.xml" />
     <exclude domain="external" path="." />
 </full-backup-content>
@@ -10594,6 +11339,8 @@ private fun TapExplanation(
         <exclude domain="sharedpref" path="quicloc_secure_prefs_fallback.xml" />
         <exclude domain="sharedpref" path="quicloc_history.xml" />
         <exclude domain="sharedpref" path="quicloc_history_fallback.xml" />
+        <exclude domain="sharedpref" path="quicloc_diagnostics.xml" />
+        <exclude domain="sharedpref" path="quicloc_diagnostics_fallback.xml" />
         <exclude domain="sharedpref" path="quicloc_tracking_state.xml" />
         <exclude domain="external" path="." />
     </cloud-backup>
@@ -10602,6 +11349,8 @@ private fun TapExplanation(
         <exclude domain="sharedpref" path="quicloc_secure_prefs_fallback.xml" />
         <exclude domain="sharedpref" path="quicloc_history.xml" />
         <exclude domain="sharedpref" path="quicloc_history_fallback.xml" />
+        <exclude domain="sharedpref" path="quicloc_diagnostics.xml" />
+        <exclude domain="sharedpref" path="quicloc_diagnostics_fallback.xml" />
         <exclude domain="sharedpref" path="quicloc_tracking_state.xml" />
         <exclude domain="external" path="." />
     </device-transfer>
@@ -10778,6 +11527,7 @@ class BackupVaultTest {
         BackupVault.backupFile(context).delete()
         context.deleteSharedPreferences("quicloc_secure_prefs")
         context.deleteSharedPreferences("quicloc_secure_prefs_fallback")
+        context.deleteSharedPreferences("quicloc_backup_attempts")
         whitelist = WhitelistManager(context)
     }
 
@@ -10883,6 +11633,55 @@ class BackupVaultTest {
     }
 
     @Test
+    fun `restore preserves the phone number of a name+number contact`() {
+        // The regression this guards: snapshot() used to store only display
+        // tokens, so a contact added via "Pick from Contacts" (both a name
+        // AND a number) would restore as a name-only entry with no number,
+        // silently breaking the SMS trigger for that contact on a new device.
+        whitelist.setPin("123456")
+        whitelist.addContact("Mom", "+15551234567")
+        BackupVault.flush(context)
+        val savedBytes = BackupVault.backupFile(context).readBytes()
+
+        context.deleteSharedPreferences("quicloc_secure_prefs")
+        context.deleteSharedPreferences("quicloc_secure_prefs_fallback")
+        BackupVault.backupFile(context).writeBytes(savedBytes)
+
+        val result = BackupVault.restoreFromInternal(context, "123456")
+        assertTrue("restore failed: ${result.exceptionOrNull()?.message}", result.isSuccess)
+        assertEquals(1, result.getOrNull()!!.whitelistCount)
+
+        val restored = WhitelistManager(context)
+        assertTrue(restored.isWhitelisted("+15551234567"))
+        assertEquals(listOf("+15551234567"), restored.getDialableNumbers())
+        assertTrue(restored.isWhitelistedByName("Mom"))
+    }
+
+    @Test
+    fun `restore preserves an alerts-only contact's tier`() {
+        whitelist.setPin("123456")
+        whitelist.addContact("Mom", "+15551234567")
+        whitelist.addContact("Grandma", "+15559999999", canRequestLocation = false)
+        BackupVault.flush(context)
+        val savedBytes = BackupVault.backupFile(context).readBytes()
+
+        context.deleteSharedPreferences("quicloc_secure_prefs")
+        context.deleteSharedPreferences("quicloc_secure_prefs_fallback")
+        BackupVault.backupFile(context).writeBytes(savedBytes)
+
+        val result = BackupVault.restoreFromInternal(context, "123456")
+        assertTrue("restore failed: ${result.exceptionOrNull()?.message}", result.isSuccess)
+        assertEquals(2, result.getOrNull()!!.whitelistCount)
+
+        val restored = WhitelistManager(context)
+        assertTrue(restored.isWhitelisted("+15551234567"))
+        assertFalse(restored.isWhitelisted("+15559999999"))
+        // Still an emergency contact -- reachable by the widget -- just not
+        // able to trigger a reply by texting.
+        assertEquals(listOf("+15551234567", "+15559999999").sorted(), restored.getDialableNumbers().sorted())
+    }
+
+    @Test
     fun `export and import via byte arrays round-trip cleanly`() {
         whitelist.setPin("111111")
         whitelist.addNumber("+15551234567")
@@ -10961,6 +11760,66 @@ class BackupVaultTest {
         }
     }
 
+    // ---- attempt limiting -------------------------------------------------
+
+    @Test
+    fun `no lockout before any failed attempts`() {
+        assertEquals(0L, BackupVault.lockoutRemainingMs(context))
+    }
+
+    @Test
+    fun `repeated wrong PINs eventually lock out further attempts`() {
+        whitelist.setPin("123456")
+        whitelist.addNumber("+15551234567")
+        BackupVault.flush(context)
+
+        // Below the threshold: still WRONG_PIN, no lockout yet.
+        repeat(4) {
+            val result = BackupVault.restoreFromInternal(context, "000000")
+            assertCategory(result, BackupVault.RestoreException.Category.WRONG_PIN)
+        }
+        assertEquals(0L, BackupVault.lockoutRemainingMs(context))
+
+        // The 5th failure crosses the threshold and locks out further attempts.
+        val fifth = BackupVault.restoreFromInternal(context, "000000")
+        assertCategory(fifth, BackupVault.RestoreException.Category.WRONG_PIN)
+        assertTrue(BackupVault.lockoutRemainingMs(context) > 0)
+    }
+
+    @Test
+    fun `lockout blocks even the correct PIN until it expires`() {
+        whitelist.setPin("123456")
+        whitelist.addNumber("+15551234567")
+        BackupVault.flush(context)
+
+        repeat(5) { BackupVault.restoreFromInternal(context, "000000") }
+        assertTrue(BackupVault.lockoutRemainingMs(context) > 0)
+
+        // Even the right PIN is refused while locked out — the point is to
+        // bound the number of guesses, not just reject wrong ones.
+        val result = BackupVault.restoreFromInternal(context, "123456")
+        assertCategory(result, BackupVault.RestoreException.Category.LOCKED_OUT)
+    }
+
+    @Test
+    fun `LOCKED_OUT is not a recoverable category`() {
+        val ex = BackupVault.RestoreException(BackupVault.RestoreException.Category.LOCKED_OUT, "test")
+        assertFalse(ex.isRecoverable)
+    }
+
+    @Test
+    fun `a successful restore resets the failed-attempt counter`() {
+        whitelist.setPin("123456")
+        whitelist.addNumber("+15551234567")
+        BackupVault.flush(context)
+
+        repeat(3) { BackupVault.restoreFromInternal(context, "000000") }
+        val ok = BackupVault.restoreFromInternal(context, "123456")
+        assertTrue("restore failed: ${ok.exceptionOrNull()?.message}", ok.isSuccess)
+
+        assertEquals(0L, BackupVault.lockoutRemainingMs(context))
+    }
+
     @Test
     fun `restore failure carries a non-empty message`() {
         val result = BackupVault.restoreFromInternal(context, "123456")
@@ -11007,6 +11866,105 @@ class BackupVaultTest {
             ex is BackupVault.RestoreException
         )
         assertEquals(expected, (ex as BackupVault.RestoreException).category)
+    }
+}
+
+
+######################################################
+# FILE: app/src/test/java/com/hereliesaz/quicloc/DiagnosticLogManagerTest.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/**
+ * DiagnosticLogManager serializes every write onto a single background
+ * executor (see the class doc), so assertions here poll briefly instead of
+ * reading state synchronously right after a call.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class DiagnosticLogManagerTest {
+
+    private lateinit var context: Context
+    private lateinit var diag: DiagnosticLogManager
+
+    @Before
+    fun setup() {
+        context = ApplicationProvider.getApplicationContext()
+        context.deleteSharedPreferences("quicloc_diagnostics")
+        context.deleteSharedPreferences("quicloc_diagnostics_fallback")
+        diag = DiagnosticLogManager(context)
+        diag.clear()
+        awaitEmpty()
+    }
+
+    private fun event(id: String = java.util.UUID.randomUUID().toString()) = DiagnosticEvent(
+        id = id,
+        timestamp = System.currentTimeMillis(),
+        channel = DiagChannel.SMS,
+        source = "SMS",
+        rawSender = "+15551234567",
+        rawBody = "loc",
+        triggerMatched = true,
+        whitelistMatched = true,
+        extractionPath = null,
+        outcome = DiagOutcome.DISPATCHED,
+        reason = "test",
+    )
+
+    private fun awaitCount(expected: Int, timeoutMs: Long = 2000): List<DiagnosticEvent> {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var events = diag.getEvents()
+        while (events.size != expected && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10)
+            events = diag.getEvents()
+        }
+        return events
+    }
+
+    private fun awaitEmpty() = awaitCount(0)
+
+    @Test
+    fun `record then getEvents eventually reflects the write`() {
+        diag.record(event())
+        val events = awaitCount(1)
+        assertEquals(1, events.size)
+    }
+
+    @Test
+    fun `clear removes previously recorded events`() {
+        diag.record(event())
+        awaitCount(1)
+
+        diag.clear()
+        val events = awaitEmpty()
+        assertTrue(events.isEmpty())
+    }
+
+    @Test
+    fun `updateOutcome patches an existing row by id`() {
+        val id = "fixed-id"
+        diag.record(event(id))
+        awaitCount(1)
+
+        diag.updateOutcome(id, DiagOutcome.REPLY_SENT, "sent")
+        val deadline = System.currentTimeMillis() + 2000
+        var patched = diag.getEvents().firstOrNull()
+        while (patched?.outcome != DiagOutcome.REPLY_SENT && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10)
+            patched = diag.getEvents().firstOrNull()
+        }
+        assertEquals(DiagOutcome.REPLY_SENT, patched?.outcome)
     }
 }
 
@@ -11202,6 +12160,139 @@ class ManifestRegistrationTest {
 
 
 ######################################################
+# FILE: app/src/test/java/com/hereliesaz/quicloc/PhoneNumbersTest.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class PhoneNumbersTest {
+
+    @Test
+    fun `identical numbers match`() {
+        assertTrue(PhoneNumbers.match("+15551234567", "+15551234567"))
+    }
+
+    @Test
+    fun `formatting differences are tolerated`() {
+        assertTrue(PhoneNumbers.match("+15551234567", "(555) 123-4567"))
+    }
+
+    @Test
+    fun `missing or extra leading US country code is tolerated`() {
+        assertTrue(PhoneNumbers.match("+15551234567", "5551234567"))
+        assertTrue(PhoneNumbers.match("5551234567", "+15551234567"))
+    }
+
+    @Test
+    fun `two different real numbers sharing only a 7-digit suffix do not match`() {
+        assertFalse(PhoneNumbers.match("+12125551234", "+17185551234"))
+    }
+
+    @Test
+    fun `two blank numbers never match`() {
+        assertFalse(PhoneNumbers.match("", ""))
+    }
+
+    @Test
+    fun `a number never matches blank`() {
+        assertFalse(PhoneNumbers.match("+15551234567", ""))
+        assertFalse(PhoneNumbers.match("", "+15551234567"))
+    }
+
+    @Test
+    fun `a short non-national number does not get the leading-1 exemption`() {
+        // 6 digits + a leading "1" is 7 -- far short of a full national
+        // number, so this must not be treated as a country-code artifact.
+        assertFalse(PhoneNumbers.match("123456", "1123456"))
+    }
+}
+
+
+######################################################
+# FILE: app/src/test/java/com/hereliesaz/quicloc/PrefsFallbackMigrationTest.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class PrefsFallbackMigrationTest {
+
+    private lateinit var context: Context
+
+    @Before
+    fun setup() {
+        context = ApplicationProvider.getApplicationContext()
+        context.deleteSharedPreferences("test_fallback")
+        context.deleteSharedPreferences("test_real")
+    }
+
+    @Test
+    fun `recovers data written to the fallback file into the real store`() {
+        context.getSharedPreferences("test_fallback", Context.MODE_PRIVATE)
+            .edit().putString("pin", "123456").putBoolean("onboarded", true).commit()
+
+        val real = context.getSharedPreferences("test_real", Context.MODE_PRIVATE)
+        migratePlaintextFallback(context, "test_fallback", real)
+
+        assertEquals("123456", real.getString("pin", null))
+        assertTrue(real.getBoolean("onboarded", false))
+    }
+
+    @Test
+    fun `clears the fallback file after a successful migration`() {
+        context.getSharedPreferences("test_fallback", Context.MODE_PRIVATE)
+            .edit().putString("pin", "123456").commit()
+
+        val real = context.getSharedPreferences("test_real", Context.MODE_PRIVATE)
+        migratePlaintextFallback(context, "test_fallback", real)
+
+        val fallbackAfter = context.getSharedPreferences("test_fallback", Context.MODE_PRIVATE)
+        assertTrue(fallbackAfter.all.isEmpty())
+    }
+
+    @Test
+    fun `never overwrites a key the real store already has`() {
+        context.getSharedPreferences("test_fallback", Context.MODE_PRIVATE)
+            .edit().putString("pin", "OLD-FALLBACK-VALUE").commit()
+
+        val real = context.getSharedPreferences("test_real", Context.MODE_PRIVATE)
+        real.edit().putString("pin", "NEWER-REAL-VALUE").commit()
+
+        migratePlaintextFallback(context, "test_fallback", real)
+
+        assertEquals("NEWER-REAL-VALUE", real.getString("pin", null))
+    }
+
+    @Test
+    fun `does nothing when the fallback file is empty`() {
+        val real = context.getSharedPreferences("test_real", Context.MODE_PRIVATE)
+        real.edit().putString("existing", "value").commit()
+
+        migratePlaintextFallback(context, "test_fallback", real)
+
+        assertEquals("value", real.getString("existing", null))
+        assertFalse(real.contains("pin"))
+    }
+}
+
+
+######################################################
 # FILE: app/src/test/java/com/hereliesaz/quicloc/ReadinessTest.kt
 ######################################################
 
@@ -11242,7 +12333,8 @@ class ReadinessTest {
         myNumber: String = "+15550100",
         permissions: List<PermissionStatus> = allGranted(),
         pinSet: Boolean = true,
-    ) = Readiness.steps(enabled, whitelistCount, myNumber, permissions, pinSet)
+        dialableWhitelistCount: Int = whitelistCount,
+    ) = Readiness.steps(enabled, whitelistCount, myNumber, permissions, pinSet, dialableWhitelistCount)
 
     @Test
     fun `fully configured app reports ready with nothing outstanding`() {
@@ -11322,14 +12414,22 @@ class ReadinessTest {
     }
 
     @Test
-    fun `notification access and battery are recommended, never required`() {
-        val steps = steps(
-            permissions = withRevoked(PermKeys.NOTIF_LISTENER, PermKeys.BATTERY)
-        )
-        assertTrue("chat apps and battery are nice-to-have", Readiness.isReady(steps))
-        assertEquals(2, Readiness.optionalRemaining(steps))
+    fun `notification access is recommended, never required`() {
+        val steps = steps(permissions = withRevoked(PermKeys.NOTIF_LISTENER))
+        assertTrue("chat apps are nice-to-have", Readiness.isReady(steps))
+        assertEquals(1, Readiness.optionalRemaining(steps))
         assertFalse(steps.first { it.id == "notification-access" }.required)
-        assertFalse(steps.first { it.id == "battery" }.required)
+    }
+
+    @Test
+    fun `battery optimization exemption is required and blocks readiness`() {
+        // Doze/App Standby can put a sleeping app's receivers on ice, so a
+        // safety app can't claim "ready" without this -- see the checklist's
+        // own copy about a 3am request being missed.
+        val steps = steps(permissions = withRevoked(PermKeys.BATTERY))
+        assertTrue(steps.first { it.id == "battery" }.required)
+        assertEquals(StepState.TODO, steps.first { it.id == "battery" }.state)
+        assertFalse(Readiness.isReady(steps))
     }
 
     @Test
@@ -11396,10 +12496,28 @@ class ReadinessTest {
         // platform-specific permission should be present.
         val steps = steps(enabled = false, whitelistCount = 0, myNumber = "", permissions = emptyList(), pinSet = false)
         assertEquals(
-            listOf("enabled", "sms", "location", "whitelist"),
+            listOf("enabled", "sms", "location", "whitelist", "battery"),
             steps.filter { it.required }.map { it.id }
         )
-        assertEquals(4, Readiness.requiredRemaining(steps))
+        assertEquals(5, Readiness.requiredRemaining(steps))
+    }
+
+    // ---- dialable whitelist count -----------------------------------------
+
+    @Test
+    fun `a whitelist made up entirely of name-only entries does not satisfy the whitelist step`() {
+        // whitelistCount > 0 (there are entries) but dialableWhitelistCount
+        // is 0 (none of them have a real phone number) -- can't answer an
+        // SMS trigger or the widget's SMS fan-out.
+        val steps = steps(whitelistCount = 2, dialableWhitelistCount = 0)
+        assertEquals(StepState.TODO, steps.first { it.id == "whitelist" }.state)
+        assertFalse(Readiness.isReady(steps))
+    }
+
+    @Test
+    fun `at least one dialable entry satisfies the whitelist step even with name-only entries too`() {
+        val steps = steps(whitelistCount = 3, dialableWhitelistCount = 1)
+        assertEquals(StepState.DONE, steps.first { it.id == "whitelist" }.state)
     }
 }
 
@@ -11537,6 +12655,12 @@ class TriggerDedupeTest {
             TriggerDedupe.wasRecentlyHandled(listOf("Mom", "+15558889999"))
         )
     }
+
+    @Test
+    fun `does not collapse two different numbers sharing only a 7-digit suffix`() {
+        TriggerDedupe.markHandled("+12125550001")
+        assertFalse(TriggerDedupe.wasRecentlyHandled(listOf("+17185550001")))
+    }
 }
 
 
@@ -11633,6 +12757,35 @@ class TutorialsTest {
                 visibleIds
             )
         }
+    }
+
+    @Test
+    fun `the permissions tutorial does not describe find-my-phone while the feature is disabled`() {
+        // requiresFindMyPhone hides two whole tutorials, but "permissions" is
+        // a single doc covering every permission -- most of which are real
+        // regardless of find-my-phone, so it stays visible with its
+        // find-my-phone-only sections (Camera, Device Admin, Full-Screen
+        // Intent) conditionally omitted instead of hiding the whole thing.
+        val body = Tutorials.byId("permissions")!!.body
+        if (!FindMyPhone.ENABLED) {
+            assertTrue(
+                "should not mention Camera permission while find-my-phone is off",
+                !body.contains("Camera:")
+            )
+            assertTrue(
+                "should not mention Device Admin while find-my-phone is off",
+                !body.contains("Bind Device Admin")
+            )
+            assertTrue(
+                "should not mention Full-Screen Intent while find-my-phone is off",
+                !body.contains("Full-Screen Intent:")
+            )
+        }
+        // Regardless of the flag, this permission is genuinely unused.
+        assertTrue(
+            "should never claim READ_CONTACTS is requested -- it isn't declared",
+            !body.contains("Read Contacts:")
+        )
     }
 
     @Test
@@ -11783,6 +12936,24 @@ class WhitelistManagerTest {
         assertEquals(setOf("111", "333", "444"), whitelist.getStarredNumbers())
     }
 
+    // ---- dialable numbers (widget SMS fan-out) ---------------------------
+
+    @Test
+    fun `getDialableNumbers excludes name-only entries`() {
+        whitelist.addNumber("Mom") // no digits -- name-only, no number
+        whitelist.addNumber("+15551234567")
+        assertEquals(listOf("+15551234567"), whitelist.getDialableNumbers())
+    }
+
+    @Test
+    fun `getDialableStarredNumbers excludes a starred name-only entry`() {
+        whitelist.addContact("Mom", "")
+        whitelist.addContact("Dad", "+15551234567")
+        whitelist.toggleStarred("Mom")
+        whitelist.toggleStarred("Dad")
+        assertEquals(listOf("+15551234567"), whitelist.getDialableStarredNumbers())
+    }
+
     // ---- name vs number matching ----------------------------------------
 
     @Test
@@ -11843,6 +13014,51 @@ class WhitelistManagerTest {
     fun `numbersForName returns the stored number for a matching name`() {
         whitelist.addContact("Mom ❤️", "+15551234567")
         assertEquals(listOf("+15551234567"), whitelist.numbersForName("Mom ❤️"))
+    }
+
+    // ---- name-spoofing bypass (trustName) ---------------------------------
+
+    @Test
+    fun `isWhitelistedByName with trustName=false does not authorize on a name match alone`() {
+        // An attacker who isn't whitelisted sets their own chat-app display
+        // name to "Mom" -- without the trustName gate this would incorrectly
+        // authorize them.
+        whitelist.addContact("Mom", "+15551234567")
+        assertFalse(whitelist.isWhitelistedByName("Mom", trustName = false))
+    }
+
+    @Test
+    fun `isWhitelistedByName with trustName=false still matches by number`() {
+        whitelist.addContact("Mom", "+15551234567")
+        assertTrue(whitelist.isWhitelistedByName("+15551234567", trustName = false))
+    }
+
+    @Test
+    fun `isWhitelistedByName with trustName=false still matches the user's own number`() {
+        whitelist.setMyNumber("+15551234567")
+        assertTrue(whitelist.isWhitelistedByName("+15551234567", trustName = false))
+    }
+
+    @Test
+    fun `isWhitelistedByName defaults to trusting the name`() {
+        whitelist.addContact("Mom", "+15551234567")
+        assertTrue(whitelist.isWhitelistedByName("Mom"))
+    }
+
+    // ---- strict number matching (no suffix-collision bypass) -------------
+
+    @Test
+    fun `isWhitelisted does not match a different number sharing only a 7-digit suffix`() {
+        // Two different real numbers, same last 7 digits, different area code.
+        whitelist.addNumber("+12125551234")
+        assertFalse(whitelist.isWhitelisted("+17185551234"))
+    }
+
+    @Test
+    fun `isWhitelisted still tolerates a missing or extra leading US country code`() {
+        whitelist.addNumber("+15551234567")
+        assertTrue(whitelist.isWhitelisted("5551234567"))
+        assertTrue(whitelist.isWhitelisted("15551234567"))
     }
 
     // ---- own number is implicitly whitelisted ---------------------------
@@ -11922,6 +13138,93 @@ class WhitelistManagerTest {
         assertFalse(whitelist.isOnboardingCompleted())
         whitelist.setOnboardingCompleted(true)
         assertTrue(whitelist.isOnboardingCompleted())
+    }
+
+    // ---- emergency vs sharing tier -----------------------------------------
+
+    @Test
+    fun `contacts default to being able to request location`() {
+        whitelist.addNumber("+15551234567")
+        assertTrue(whitelist.getContacts().single().canRequestLocation)
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+    }
+
+    @Test
+    fun `an alerts-only contact cannot trigger a reply by number`() {
+        whitelist.addContact("Grandma", "+15551234567", canRequestLocation = false)
+        assertFalse(whitelist.isWhitelisted("+15551234567"))
+        assertFalse(whitelist.isWhitelistedByName("Grandma"))
+    }
+
+    @Test
+    fun `an alerts-only contact still counts as an emergency contact`() {
+        // getContacts / getNumbers / getDialableNumbers are the widget's
+        // fan-out lists -- alerts-only contacts must still be reachable
+        // through them, since the widget is the only way to reach them at all.
+        whitelist.addContact("Grandma", "+15551234567", canRequestLocation = false)
+        assertEquals(1, whitelist.getContacts().size)
+        assertTrue(whitelist.getNumbers().contains("Grandma"))
+        assertEquals(listOf("+15551234567"), whitelist.getDialableNumbers())
+    }
+
+    @Test
+    fun `an alerts-only contact can still be starred for the safety check`() {
+        whitelist.addContact("Grandma", "+15551234567", canRequestLocation = false)
+        assertTrue(whitelist.toggleStarred("Grandma"))
+        assertEquals(listOf("+15551234567"), whitelist.getDialableStarredNumbers())
+    }
+
+    @Test
+    fun `getSharingNumbers excludes alerts-only contacts`() {
+        whitelist.addContact("Mom", "+15551234567")
+        whitelist.addContact("Grandma", "+15559999999", canRequestLocation = false)
+        assertEquals(setOf("Mom"), whitelist.getSharingNumbers())
+        assertEquals(setOf("Mom", "Grandma"), whitelist.getNumbers())
+    }
+
+    @Test
+    fun `setCanRequestLocation flips an existing contact without touching name or number`() {
+        whitelist.addContact("Mom", "+15551234567")
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+
+        whitelist.setCanRequestLocation("Mom", false)
+        assertFalse(whitelist.isWhitelisted("+15551234567"))
+        assertFalse(whitelist.isWhitelistedByName("Mom"))
+        assertEquals("+15551234567", whitelist.getContacts().single().number)
+
+        whitelist.setCanRequestLocation("Mom", true)
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+    }
+
+    @Test
+    fun `setCanRequestLocation on an unknown token is a no-op`() {
+        whitelist.addContact("Mom", "+15551234567")
+        whitelist.setCanRequestLocation("Nobody", false)
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+        assertEquals(1, whitelist.getContacts().size)
+    }
+
+    @Test
+    fun `own number can still request location regardless of contact tiers`() {
+        whitelist.setMyNumber("+15551234567")
+        whitelist.addContact("Grandma", "+15559999999", canRequestLocation = false)
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+        assertTrue(whitelist.isWhitelistedByName("+15551234567"))
+    }
+
+    @Test
+    fun `an alerts-only entry round-trips through toJsonString and fromJsonString`() {
+        val entry = WhitelistManager.ContactEntry("Grandma", "+15551234567", canRequestLocation = false)
+        val restored = WhitelistManager.ContactEntry.fromJsonString(entry.toJsonString())
+        assertEquals(entry, restored)
+    }
+
+    @Test
+    fun `a legacy plain-token entry with no tier field defaults to can-request`() {
+        // Pre-tier backups / legacy data have no "can_request_location" key
+        // at all -- must not silently become alerts-only.
+        val restored = WhitelistManager.ContactEntry.fromJsonString("+15551234567")
+        assertEquals(true, restored?.canRequestLocation)
     }
 
     // ---- persistence across instances ------------------------------------
@@ -12382,15 +13685,17 @@ Select: **No — SMS access is needed but it is not a messaging app**
 
 **Describe why your app needs SMS permissions:**
 
-> QuicLoc is an emergency safety app. RECEIVE_SMS monitors for an SOS trigger word from an encrypted whitelist; SEND_SMS auto-replies with GPS coordinates. The SMS Retriever API cannot be used because it requires messages to contain an 11-character app hash, which is impossible for natural emergency texts sent by human contacts. Intents cannot be used as the device may be unattended. No data is stored.
+> QuicLoc is a physical-safety / emergency-alert app. Its core mechanism is the home-screen widget: the user taps it to send a safety-check or emergency alert with their GPS location to their chosen emergency contacts — this requires no SMS access at all. RECEIVE_SMS and SEND_SMS extend that same safety mechanism by letting a subset of those emergency contacts (the ones the user has explicitly marked as allowed to ask, not merely added to the emergency list) also request the location themselves by texting a trigger word, which the app answers with the same GPS-coordinate reply the widget sends. The SMS Retriever API cannot be used because it requires messages to contain an 11-character app hash, which is impossible for natural texts sent by human contacts. Intents cannot be used as the device may be unattended. No data is stored.
 
 **Video instructions:**
 > **CRITICAL:** You MUST provide a video link here, even though the form says it's optional. Google Play will automatically reject the declaration without one.
-> Record a short screen recording showing:
-> 1. Opening QuicLoc and adding a phone number to the whitelist
-> 2. Sending "loc" from another device via SMS to trigger a response
-> 3. The automatic GPS location SMS reply arriving on the sending device
+> Record a short screen recording showing, in this order:
+> 1. Opening QuicLoc, adding an emergency contact, and demonstrating the home-screen widget itself — tap it 3 times for the safety-check alert and 4 times for the emergency alert, so the reviewer sees the app's core safety function working with no SMS involved at all.
+> 2. Adding a phone number as a contact who can also request the location by text (the "can ask" toggle in the emergency contacts list).
+> 3. Sending "loc" from that contact's device via SMS to trigger a response.
+> 4. The automatic GPS location SMS reply arriving on the sending device.
 >
+> Leading with the widget matters: it shows RECEIVE_SMS/SEND_SMS are an optional extension of an already-complete safety-alert app, not the app's entire reason for existing.
 > Upload this to YouTube (unlisted) and paste the link in the "Video instructions" field.
 
 
@@ -12422,11 +13727,12 @@ Select: **Yes**
 > QuicLoc's core function is to respond to incoming location requests automatically, including when the device screen is off and the app is not in the foreground. When a trigger message is received from a whitelisted contact, the app must obtain the device's current GPS coordinates to send a location reply. This is the sole purpose of background location access. The location is used only to generate a Google Maps link sent to the requesting contact. Location is never obtained proactively, stored, logged, or transmitted to any server or third party.
 
 **Provide a video demonstrating the background location use:**
-> Record a short screen recording showing:
-> 1. Opening QuicLoc and adding a phone number to the whitelist
-> 2. Locking the device / closing the app
-> 3. Sending "loc" from another device to trigger a response
-> 4. The automatic GPS reply arriving on the sending device
+> Record a short screen recording showing, in this order:
+> 1. Opening QuicLoc, adding an emergency contact, and demonstrating the widget's safety-check (3 taps) and emergency (4 taps) alerts.
+> 2. Adding a phone number as a contact who can also request the location by text.
+> 3. Locking the device / closing the app.
+> 4. Sending "loc" from that contact's device to trigger a response while the device is locked.
+> 5. The automatic GPS reply arriving on the sending device.
 >
 > Upload this to YouTube (unlisted) and paste the link in the Play Console form.
 
@@ -12511,10 +13817,10 @@ Select: **Yes**
 Fill in the Data safety form as follows:
 
 ### Does your app collect or share any of the required user data types?
-**No** — QuicLoc does not collect any data. It does not transmit any user data to the developer or any third party. The only outbound data is the location reply sent directly from the device to the requesting contact via SMS or notification reply, which is the explicit intended function of the app.
+**Yes — Location is shared (not collected).** Location is sent directly, device-to-device, to one or more of the user's own emergency contacts — either because the user tapped the home-screen widget to send a safety-check or emergency alert, or because a contact the user has specifically allowed to ask requested it by texting the trigger word. This is the explicit, sole function of the app. It is never collected, stored, or transmitted to the developer, an analytics service, or any other third party. See [`PLAY_PUBLISHING.md`](PLAY_PUBLISHING.md#data-safety--privacy).
 
-### Data types to declare as NOT collected:
-- Location — not collected (obtained on demand, used in-memory, discarded)
+### Data types to declare:
+- **Location — Shared.** Purpose: App functionality. Required (it's the app's core function). Obtained on demand, held in memory only long enough to send the reply, then discarded — never written to disk or a server.
 - Personal info — not collected
 - Financial info — not collected
 - Health and fitness — not collected
@@ -12533,7 +13839,7 @@ Fill in the Data safety form as follows:
 **N/A** — No data is transmitted to any server. The only transmission is the SMS/notification reply sent directly to the requesting contact through standard Android system APIs.
 
 ### Can users request data deletion?
-**Yes** — All user data (the whitelist) is stored locally on-device and can be deleted at any time by removing entries in the app or uninstalling the app entirely.
+**Yes** — All user data (the emergency contact list) is stored locally on-device and can be deleted at any time by removing entries in the app or uninstalling the app entirely.
 
 ---
 
@@ -12552,7 +13858,7 @@ The app will receive a rating of **Everyone**.
 
 If Google Play reviewers contact you for additional clarification, use this response template:
 
-> QuicLoc is a single-purpose personal safety tool. Its only function is to allow a user's pre-approved trusted contacts to request the user's location by sending a keyword. The app responds automatically with a Google Maps link. All sensitive permissions (SMS, notification access, background location) are used exclusively for this single function. No data is collected, stored server-side, or shared with any third party including the developer. The whitelist of approved contacts is encrypted on-device using Android Keystore-backed AES-256 encryption and is protected by biometric authentication. The app has no network connectivity of its own — it uses only Android system APIs and Google Play Services for GPS.
+> QuicLoc is a single-purpose personal safety tool built around a home-screen widget: the user taps it to send a safety-check or emergency alert, with their GPS location, to their chosen emergency contacts — no incoming message of any kind is required for this to work. SMS and notification access extend that same mechanism by additionally letting the user's pre-approved trusted contacts request the location themselves by sending a keyword, which the app answers automatically with a Google Maps link. All sensitive permissions (SMS, notification access, background location) are used exclusively for this single function. No data is collected, stored server-side, or shared with any third party including the developer. The list of emergency contacts is encrypted on-device using Android Keystore-backed AES-256 encryption and is protected by biometric authentication. The app has no network connectivity of its own — it uses only Android system APIs and Google Play Services for GPS.
 
 
 ######################################################
@@ -12817,7 +14123,7 @@ callback) requests CAMERA and prompts for Device Admin. This is how the base ins
 
 Requested **separately**, after the user has granted foreground location, because Android 11+ rejects bundling them. The user is sent to the system Location Settings screen and must explicitly tap "Allow all the time" — the app can't request this state directly.
 
-Code: `MainActivity.checkBackgroundLocationPermission` → `backgroundLocationLauncher`.
+Code: `MainActivity.checkBackgroundLocationPermission` → `singlePermissionLauncher`.
 
 ### Own phone number
 
@@ -13232,12 +14538,15 @@ QuicLoc ("we," "our," or "us") operates the QuicLoc Android application. We are 
 
 ### Data Collection and Use
 
-**QuicLoc does not collect, store, transmit, or share any personal user data with the developer or any third party.**
+**QuicLoc does not collect, transmit, or share any personal user data with the developer or any third party.** It does store some data locally on your device, and it shares your location with your own trusted contacts when they ask for it — see below.
 
 *   **No Analytics:** We do not use any third-party analytics or crash reporting services.
 *   **No Servers:** QuicLoc operates entirely on your local device. We do not have any servers that receive, process, or store your location or contact information.
-*   **Local Processing:** All sensitive data, including your whitelist of trusted contacts and location information, is managed exclusively on your device. Contact data is stored using AES-256-GCM encryption backed by the Android Keystore.
-*   **Permissions:** QuicLoc requires certain permissions to function (e.g., SMS, Location, Notification Access). These are used strictly to provide the app's core functionality, such as responding to location requests from trusted contacts. This information is never transmitted to us or any third party.
+*   **Local Processing:** Your whitelist of trusted contacts, PIN, and passphrase are stored exclusively on your device, encrypted with AES-256-GCM backed by the Android Keystore. None of it is ever transmitted to us.
+*   **Location is shared with your trusted contacts, not collected by us.** When a contact on your whitelist texts the trigger word, QuicLoc reads your device's current GPS location and sends it directly to that contact via SMS or an in-app-notification reply — the same as if you had texted it yourself. The location is held in memory only long enough to send that one reply and is never written to disk, logged, or sent anywhere else.
+*   **SMS and notification content is read only to look for the trigger word.** QuicLoc's SMS receiver and notification listener read the text of incoming messages solely to check whether they contain the trigger word and come from a whitelisted contact. Non-matching messages, and all messages from senders not on your whitelist, are discarded immediately and never stored.
+*   **Background location** is used so QuicLoc can answer a request even when the app isn't open on screen — it's requested only so the trigger-and-reply function keeps working with the screen off, and location is still only read at the moment of replying to a request, never on a schedule or in the background otherwise.
+*   **Permissions:** QuicLoc requires certain permissions to function (SMS, Location — including background location, Notification Access). These are used strictly to provide the functionality described above.
 
 ### Third-Party Services
 
@@ -13245,11 +14554,11 @@ QuicLoc does not use any third-party services or SDKs that collect data on your 
 
 ### Your Choices
 
-Since QuicLoc does not collect any data, there is no user data for you to manage, delete, or request from us. You have full control over the application's data and functionality through the app settings and standard Android permission controls.
+QuicLoc stores your whitelist, PIN, and passphrase locally on your device. You can delete any of it at any time — remove individual contacts or clear the PIN/passphrase from within the app, or uninstall the app to remove everything at once. None of this data ever leaves your device to us, so there is nothing for you to request from us or for us to delete on our end.
 
 ### Contact Us
 
-If you have any questions or concerns about this privacy policy, please reach out via the contact information provided on the [QuicLoc GitHub repository](https://github.com/your-username/quicloc).
+If you have any questions or concerns about this privacy policy, please reach out via the contact information provided on the [QuicLoc GitHub repository](https://github.com/HereLiesAz/QuicLoc).
 
 ### Changes to This Privacy Policy
 
@@ -13834,7 +15143,7 @@ If all stages fail, we send an error SMS/reply back to the requester *("QuicLoc 
             <div class="feature-card glass-card parallax-element" data-speed="0.4">
                 <div class="feature-icon">1️⃣</div>
                 <h3>You list who you trust</h3>
-                <p>Pick them from your contacts. Anyone not on the list is ignored silently — they're never told the app exists.</p>
+                <p>Pick them from your contacts. Everyone on the list gets the widget's safety-check and emergency alerts; you choose which of them can also ask for your location themselves. Anyone else is ignored silently — they're never told the app exists.</p>
             </div>
 
             <div class="feature-card glass-card parallax-element" data-speed="0.5">
