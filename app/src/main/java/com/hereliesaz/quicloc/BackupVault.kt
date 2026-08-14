@@ -127,7 +127,11 @@ object BackupVault {
 
         val json = JSONObject().apply {
             put("version", 1)
-            put("whitelist", JSONArray(whitelist.getNumbers().toList()))
+            // Full contact records (name + number), not just display tokens —
+            // getNumbers() collapses a name+number entry down to whichever one
+            // is the display token, so restoring from that would silently
+            // drop the number for any contact added via "Pick from Contacts".
+            put("whitelist", JSONArray(whitelist.getContacts().map { it.toJsonString() }))
             put("starred", JSONArray(whitelist.getStarredNumbers().toList()))
             put("my_number", whitelist.getMyNumber())
             put("passphrase", whitelist.getPassphrase() ?: JSONObject.NULL)
@@ -280,8 +284,14 @@ object BackupVault {
     private fun applyJson(context: Context, json: JSONObject): RestoreSummary {
         val whitelist = WhitelistManager(context)
 
-        val numbers = json.optJSONArray("whitelist")?.toStringSet() ?: emptySet()
-        whitelist.replaceAllNumbers(numbers)
+        // Each element is a ContactEntry's JSON-string form (current backups),
+        // but WhitelistManager.ContactEntry.fromJsonString also accepts a
+        // plain display-token string for backups written before this field
+        // carried full contact records, classifying it the same way addNumber
+        // does (no digits -> name-only entry; otherwise -> number).
+        val whitelistTokens = json.optJSONArray("whitelist")?.toStringSet() ?: emptySet()
+        val contacts = whitelistTokens.mapNotNull { WhitelistManager.ContactEntry.fromJsonString(it) }
+        whitelist.replaceAllContacts(contacts)
 
         val starred = json.optJSONArray("starred")?.toStringSet() ?: emptySet()
         whitelist.replaceStarred(starred)
@@ -301,7 +311,7 @@ object BackupVault {
         whitelist.setOnboardingCompleted(json.optBoolean("onboarding_completed", false))
 
         return RestoreSummary(
-            whitelistCount = numbers.size,
+            whitelistCount = contacts.size,
             starredCount = starred.size,
             myNumberSet = whitelist.getMyNumber().isNotEmpty(),
             passphraseSet = passphrase != null,

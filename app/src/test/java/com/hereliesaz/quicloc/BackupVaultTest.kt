@@ -142,6 +142,31 @@ class BackupVaultTest {
     }
 
     @Test
+    fun `restore preserves the phone number of a name+number contact`() {
+        // The regression this guards: snapshot() used to store only display
+        // tokens, so a contact added via "Pick from Contacts" (both a name
+        // AND a number) would restore as a name-only entry with no number,
+        // silently breaking the SMS trigger for that contact on a new device.
+        whitelist.setPin("123456")
+        whitelist.addContact("Mom", "+15551234567")
+        BackupVault.flush(context)
+        val savedBytes = BackupVault.backupFile(context).readBytes()
+
+        context.deleteSharedPreferences("quicloc_secure_prefs")
+        context.deleteSharedPreferences("quicloc_secure_prefs_fallback")
+        BackupVault.backupFile(context).writeBytes(savedBytes)
+
+        val result = BackupVault.restoreFromInternal(context, "123456")
+        assertTrue("restore failed: ${result.exceptionOrNull()?.message}", result.isSuccess)
+        assertEquals(1, result.getOrNull()!!.whitelistCount)
+
+        val restored = WhitelistManager(context)
+        assertTrue(restored.isWhitelisted("+15551234567"))
+        assertEquals(listOf("+15551234567"), restored.getDialableNumbers())
+        assertTrue(restored.isWhitelistedByName("Mom"))
+    }
+
+    @Test
     fun `export and import via byte arrays round-trip cleanly`() {
         whitelist.setPin("111111")
         whitelist.addNumber("+15551234567")

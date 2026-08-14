@@ -172,6 +172,18 @@ class WhitelistManager(context: Context) {
         BackupVault.snapshotAsync(appContext)
     }
 
+    /**
+     * Like [replaceAllNumbers], but takes full [ContactEntry] records instead
+     * of bare tokens — used by [BackupVault] restore so a contact added via
+     * "Pick from Contacts" (name AND number) keeps its number after
+     * restoring on a new device, instead of losing it the way round-tripping
+     * through [getNumbers]'s display tokens would.
+     */
+    fun replaceAllContacts(contacts: List<ContactEntry>) {
+        prefs.edit().putStringSet(KEY_WHITELIST, contacts.map { it.toJsonString() }.toSet()).apply()
+        BackupVault.snapshotAsync(appContext)
+    }
+
     fun replaceStarred(starred: Set<String>) {
         prefs.edit().putStringSet(KEY_STARRED, starred).apply()
         BackupVault.snapshotAsync(appContext)

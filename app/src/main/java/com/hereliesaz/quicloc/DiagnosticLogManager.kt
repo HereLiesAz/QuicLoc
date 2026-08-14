@@ -173,7 +173,13 @@ class DiagnosticLogManager(context: Context) {
     fun getEvents(): List<DiagnosticEvent> = readEvents()
 
     fun clear() {
-        prefs.edit().remove(KEY_EVENTS).apply()
+        // Must go through the same executor as record()/updateOutcome():
+        // clearing directly on the caller's thread could race a write already
+        // queued on the executor, which would finish afterward and silently
+        // resurrect the "cleared" log with whatever it had in hand.
+        executor.execute {
+            prefs.edit().remove(KEY_EVENTS).apply()
+        }
     }
 
     /** Flattens the log to shareable plain text for the Copy/Share button. */

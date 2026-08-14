@@ -21,6 +21,8 @@
     <exclude domain="sharedpref" path="quicloc_secure_prefs_fallback.xml" />
     <exclude domain="sharedpref" path="quicloc_history.xml" />
     <exclude domain="sharedpref" path="quicloc_history_fallback.xml" />
+    <exclude domain="sharedpref" path="quicloc_diagnostics.xml" />
+    <exclude domain="sharedpref" path="quicloc_diagnostics_fallback.xml" />
     <exclude domain="sharedpref" path="quicloc_tracking_state.xml" />
     <exclude domain="external" path="." />
 </full-backup-content>
