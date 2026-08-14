@@ -85,21 +85,52 @@ class LocationReplyService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        ServiceCompat.startForeground(
-            this,
-            NOTIF_ID,
-            buildNotification("Fetching location…"),
-            if (android.os.Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
-        )
+        // Android 14+ rejects starting a location-typed foreground service
+        // without ACCESS_FINE_LOCATION/ACCESS_COARSE_LOCATION already granted
+        // -- and this service can be started by a bare widget tap before the
+        // user has ever granted anything. Without this check, that throws
+        // here in onCreate() and crashes the whole process instead of the
+        // graceful "no location permission" failure LocationHelper already
+        // produces once the permission check happens downstream.
+        val hasLocationPermission =
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val fgsType = if (android.os.Build.VERSION.SDK_INT >= 34 && hasLocationPermission) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        } else 0
+        try {
+            ServiceCompat.startForeground(this, NOTIF_ID, buildNotification("Fetching location…"), fgsType)
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed", e)
+            stopSelf()
+        }
     }
 
     // For handling widget taps (delay to distinguish single/double/triple taps)
     private var widgetTapCount = 0
-    private var widgetStartId = -1
     private val widgetTapHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    // How many async fetch/send operations this service instance is currently
+    // tracking, across ALL intake paths (SMS, notification, widget taps).
+    // Service.stopSelf(startId) alone can't express "don't stop while
+    // something else I started is still running" -- it only knows about the
+    // single most-recent start request delivered to onStartCommand. Multiple
+    // triggers can land on the SAME running service instance (e.g. a widget
+    // tap arriving while an earlier SMS-triggered fetch is still in flight,
+    // or two overlapping widget tap bursts), so every exit path goes through
+    // maybeStopSelf() instead of calling stopSelf(startId) directly.
+    private val activeOperations = java.util.concurrent.atomic.AtomicInteger(0)
+
+    private fun maybeStopSelf() {
+        if (activeOperations.get() <= 0) {
+            stopSelf()
+        }
+    }
     private val widgetTapRunnable = Runnable {
         val count = widgetTapCount
-        val startId = widgetStartId
         widgetTapCount = 0
         Log.d(TAG, "Widget tap timer expired, tap count: $count")
 
@@ -128,22 +159,39 @@ class LocationReplyService : Service() {
             }
             startActivity(intent)
             // A single tap only opens help — there's no location reply, so stop
-            // the service once the status has faded.
-            widgetTapHandler.postDelayed({ stopSelf(startId) }, 3000)
+            // the service once the status has faded (unless something else
+            // this instance started, e.g. an in-flight emergency send from an
+            // earlier tap burst, is still running).
+            widgetTapHandler.postDelayed({ maybeStopSelf() }, 3000)
             return@Runnable
         }
 
         if (count < 2) {
-            stopSelf(startId)
+            maybeStopSelf()
             return@Runnable
         }
 
-        // Counts >= 2: fetch the location (up to 30s) and send, THEN stop the
-        // service and clear the status — so the send always completes.
+        // Counts >= 2 actually transmit the location. Respect the master
+        // switch here specifically (not for the count==1 help screen, which
+        // sends nothing and stays useful for self-diagnosing why the switch
+        // is off) -- the setup checklist tells the user that toggling QuicLoc
+        // off silences every trigger including the widget, so a stray or
+        // pocket tap must not send a location behind that promise.
+        if (!AppSettings.isEnabled(applicationContext)) {
+            Log.d(TAG, "QuicLoc disabled — ignoring widget tap ($count)")
+            updateWidgetStatus(this, "Off")
+            widgetTapHandler.postDelayed({ updateWidgetStatus(this, null); maybeStopSelf() }, 3000)
+            return@Runnable
+        }
+
+        // Fetch the location (up to 30s) and send, THEN stop the service and
+        // clear the status — so the send always completes.
+        activeOperations.incrementAndGet()
         LocationHelper.handleWidgetTaps(this, count) { succeeded ->
             RequestHistoryManager(this).record("Widget ($count taps)", "Widget", succeeded)
             updateWidgetStatus(this, null)
-            stopSelf(startId)
+            activeOperations.decrementAndGet()
+            maybeStopSelf()
         }
     }
 
@@ -204,33 +252,34 @@ class LocationReplyService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) {
-            stopSelf(startId)
+            maybeStopSelf()
             return START_NOT_STICKY
         }
 
         // Hard gate: if user disabled QuicLoc between trigger and service
-        // start, abort. Widget taps are user-initiated so they still fire.
+        // start, abort. Widget taps are user-initiated so they still fire —
+        // the widget-specific master-switch gate (only for taps that
+        // actually send, i.e. count >= 2) lives in widgetTapRunnable instead.
         if (intent.action != ACTION_WIDGET_TAP && !AppSettings.isEnabled(applicationContext)) {
             Log.d(TAG, "QuicLoc disabled — aborting reply")
             intent.getStringExtra(EXTRA_DIAG_ID)?.let {
                 DiagnosticLogManager(this).updateOutcome(it, DiagOutcome.APP_DISABLED,
                     "QuicLoc was toggled off before the reply could be sent")
             }
-            stopSelf(startId)
+            maybeStopSelf()
             return START_NOT_STICKY
         }
 
         if (intent.action == ACTION_WIDGET_TAP) {
             widgetTapCount++
             performHapticFeedback()
-            widgetStartId = startId
             widgetTapHandler.removeCallbacks(widgetTapRunnable)
             widgetTapHandler.postDelayed(widgetTapRunnable, 400)
             return START_NOT_STICKY
         }
 
         val sender = intent.getStringExtra(EXTRA_SENDER) ?: run {
-            stopSelf(startId)
+            maybeStopSelf()
             return START_NOT_STICKY
         }
         val source = intent.getStringExtra(EXTRA_SOURCE) ?: "Unknown"
@@ -241,13 +290,15 @@ class LocationReplyService : Service() {
 
         when (replyMode) {
             "sms" -> {
+                activeOperations.incrementAndGet()
                 LocationHelper.getCurrentLocationAndReply(
                     context = this,
                     phoneNumber = sender,
                     onResult = { succeeded ->
                         RequestHistoryManager(this).record(sender, source, succeeded)
                         patchDiag(diagId, succeeded, source)
-                        stopSelf(startId)
+                        activeOperations.decrementAndGet()
+                        maybeStopSelf()
                     }
                 )
             }
@@ -261,9 +312,10 @@ class LocationReplyService : Service() {
                         DiagnosticLogManager(this).updateOutcome(it, DiagOutcome.NO_PENDING_ACTION,
                             "The reply action expired before the service could use it")
                     }
-                    stopSelf(startId)
+                    maybeStopSelf()
                     return START_NOT_STICKY
                 }
+                activeOperations.incrementAndGet()
                 LocationHelper.getCurrentLocationAndReplyViaNotification(
                     context = this,
                     replyAction = action,
@@ -271,11 +323,12 @@ class LocationReplyService : Service() {
                     onResult = { succeeded ->
                         RequestHistoryManager(this).record(sender, source, succeeded)
                         patchDiag(diagId, succeeded, source)
-                        stopSelf(startId)
+                        activeOperations.decrementAndGet()
+                        maybeStopSelf()
                     }
                 )
             }
-            else -> stopSelf(startId)
+            else -> maybeStopSelf()
         }
 
         return START_NOT_STICKY
