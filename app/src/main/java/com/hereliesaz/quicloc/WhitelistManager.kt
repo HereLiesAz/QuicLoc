@@ -315,13 +315,18 @@ class WhitelistManager(context: Context) {
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build()
 
-            EncryptedSharedPreferences.create(
+            val prefs = EncryptedSharedPreferences.create(
                 context,
                 ENCRYPTED_PREFS_FILE,
                 masterKey,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
+            // Recover anything written to the plaintext fallback during an
+            // earlier, transient Keystore failure -- otherwise it's silently
+            // orphaned forever the moment Keystore starts working again.
+            migratePlaintextFallback(context, ENCRYPTED_PREFS_FILE + "_fallback", prefs)
+            prefs
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create EncryptedSharedPreferences, falling back to plaintext", e)
             context.getSharedPreferences(ENCRYPTED_PREFS_FILE + "_fallback", Context.MODE_PRIVATE)

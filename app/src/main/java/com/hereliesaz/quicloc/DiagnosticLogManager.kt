@@ -121,13 +121,15 @@ class DiagnosticLogManager(context: Context) {
                 val masterKey = MasterKey.Builder(context)
                     .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                     .build()
-                EncryptedSharedPreferences.create(
+                val prefs = EncryptedSharedPreferences.create(
                     context,
                     PREFS_FILE,
                     masterKey,
                     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                 )
+                migratePlaintextFallback(context, "${PREFS_FILE}_fallback", prefs)
+                prefs
             } catch (e: Exception) {
                 Log.e(TAG, "Falling back to plaintext prefs for diagnostics", e)
                 context.getSharedPreferences("${PREFS_FILE}_fallback", Context.MODE_PRIVATE)
