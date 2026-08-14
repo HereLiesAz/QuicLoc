@@ -930,6 +930,16 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
                     val numbersList by numbersState
                     val dialableCount by dialableCountState
+                    // The whitelist row only ever showed a displayToken --
+                    // the contact's NAME when one is set, hiding which actual
+                    // phone number(s) are authorized for that row. Derived
+                    // (not separately tracked state) so it recomputes exactly
+                    // when numbersList already does.
+                    val numbersByToken = remember(numbersList) {
+                        whitelistManager.getContacts()
+                            .filter { it.number.isNotEmpty() }
+                            .groupBy({ it.displayToken }, { it.number })
+                    }
                     val starredSet by starredState
                     val myNumber by myNumberState
                     val enabled by enabledState
@@ -1170,6 +1180,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 modifier = Modifier.padding(innerPadding),
                                 numbersList = numbersList,
                                 dialableCount = dialableCount,
+                                numbersByToken = numbersByToken,
                                 starredSet = starredSet,
                                 myNumber = myNumber,
                                 notificationAccessGranted = notificationAccessGranted,
@@ -1933,6 +1944,7 @@ fun QuicLocScreen(
     modifier: Modifier = Modifier,
     numbersList: List<String>,
     dialableCount: Int = numbersList.size,
+    numbersByToken: Map<String, List<String>> = emptyMap(),
     starredSet: Set<String>,
     myNumber: String,
     notificationAccessGranted: Boolean,
@@ -2139,15 +2151,27 @@ fun QuicLocScreen(
                 // rendering is fine.
                 numbersList.forEach { number ->
                     val isStarred = starredSet.contains(number)
+                    // number is a displayToken: the contact's NAME when one
+                    // is set, which otherwise leaves no way to tell which
+                    // actual phone number is authorized for this row.
+                    val realNumbers = numbersByToken[number].orEmpty()
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = number,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = number,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            if (realNumbers.isNotEmpty()) {
+                                Text(
+                                    text = realNumbers.joinToString(", "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                         IconButton(onClick = { onToggleStar(number) }) {
                             Icon(
                                 imageVector = if (isStarred) Icons.Default.Star else Icons.Outlined.Star,
