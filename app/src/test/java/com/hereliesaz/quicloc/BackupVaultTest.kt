@@ -168,6 +168,30 @@ class BackupVaultTest {
     }
 
     @Test
+    fun `restore preserves an alerts-only contact's tier`() {
+        whitelist.setPin("123456")
+        whitelist.addContact("Mom", "+15551234567")
+        whitelist.addContact("Grandma", "+15559999999", canRequestLocation = false)
+        BackupVault.flush(context)
+        val savedBytes = BackupVault.backupFile(context).readBytes()
+
+        context.deleteSharedPreferences("quicloc_secure_prefs")
+        context.deleteSharedPreferences("quicloc_secure_prefs_fallback")
+        BackupVault.backupFile(context).writeBytes(savedBytes)
+
+        val result = BackupVault.restoreFromInternal(context, "123456")
+        assertTrue("restore failed: ${result.exceptionOrNull()?.message}", result.isSuccess)
+        assertEquals(2, result.getOrNull()!!.whitelistCount)
+
+        val restored = WhitelistManager(context)
+        assertTrue(restored.isWhitelisted("+15551234567"))
+        assertFalse(restored.isWhitelisted("+15559999999"))
+        // Still an emergency contact -- reachable by the widget -- just not
+        // able to trigger a reply by texting.
+        assertEquals(listOf("+15551234567", "+15559999999").sorted(), restored.getDialableNumbers().sorted())
+    }
+
+    @Test
     fun `export and import via byte arrays round-trip cleanly`() {
         whitelist.setPin("111111")
         whitelist.addNumber("+15551234567")

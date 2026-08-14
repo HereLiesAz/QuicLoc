@@ -368,6 +368,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     // Kept in lockstep with numbersState everywhere it's refreshed.
     private var dialableCountState = mutableStateOf(0)
     private var starredState = mutableStateOf<Set<String>>(emptySet())
+    // Per-contact "can request my location by texting" flag, keyed by
+    // displayToken. Every contact is an emergency contact regardless of this
+    // flag; it only narrows who the trigger word actually works from. A
+    // separate state field (not derived from numbersState) because it can
+    // change without the token list itself changing.
+    private var canRequestLocationByTokenState = mutableStateOf<Map<String, Boolean>>(emptyMap())
     private var myNumberState = mutableStateOf("")
     private var enabledState = mutableStateOf(true)
     private var reminderNotifState = mutableStateOf(false)
@@ -852,9 +858,16 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         importBackupLauncher.launch(arrayOf("*/*"))
     }
 
+    /** True unless every entry sharing this token was explicitly set to alerts-only. */
+    private fun computeCanRequestLocationByToken(): Map<String, Boolean> =
+        whitelistManager.getContacts()
+            .groupBy({ it.displayToken }) { it.canRequestLocation }
+            .mapValues { (_, flags) -> flags.all { it } }
+
     private fun refreshAllStateAfterRestore() {
         numbersState.value = whitelistManager.getNumbers().toList()
         dialableCountState.value = whitelistManager.getDialableNumbers().size
+        canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
         starredState.value = whitelistManager.getStarredNumbers()
         myNumberState.value = whitelistManager.getMyNumber()
         enabledState.value = AppSettings.isEnabled(this)
@@ -889,6 +902,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             MainView.Config
         numbersState.value = whitelistManager.getNumbers().toList()
         dialableCountState.value = whitelistManager.getDialableNumbers().size
+        canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
         starredState.value = whitelistManager.getStarredNumbers()
         myNumberState.value = whitelistManager.getMyNumber()
         enabledState.value = AppSettings.isEnabled(this)
@@ -940,6 +954,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             .filter { it.number.isNotEmpty() }
                             .groupBy({ it.displayToken }, { it.number })
                     }
+                    val canRequestLocationByToken by canRequestLocationByTokenState
                     val starredSet by starredState
                     val myNumber by myNumberState
                     val enabled by enabledState
@@ -1181,6 +1196,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 numbersList = numbersList,
                                 dialableCount = dialableCount,
                                 numbersByToken = numbersByToken,
+                                canRequestLocationByToken = canRequestLocationByToken,
                                 starredSet = starredSet,
                                 myNumber = myNumber,
                                 notificationAccessGranted = notificationAccessGranted,
@@ -1242,6 +1258,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                         whitelistManager.addNumber(number)
                                         numbersState.value = whitelistManager.getNumbers().toList()
                                         dialableCountState.value = whitelistManager.getDialableNumbers().size
+                                        canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
                                         Toast.makeText(this, "Added — they can now ask for your location", Toast.LENGTH_SHORT).show()
                                     }
                                 },
@@ -1249,7 +1266,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     whitelistManager.removeNumber(number)
                                     numbersState.value = whitelistManager.getNumbers().toList()
                                     dialableCountState.value = whitelistManager.getDialableNumbers().size
+                                    canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
                                     starredState.value = whitelistManager.getStarredNumbers()
+                                },
+                                onToggleCanRequestLocation = { token, newState ->
+                                    whitelistManager.setCanRequestLocation(token, newState)
+                                    canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
                                 },
                                 onPickContact = { launchContactPicker() },
                                 onOpenTutorials = { view = MainView.TutorialsHub },
@@ -1510,6 +1532,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
                 numbersState.value = whitelistManager.getNumbers().toList()
                 dialableCountState.value = whitelistManager.getDialableNumbers().size
+                canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
                 val toastName = name?.takeIf { it.isNotBlank() } ?: numbers.firstOrNull() ?: "Contact"
                 Toast.makeText(this, "Added $toastName — they can now ask for your location", Toast.LENGTH_SHORT).show()
             }
@@ -1945,6 +1968,7 @@ fun QuicLocScreen(
     numbersList: List<String>,
     dialableCount: Int = numbersList.size,
     numbersByToken: Map<String, List<String>> = emptyMap(),
+    canRequestLocationByToken: Map<String, Boolean> = emptyMap(),
     starredSet: Set<String>,
     myNumber: String,
     notificationAccessGranted: Boolean,
@@ -1967,6 +1991,7 @@ fun QuicLocScreen(
     onRequestNotificationAccess: () -> Unit,
     onAddNumber: (String) -> Unit,
     onRemoveNumber: (String) -> Unit,
+    onToggleCanRequestLocation: (String, Boolean) -> Unit = { _, _ -> },
     onPickContact: () -> Unit,
     onOpenTutorials: () -> Unit = {},
     onOpenHistory: () -> Unit = {},
@@ -1983,6 +2008,10 @@ fun QuicLocScreen(
     val scrollState = rememberScrollState()
 
     val pinSet = currentPin.isNotBlank()
+    // Absent from the map defaults to true (can-request) — matches
+    // ContactEntry.canRequestLocation's own default for entries added before
+    // this existed, or not yet reflected in this snapshot.
+    val sharingCount = numbersList.count { canRequestLocationByToken[it] != false }
 
     // Same source of truth as the All Permissions table — the checklist and the
     // table can never disagree.
@@ -2056,21 +2085,23 @@ fun QuicLocScreen(
         )
 
         // ------------------------------------------------------------------
-        // 1 — Trusted contacts
+        // 1 — Emergency contacts
         // ------------------------------------------------------------------
         SectionCard(
             number = sectionNo("contacts"),
-            title = "Trusted contacts",
-            subtitle = "Who is allowed to ask where you are",
+            title = "Emergency contacts",
+            subtitle = "Who gets alerted, and who can ask",
             statusText = if (numbersList.isEmpty())
                 "Nobody yet — QuicLoc will ignore every request"
             else
-                "${numbersList.size} allowed · ${starredSet.size} of 3 starred",
+                "${numbersList.size} emergency · $sharingCount can ask · ${starredSet.size} of 3 starred",
             statusOk = numbersList.isNotEmpty(),
         ) {
             Text(
-                text = "Only the people listed here can trigger a reply. Anyone else who texts " +
-                    "the trigger word is ignored silently — they aren't told the app exists.",
+                text = "Everyone here gets your location when you tap the widget for a safety " +
+                    "check or an emergency alert. People marked \"can ask\" can also request it " +
+                    "themselves by texting the trigger word — anyone else who texts it is ignored " +
+                    "silently, without being told the app exists.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2155,12 +2186,13 @@ fun QuicLocScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "Allowed to ask (${numbersList.size})",
+                text = "Emergency contacts (${numbersList.size})",
                 style = MaterialTheme.typography.titleSmall,
             )
             Text(
                 text = "★ marks a priority contact — the widget's 3-tap safety check goes to " +
-                    "these (up to 3). Everyone here gets the 4-tap emergency alert.",
+                    "these (up to 3). Everyone here gets the 4-tap emergency alert. Tap a " +
+                    "contact's \"can ask\" / \"alerts only\" line to flip it.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
@@ -2185,6 +2217,7 @@ fun QuicLocScreen(
                     // is set, which otherwise leaves no way to tell which
                     // actual phone number is authorized for this row.
                     val realNumbers = numbersByToken[number].orEmpty()
+                    val canRequest = canRequestLocationByToken[number] != false
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -2201,6 +2234,17 @@ fun QuicLocScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
+                            Text(
+                                text = if (canRequest) "Can ask" else "Alerts only",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (canRequest)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.clickable {
+                                    onToggleCanRequestLocation(number, !canRequest)
+                                }
+                            )
                         }
                         IconButton(onClick = { onToggleStar(number) }) {
                             Icon(
@@ -2325,10 +2369,10 @@ fun QuicLocScreen(
             statusOk = null,
         ) {
             Text(
-                text = "The widget is for sending your own location on purpose — parking spot, " +
-                    "safety check, emergency. Tap it repeatedly; the count decides who gets it. " +
-                    "Each tap must land within about half a second of the last one, and buzzes " +
-                    "to confirm.",
+                text = "The widget is for sending your own location on purpose — a safety check, " +
+                    "an emergency alert, or just finding your car. Tap it repeatedly; the count " +
+                    "decides who gets it. Each tap must land within about half a second of the " +
+                    "last one, and buzzes to confirm.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

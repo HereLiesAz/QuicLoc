@@ -167,7 +167,7 @@ class NotificationListener : NotificationListenerService() {
             recordDiag(pkg, sender, body, DiagOutcome.WHITELIST_NO_MATCH_BY_NAME,
                 "Trigger '$body' from \"$sender\" via $pkg, but sender not in whitelist" +
                     (if (!latest.verifiedContact) " (sender identity unverified — a name match alone isn't trusted)" else "") +
-                    ". Whitelist: [${whitelist.getNumbers().joinToString(", ")}]",
+                    ". Contacts who can request: [${whitelist.getSharingNumbers().joinToString(", ")}]",
                 triggerMatched = true, whitelistMatched = false, extractionPath = extraction.path)
             return
         }
@@ -187,13 +187,15 @@ class NotificationListener : NotificationListenerService() {
             // resolution happened to add numbers that didn't match the SMS.
             val hasNumber = sender.any { it.isDigit() }
             // The coarse "did SmsReceiver handle ANY carrier trigger recently"
-            // fallback is only safe to use when there's exactly one whitelisted
-            // contact — otherwise "a" recent carrier trigger might belong to a
-            // DIFFERENT contact than this notification's, and we'd silently
-            // drop this sender's legitimate reply instead of just double-texting
-            // (the much safer failure mode for a safety app). With one contact
-            // there's no ambiguity: any recent carrier trigger must be theirs.
-            val onlyOneWhitelistedContact = whitelist.getContacts().size == 1
+            // fallback is only safe to use when there's exactly one contact
+            // *able to trigger an SMS in the first place* — otherwise "a"
+            // recent carrier trigger might belong to a DIFFERENT contact than
+            // this notification's, and we'd silently drop this sender's
+            // legitimate reply instead of just double-texting (the much safer
+            // failure mode for a safety app). Alerts-only contacts can't
+            // cause a carrier trigger at all (SmsReceiver's isWhitelisted
+            // check excludes them), so they don't count toward the ambiguity.
+            val onlyOneWhitelistedContact = whitelist.getContacts().count { it.canRequestLocation } == 1
             val alreadyHandledViaSms = TriggerDedupe.wasRecentlyHandled(candidates) ||
                 (!hasNumber && onlyOneWhitelistedContact &&
                     TriggerDedupe.carrierTriggerHandledWithin(SMS_NOTIF_DEDUPE_WINDOW_MS))
