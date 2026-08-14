@@ -323,6 +323,11 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     // Compose state — hoisted so biometric callback and launchers can update it
     private var authState = mutableStateOf(false)
     private var numbersState = mutableStateOf<List<String>>(emptyList())
+    // How many whitelist entries actually have a dialable phone number, as
+    // opposed to numbersState.size (which counts name-only entries too —
+    // those can't ever satisfy an SMS trigger or the widget's SMS fan-out).
+    // Kept in lockstep with numbersState everywhere it's refreshed.
+    private var dialableCountState = mutableStateOf(0)
     private var starredState = mutableStateOf<Set<String>>(emptySet())
     private var myNumberState = mutableStateOf("")
     private var enabledState = mutableStateOf(true)
@@ -810,6 +815,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
     private fun refreshAllStateAfterRestore() {
         numbersState.value = whitelistManager.getNumbers().toList()
+        dialableCountState.value = whitelistManager.getDialableNumbers().size
         starredState.value = whitelistManager.getStarredNumbers()
         myNumberState.value = whitelistManager.getMyNumber()
         enabledState.value = AppSettings.isEnabled(this)
@@ -833,6 +839,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         whitelistManager = WhitelistManager(this)
         numbersState.value = whitelistManager.getNumbers().toList()
+        dialableCountState.value = whitelistManager.getDialableNumbers().size
         starredState.value = whitelistManager.getStarredNumbers()
         myNumberState.value = whitelistManager.getMyNumber()
         enabledState.value = AppSettings.isEnabled(this)
@@ -873,6 +880,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 } else {
 
                     val numbersList by numbersState
+                    val dialableCount by dialableCountState
                     val starredSet by starredState
                     val myNumber by myNumberState
                     val enabled by enabledState
@@ -1111,6 +1119,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             QuicLocScreen(
                                 modifier = Modifier.padding(innerPadding),
                                 numbersList = numbersList,
+                                dialableCount = dialableCount,
                                 starredSet = starredSet,
                                 myNumber = myNumber,
                                 notificationAccessGranted = notificationAccessGranted,
@@ -1171,12 +1180,14 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     if (number.isNotBlank()) {
                                         whitelistManager.addNumber(number)
                                         numbersState.value = whitelistManager.getNumbers().toList()
+                                        dialableCountState.value = whitelistManager.getDialableNumbers().size
                                         Toast.makeText(this, "Added — they can now ask for your location", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 onRemoveNumber = { number ->
                                     whitelistManager.removeNumber(number)
                                     numbersState.value = whitelistManager.getNumbers().toList()
+                                    dialableCountState.value = whitelistManager.getDialableNumbers().size
                                     starredState.value = whitelistManager.getStarredNumbers()
                                 },
                                 onPickContact = { launchContactPicker() },
@@ -1393,6 +1404,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             }
 
             numbersState.value = whitelistManager.getNumbers().toList()
+            dialableCountState.value = whitelistManager.getDialableNumbers().size
             val toastName = name?.takeIf { it.isNotBlank() } ?: number ?: "Contact"
             Toast.makeText(this, "Added $toastName — they can now ask for your location", Toast.LENGTH_SHORT).show()
         }
@@ -1823,6 +1835,7 @@ fun BiometricGateScreen(
 fun QuicLocScreen(
     modifier: Modifier = Modifier,
     numbersList: List<String>,
+    dialableCount: Int = numbersList.size,
     starredSet: Set<String>,
     myNumber: String,
     notificationAccessGranted: Boolean,
@@ -1864,10 +1877,11 @@ fun QuicLocScreen(
 
     // Same source of truth as the All Permissions table — the checklist and the
     // table can never disagree.
-    val setupSteps = remember(enabled, numbersList.size, myNumber, permissionStatuses, pinSet) {
+    val setupSteps = remember(enabled, numbersList.size, dialableCount, myNumber, permissionStatuses, pinSet) {
         Readiness.steps(
             enabled = enabled,
             whitelistCount = numbersList.size,
+            dialableWhitelistCount = dialableCount,
             myNumber = myNumber,
             permissions = permissionStatuses,
             pinSet = pinSet,

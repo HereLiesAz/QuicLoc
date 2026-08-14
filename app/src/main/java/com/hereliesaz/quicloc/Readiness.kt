@@ -95,6 +95,15 @@ object Readiness {
      * Build the checklist. Steps whose underlying permission isn't present in
      * [permissions] (background location below Android 10, notifications below
      * Android 13) are skipped entirely rather than reported as missing.
+     *
+     * @param whitelistCount Total whitelist entries, including name-only ones
+     *   (added by typing a handle with no phone number) -- shown for context.
+     * @param dialableWhitelistCount Whitelist entries that have an actual
+     *   phone number. Defaults to [whitelistCount] for callers (and tests)
+     *   that don't distinguish, but real callers should pass the true count:
+     *   a whitelist made up entirely of name-only entries can never satisfy
+     *   an SMS trigger (SmsReceiver only number-matches) or the widget's SMS
+     *   fan-out, so it should not be reported as "done".
      */
     fun steps(
         enabled: Boolean,
@@ -102,6 +111,7 @@ object Readiness {
         myNumber: String,
         permissions: List<PermissionStatus>,
         pinSet: Boolean = false,
+        dialableWhitelistCount: Int = whitelistCount,
     ): List<SetupStep> {
         val byKey = permissions.associateBy { it.key }
         fun state(key: String): PermStatus? = byKey[key]?.state
@@ -166,8 +176,9 @@ object Readiness {
             steps += SetupStep(
                 id = "post-notifications",
                 title = "Allow notifications",
-                detail = "QuicLoc shows a short-lived notification while a reply is being sent. " +
-                    "Android kills the reply mid-send if it can't post one.",
+                detail = "QuicLoc shows a short-lived notification while a reply is being sent, " +
+                    "as Android requires for this kind of background work. Without it the reply " +
+                    "still goes out, but the notification itself won't show.",
                 state = if (granted(PERM_POST_NOTIFICATIONS)) StepState.DONE else StepState.TODO,
                 required = true,
                 actionKey = PERM_POST_NOTIFICATIONS,
@@ -178,12 +189,34 @@ object Readiness {
         steps += SetupStep(
             id = "whitelist",
             title = "Add at least one trusted contact",
-            detail = "Only people on your list can ask. With an empty list QuicLoc ignores " +
-                "everyone, including you.",
-            state = if (whitelistCount > 0) StepState.DONE else StepState.TODO,
+            detail = if (whitelistCount > 0 && dialableWhitelistCount == 0)
+                "Every contact on your list was added by name only, with no phone number. " +
+                    "That can't answer a text or the widget — add one with a real number, " +
+                    "e.g. via \"Pick from Contacts\"."
+            else
+                "Only people on your list can ask. With an empty list QuicLoc ignores " +
+                    "everyone, including you.",
+            state = if (dialableWhitelistCount > 0) StepState.DONE else StepState.TODO,
             required = true,
             actionKey = PermKeys.ADD_CONTACT,
             actionLabel = "Add",
+        )
+
+        // Required, not just recommended: Android's Doze/App Standby can put a
+        // sleeping app's broadcast receivers and background work on ice, and a
+        // request that arrives while that's happening can simply be missed.
+        // For a safety app, "ready" has to mean this is actually exempted, not
+        // just that the user hasn't been shown the option yet.
+        steps += SetupStep(
+            id = "battery",
+            title = "Exempt QuicLoc from battery optimisation",
+            detail = "Android puts sleeping apps on ice; a request that arrives while QuicLoc is " +
+                "asleep can be missed entirely. QuicLoc does no background work of its own, so " +
+                "the exemption costs you nothing.",
+            state = if (granted(PermKeys.BATTERY)) StepState.DONE else StepState.TODO,
+            required = true,
+            actionKey = PermKeys.BATTERY,
+            actionLabel = "Allow",
         )
 
         // ---- Recommended, not required -------------------------------------
@@ -197,18 +230,6 @@ object Readiness {
             required = false,
             actionKey = PermKeys.NOTIF_LISTENER,
             actionLabel = "Turn on",
-        )
-
-        steps += SetupStep(
-            id = "battery",
-            title = "Exempt QuicLoc from battery optimisation",
-            detail = "Optional but strongly recommended. Android puts sleeping apps on ice; a " +
-                "request that arrives at 3am can be missed. QuicLoc does no background work, so " +
-                "the exemption costs you nothing.",
-            state = if (granted(PermKeys.BATTERY)) StepState.DONE else StepState.TODO,
-            required = false,
-            actionKey = PermKeys.BATTERY,
-            actionLabel = "Allow",
         )
 
         steps += SetupStep(
