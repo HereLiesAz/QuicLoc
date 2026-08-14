@@ -212,8 +212,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.ACCESS_COARSE_LOCATION,
         // CAMERA is intentionally NOT here — it lives in the on-demand
-        // :feature_camera module and is requested only after that module is
-        // downloaded during find-my-phone setup (see onSavePassphrase).
+        // :feature_findmyphone module and is requested only after that
+        // module is downloaded during find-my-phone setup (see onSavePassphrase).
     ).let {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             it + "android.permission.POST_NOTIFICATIONS"
