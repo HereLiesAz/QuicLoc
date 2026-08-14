@@ -319,11 +319,11 @@ Location
 • Coarse Location: fallback when GPS isn't available (indoors, denied sky view). Same usage window as Fine.
 • Background Location ("Allow all the time"): the entire point of QuicLoc is to respond while the screen is off and the app is closed. Android 11+ won't let apps ask for this directly, so you'll be sent to the system Location Settings screen to flip it manually. Without it, QuicLoc only works while you happen to have the app open.
 
-Camera
+${if (FindMyPhone.ENABLED) """Camera
 
 • Camera: in find-my-phone (passphrase) mode, after 3 failed PIN attempts the front camera silently captures one frame of whoever is holding your phone and sends it to the requester via MMS. This is delivered as an optional add-on module that downloads only when you set up find-my-phone — so QuicLoc doesn't ask for camera access at all unless you use that feature. Granted right after the download (before the lock screen can ever need it).
 
-Authentication
+""" else ""}Authentication
 
 • Biometric: gates the QuicLoc configuration UI behind your fingerprint or face. The background services keep working regardless, but no one can change your whitelist or PIN without unlocking the app.
 • Use Fingerprint: the legacy (pre-Android 9) name for the same capability. Both are declared so older devices are covered.
@@ -336,22 +336,21 @@ Foreground services (keep work alive when the screen is off)
 Notifications
 
 • Post Notifications (Android 13+): required to show the foreground-service notification while a reply is in flight, the optional always-on reminder, and the tracking-active alert. Without it, services would be killed silently by the system.
-• Full-Screen Intent: lets the find-my-phone trigger surface a full-screen lock activity (cover-screen mode) when Device Admin isn't granted. On Android 14+ you'll also need to enable "Full screen notifications" for QuicLoc in system Settings.
-
+${if (FindMyPhone.ENABLED) "• Full-Screen Intent: lets the find-my-phone trigger surface a full-screen lock activity (cover-screen mode) when Device Admin isn't granted. On Android 14+ you'll also need to enable \"Full screen notifications\" for QuicLoc in system Settings.\n" else ""}
 System integration
 
 • Boot Completed: lets QuicLoc re-post the persistent reminder notification after a reboot if you've opted into it. It does not auto-start any services beyond that notification.
 • Vibrate: short haptic confirmation when you tap the home-screen widget, so you know the request actually fired.
 • Internet + Network State: required transitively by Google Play Services (the fused location provider and the Phone Number Hint API). QuicLoc itself makes no HTTP calls — there is no backend.
 
-Contacts (optional)
+Picking a contact from your address book (optional)
 
-• Read Contacts: only used by the "Pick from Contacts" button when you're populating the whitelist. Skip it and you can still type numbers and names manually.
-
+• No permission needed: "Pick from Contacts" uses Android's own contact picker, which hands QuicLoc just the one contact you chose — QuicLoc never requests, and doesn't declare, the Contacts permission. Skip it and you can still type numbers and names manually.
+${if (FindMyPhone.ENABLED) """
 Device Admin (optional, special access)
 
 • Bind Device Admin: only consumed by lockNow() so the find-my-phone passphrase can actually lock the screen instead of just covering it. Cannot wipe data, change your PIN, or block uninstall. Revocable any time in Settings → Security → Device admin apps.
-
+""" else ""}
 Protected (background reliability)
 
 These keep QuicLoc reachable when the device is idle. Granting them is the difference between "QuicLoc answers a request at 3am while your phone is in your bag" and "QuicLoc answers if you happen to have the app open."

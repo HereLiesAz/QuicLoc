@@ -57,6 +57,7 @@ import androidx.fragment.app.FragmentActivity
 import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest
 import com.google.android.gms.auth.api.identity.Identity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -3703,9 +3704,18 @@ fun DiagnosticsScreen(
     // Load + decrypt off the composition thread so navigating here never janks.
     var events by remember { mutableStateOf<List<DiagnosticEvent>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
+    // New events are written by SmsReceiver/NotificationListener/
+    // LocationReplyService — all background components this screen has no
+    // direct signal from. Poll while the screen is open so a trigger that
+    // arrives while the user is already looking at this screen (exactly the
+    // troubleshooting workflow this screen exists for) actually shows up,
+    // instead of only appearing after navigating away and back.
     LaunchedEffect(diagManager) {
-        events = withContext(Dispatchers.IO) { diagManager.getEvents() }
-        loaded = true
+        while (true) {
+            events = withContext(Dispatchers.IO) { diagManager.getEvents() }
+            loaded = true
+            delay(2000)
+        }
     }
     var captureAll by remember { mutableStateOf(initialCaptureAll) }
 
@@ -3904,15 +3914,24 @@ private fun StatusRow(label: String, ok: Boolean, value: String? = null) {
  * timeout, missing reply action, etc.) render on `errorContainer` with a
  * `✗` marker so they stand out.
  *
- * Data source: [RequestHistoryManager.getHistory], read once on first
- * composition. Capped at 100 entries (oldest evicted on insert).
+ * Data source: [RequestHistoryManager.getHistory], polled while this screen
+ * is open so a request handled by a background component (SmsReceiver,
+ * NotificationListener, LocationReplyService) while the user already has
+ * this screen open still shows up, not just on the next navigation here.
+ * Capped at 100 entries (oldest evicted on insert).
  */
 @Composable
 fun HistoryScreen(
     modifier: Modifier = Modifier,
     historyManager: RequestHistoryManager
 ) {
-    val history = remember { historyManager.getHistory() }
+    var history by remember { mutableStateOf(historyManager.getHistory()) }
+    LaunchedEffect(historyManager) {
+        while (true) {
+            delay(2000)
+            history = historyManager.getHistory()
+        }
+    }
 
     Column(
         modifier = modifier
