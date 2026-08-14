@@ -5,7 +5,7 @@
     <!-- Shown in the home-screen widget picker, where the only chance to
          explain what the widget is for is the label + description pair. -->
     <string name="widget_label">QuicLoc — send my location</string>
-    <string name="widget_description">Tap twice to text your parking spot to yourself, three times for a safety check to your starred contacts, four times for an emergency alert to everyone on your list.</string>
+    <string name="widget_description">Tap three times for a safety check to your starred contacts, four times for an emergency alert to everyone on your list, or twice to text your own location to yourself.</string>
     <!-- Title shown by Play for the on-demand find-my-phone feature module. -->
     <string name="feature_findmyphone_title">QuicLoc Find My Phone</string>
     <string name="device_admin_label">QuicLoc Lockdown</string>

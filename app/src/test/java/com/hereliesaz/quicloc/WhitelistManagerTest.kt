@@ -135,6 +135,24 @@ class WhitelistManagerTest {
         assertEquals(setOf("111", "333", "444"), whitelist.getStarredNumbers())
     }
 
+    // ---- dialable numbers (widget SMS fan-out) ---------------------------
+
+    @Test
+    fun `getDialableNumbers excludes name-only entries`() {
+        whitelist.addNumber("Mom") // no digits -- name-only, no number
+        whitelist.addNumber("+15551234567")
+        assertEquals(listOf("+15551234567"), whitelist.getDialableNumbers())
+    }
+
+    @Test
+    fun `getDialableStarredNumbers excludes a starred name-only entry`() {
+        whitelist.addContact("Mom", "")
+        whitelist.addContact("Dad", "+15551234567")
+        whitelist.toggleStarred("Mom")
+        whitelist.toggleStarred("Dad")
+        assertEquals(listOf("+15551234567"), whitelist.getDialableStarredNumbers())
+    }
+
     // ---- name vs number matching ----------------------------------------
 
     @Test
@@ -195,6 +213,51 @@ class WhitelistManagerTest {
     fun `numbersForName returns the stored number for a matching name`() {
         whitelist.addContact("Mom ❤️", "+15551234567")
         assertEquals(listOf("+15551234567"), whitelist.numbersForName("Mom ❤️"))
+    }
+
+    // ---- name-spoofing bypass (trustName) ---------------------------------
+
+    @Test
+    fun `isWhitelistedByName with trustName=false does not authorize on a name match alone`() {
+        // An attacker who isn't whitelisted sets their own chat-app display
+        // name to "Mom" -- without the trustName gate this would incorrectly
+        // authorize them.
+        whitelist.addContact("Mom", "+15551234567")
+        assertFalse(whitelist.isWhitelistedByName("Mom", trustName = false))
+    }
+
+    @Test
+    fun `isWhitelistedByName with trustName=false still matches by number`() {
+        whitelist.addContact("Mom", "+15551234567")
+        assertTrue(whitelist.isWhitelistedByName("+15551234567", trustName = false))
+    }
+
+    @Test
+    fun `isWhitelistedByName with trustName=false still matches the user's own number`() {
+        whitelist.setMyNumber("+15551234567")
+        assertTrue(whitelist.isWhitelistedByName("+15551234567", trustName = false))
+    }
+
+    @Test
+    fun `isWhitelistedByName defaults to trusting the name`() {
+        whitelist.addContact("Mom", "+15551234567")
+        assertTrue(whitelist.isWhitelistedByName("Mom"))
+    }
+
+    // ---- strict number matching (no suffix-collision bypass) -------------
+
+    @Test
+    fun `isWhitelisted does not match a different number sharing only a 7-digit suffix`() {
+        // Two different real numbers, same last 7 digits, different area code.
+        whitelist.addNumber("+12125551234")
+        assertFalse(whitelist.isWhitelisted("+17185551234"))
+    }
+
+    @Test
+    fun `isWhitelisted still tolerates a missing or extra leading US country code`() {
+        whitelist.addNumber("+15551234567")
+        assertTrue(whitelist.isWhitelisted("5551234567"))
+        assertTrue(whitelist.isWhitelisted("15551234567"))
     }
 
     // ---- own number is implicitly whitelisted ---------------------------
@@ -274,6 +337,93 @@ class WhitelistManagerTest {
         assertFalse(whitelist.isOnboardingCompleted())
         whitelist.setOnboardingCompleted(true)
         assertTrue(whitelist.isOnboardingCompleted())
+    }
+
+    // ---- emergency vs sharing tier -----------------------------------------
+
+    @Test
+    fun `contacts default to being able to request location`() {
+        whitelist.addNumber("+15551234567")
+        assertTrue(whitelist.getContacts().single().canRequestLocation)
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+    }
+
+    @Test
+    fun `an alerts-only contact cannot trigger a reply by number`() {
+        whitelist.addContact("Grandma", "+15551234567", canRequestLocation = false)
+        assertFalse(whitelist.isWhitelisted("+15551234567"))
+        assertFalse(whitelist.isWhitelistedByName("Grandma"))
+    }
+
+    @Test
+    fun `an alerts-only contact still counts as an emergency contact`() {
+        // getContacts / getNumbers / getDialableNumbers are the widget's
+        // fan-out lists -- alerts-only contacts must still be reachable
+        // through them, since the widget is the only way to reach them at all.
+        whitelist.addContact("Grandma", "+15551234567", canRequestLocation = false)
+        assertEquals(1, whitelist.getContacts().size)
+        assertTrue(whitelist.getNumbers().contains("Grandma"))
+        assertEquals(listOf("+15551234567"), whitelist.getDialableNumbers())
+    }
+
+    @Test
+    fun `an alerts-only contact can still be starred for the safety check`() {
+        whitelist.addContact("Grandma", "+15551234567", canRequestLocation = false)
+        assertTrue(whitelist.toggleStarred("Grandma"))
+        assertEquals(listOf("+15551234567"), whitelist.getDialableStarredNumbers())
+    }
+
+    @Test
+    fun `getSharingNumbers excludes alerts-only contacts`() {
+        whitelist.addContact("Mom", "+15551234567")
+        whitelist.addContact("Grandma", "+15559999999", canRequestLocation = false)
+        assertEquals(setOf("Mom"), whitelist.getSharingNumbers())
+        assertEquals(setOf("Mom", "Grandma"), whitelist.getNumbers())
+    }
+
+    @Test
+    fun `setCanRequestLocation flips an existing contact without touching name or number`() {
+        whitelist.addContact("Mom", "+15551234567")
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+
+        whitelist.setCanRequestLocation("Mom", false)
+        assertFalse(whitelist.isWhitelisted("+15551234567"))
+        assertFalse(whitelist.isWhitelistedByName("Mom"))
+        assertEquals("+15551234567", whitelist.getContacts().single().number)
+
+        whitelist.setCanRequestLocation("Mom", true)
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+    }
+
+    @Test
+    fun `setCanRequestLocation on an unknown token is a no-op`() {
+        whitelist.addContact("Mom", "+15551234567")
+        whitelist.setCanRequestLocation("Nobody", false)
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+        assertEquals(1, whitelist.getContacts().size)
+    }
+
+    @Test
+    fun `own number can still request location regardless of contact tiers`() {
+        whitelist.setMyNumber("+15551234567")
+        whitelist.addContact("Grandma", "+15559999999", canRequestLocation = false)
+        assertTrue(whitelist.isWhitelisted("+15551234567"))
+        assertTrue(whitelist.isWhitelistedByName("+15551234567"))
+    }
+
+    @Test
+    fun `an alerts-only entry round-trips through toJsonString and fromJsonString`() {
+        val entry = WhitelistManager.ContactEntry("Grandma", "+15551234567", canRequestLocation = false)
+        val restored = WhitelistManager.ContactEntry.fromJsonString(entry.toJsonString())
+        assertEquals(entry, restored)
+    }
+
+    @Test
+    fun `a legacy plain-token entry with no tier field defaults to can-request`() {
+        // Pre-tier backups / legacy data have no "can_request_location" key
+        // at all -- must not silently become alerts-only.
+        val restored = WhitelistManager.ContactEntry.fromJsonString("+15551234567")
+        assertEquals(true, restored?.canRequestLocation)
     }
 
     // ---- persistence across instances ------------------------------------

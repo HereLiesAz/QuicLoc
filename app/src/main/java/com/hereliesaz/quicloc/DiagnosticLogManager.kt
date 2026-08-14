@@ -121,13 +121,15 @@ class DiagnosticLogManager(context: Context) {
                 val masterKey = MasterKey.Builder(context)
                     .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                     .build()
-                EncryptedSharedPreferences.create(
+                val prefs = EncryptedSharedPreferences.create(
                     context,
                     PREFS_FILE,
                     masterKey,
                     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                 )
+                migratePlaintextFallback(context, "${PREFS_FILE}_fallback", prefs)
+                prefs
             } catch (e: Exception) {
                 Log.e(TAG, "Falling back to plaintext prefs for diagnostics", e)
                 context.getSharedPreferences("${PREFS_FILE}_fallback", Context.MODE_PRIVATE)
@@ -173,7 +175,13 @@ class DiagnosticLogManager(context: Context) {
     fun getEvents(): List<DiagnosticEvent> = readEvents()
 
     fun clear() {
-        prefs.edit().remove(KEY_EVENTS).apply()
+        // Must go through the same executor as record()/updateOutcome():
+        // clearing directly on the caller's thread could race a write already
+        // queued on the executor, which would finish afterward and silently
+        // resurrect the "cleared" log with whatever it had in hand.
+        executor.execute {
+            prefs.edit().remove(KEY_EVENTS).apply()
+        }
     }
 
     /** Flattens the log to shareable plain text for the Copy/Share button. */

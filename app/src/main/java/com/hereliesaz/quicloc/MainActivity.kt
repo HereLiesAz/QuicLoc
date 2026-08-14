@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.text.TextUtils
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -56,6 +57,7 @@ import androidx.fragment.app.FragmentActivity
 import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest
 import com.google.android.gms.auth.api.identity.Identity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -69,8 +71,8 @@ import kotlinx.coroutines.withContext
  *   - [History] — the request log ([HistoryScreen]).
  *   - [TutorialsHub] — list of all tutorials.
  *   - [TutorialDetail] — one tutorial's full body. [fromOnboarding] flips
- *     the confirm-button label ("Got it" vs "Done") and the back-target
- *     (return to Config to dismiss onboarding, vs return to hub).
+ *     the confirm-button label ("Set QuicLoc up" vs "Done") and the
+ *     back-target (return to Config to dismiss onboarding, vs return to hub).
  */
 sealed class MainView {
     data object Config : MainView()
@@ -210,22 +212,49 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.ACCESS_COARSE_LOCATION,
         // CAMERA is intentionally NOT here — it lives in the on-demand
-        // :feature_camera module and is requested only after that module is
-        // downloaded during find-my-phone setup (see onSavePassphrase).
+        // :feature_findmyphone module and is requested only after that
+        // module is downloaded during find-my-phone setup (see onSavePassphrase).
     ).let {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             it + "android.permission.POST_NOTIFICATIONS"
         } else it
     }
 
+    /** Whether unlock() has already auto-walked the permission chain this process lifetime. */
+    private var hasRunPermissionChainThisSession = false
+
     /** Set when the launcher fires, called once the system dialog dismisses. */
     private var afterPermissionResult: (granted: Boolean) -> Unit = {}
+
+    /** Which permission the most recent [singlePermissionLauncher] launch was for. */
+    private var lastRequestedPermission: String? = null
+
+    /** Records [lastRequestedPermission], then launches the request. */
+    private fun launchPermissionRequest(permission: String) {
+        lastRequestedPermission = permission
+        singlePermissionLauncher.launch(permission)
+    }
 
     private val singlePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         val next = afterPermissionResult
         afterPermissionResult = {}
+        // shouldShowRequestPermissionRationale() only returns false once
+        // Android has decided it will no longer show its own request dialog
+        // for this permission ("Don't ask again", or enough plain denials on
+        // some OEMs) -- checked here, right after a request, it reliably
+        // detects "that dialog we just tried to show never actually
+        // appeared". Without this, re-tapping "Grant" from the rationale
+        // dialog silently no-ops forever with zero visible feedback.
+        val permission = lastRequestedPermission
+        if (!granted && permission != null && !shouldShowRequestPermissionRationale(permission)) {
+            Toast.makeText(
+                this,
+                "Android won't ask again for this one — grant it from the app's Settings page instead.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
         next(granted)
     }
 
@@ -275,7 +304,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             // Unknown permission — fall back to launching directly with no rationale.
             afterPermissionResult = onAfter
             beginSystemFlow()
-            singlePermissionLauncher.launch(permission)
+            launchPermissionRequest(permission)
             return
         }
         pendingRationaleState.value = RationaleDialogState(
@@ -290,7 +319,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 pendingRationaleState.value = null
                 afterPermissionResult = onAfter
                 beginSystemFlow()
-                singlePermissionLauncher.launch(permission)
+                launchPermissionRequest(permission)
             },
             onSkip = {
                 pendingRationaleState.value = null
@@ -322,8 +351,29 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
     // Compose state — hoisted so biometric callback and launchers can update it
     private var authState = mutableStateOf(false)
+    // Hoisted to the activity, not a remember{} inside the composable tree:
+    // `view` used to live in a remember{} inside the `else` branch of
+    // `if (!authenticated) {...} else {...}`. Compose tears down and rebuilds
+    // that whole branch's remembered state every time `authenticated` flips
+    // false -> true, which happens on every ordinary re-authentication (a ​
+    // plain Home-button press backgrounds the activity and clears authState;
+    // see onPause). The result was silently landing back on the default
+    // screen after every unlock, discarding whatever screen the user was on.
+    // Living here instead survives that.
+    private var viewState = mutableStateOf<MainView>(MainView.Config)
     private var numbersState = mutableStateOf<List<String>>(emptyList())
+    // How many whitelist entries actually have a dialable phone number, as
+    // opposed to numbersState.size (which counts name-only entries too —
+    // those can't ever satisfy an SMS trigger or the widget's SMS fan-out).
+    // Kept in lockstep with numbersState everywhere it's refreshed.
+    private var dialableCountState = mutableStateOf(0)
     private var starredState = mutableStateOf<Set<String>>(emptySet())
+    // Per-contact "can request my location by texting" flag, keyed by
+    // displayToken. Every contact is an emergency contact regardless of this
+    // flag; it only narrows who the trigger word actually works from. A
+    // separate state field (not derived from numbersState) because it can
+    // change without the token list itself changing.
+    private var canRequestLocationByTokenState = mutableStateOf<Map<String, Boolean>>(emptyMap())
     private var myNumberState = mutableStateOf("")
     private var enabledState = mutableStateOf(true)
     private var reminderNotifState = mutableStateOf(false)
@@ -808,8 +858,16 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         importBackupLauncher.launch(arrayOf("*/*"))
     }
 
+    /** True unless every entry sharing this token was explicitly set to alerts-only. */
+    private fun computeCanRequestLocationByToken(): Map<String, Boolean> =
+        whitelistManager.getContacts()
+            .groupBy({ it.displayToken }) { it.canRequestLocation }
+            .mapValues { (_, flags) -> flags.all { it } }
+
     private fun refreshAllStateAfterRestore() {
         numbersState.value = whitelistManager.getNumbers().toList()
+        dialableCountState.value = whitelistManager.getDialableNumbers().size
+        canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
         starredState.value = whitelistManager.getStarredNumbers()
         myNumberState.value = whitelistManager.getMyNumber()
         enabledState.value = AppSettings.isEnabled(this)
@@ -829,10 +887,22 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The unlock PIN keypad, the QuicLoc PIN/passphrase fields, and the
+        // whitelist are all rendered somewhere in this activity -- without
+        // FLAG_SECURE, Android's default screenshot-for-recents behavior
+        // captures that content into the task-switcher thumbnail, visible to
+        // anyone with physical access to an unlocked phone.
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         enableEdgeToEdge()
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         whitelistManager = WhitelistManager(this)
+        viewState.value = if (!whitelistManager.isOnboardingCompleted())
+            MainView.TutorialDetail(Tutorials.MAIN_ID, fromOnboarding = true)
+        else
+            MainView.Config
         numbersState.value = whitelistManager.getNumbers().toList()
+        dialableCountState.value = whitelistManager.getDialableNumbers().size
+        canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
         starredState.value = whitelistManager.getStarredNumbers()
         myNumberState.value = whitelistManager.getMyNumber()
         enabledState.value = AppSettings.isEnabled(this)
@@ -873,6 +943,18 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 } else {
 
                     val numbersList by numbersState
+                    val dialableCount by dialableCountState
+                    // The whitelist row only ever showed a displayToken --
+                    // the contact's NAME when one is set, hiding which actual
+                    // phone number(s) are authorized for that row. Derived
+                    // (not separately tracked state) so it recomputes exactly
+                    // when numbersList already does.
+                    val numbersByToken = remember(numbersList) {
+                        whitelistManager.getContacts()
+                            .filter { it.number.isNotEmpty() }
+                            .groupBy({ it.displayToken }, { it.number })
+                    }
+                    val canRequestLocationByToken by canRequestLocationByTokenState
                     val starredSet by starredState
                     val myNumber by myNumberState
                     val enabled by enabledState
@@ -883,17 +965,18 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                     var currentPassphrase by remember { mutableStateOf(whitelistManager.getPassphrase() ?: "") }
                     var currentPin by remember { mutableStateOf(whitelistManager.getPin() ?: "") }
 
-                    var notificationAccessGranted by remember {
-                        mutableStateOf(isNotificationListenerEnabled())
+                    // Derived from permissionStatuses (refreshed every onResume)
+                    // instead of its own remember{} snapshot -- a standalone
+                    // snapshot here never updated after granting/revoking the
+                    // permission in system Settings, since returning from that
+                    // Settings screen is a round-trip this activity treats as
+                    // "expected" and doesn't rebuild this composable subtree.
+                    // Deriving it means it can never disagree with the same
+                    // list the Setup Checklist and All Permissions table read.
+                    val notificationAccessGranted = permissionStatuses.any {
+                        it.key == PermKeys.NOTIF_LISTENER && it.state == PermStatus.GRANTED
                     }
-                    var view by remember {
-                        mutableStateOf<MainView>(
-                            if (!whitelistManager.isOnboardingCompleted())
-                                MainView.TutorialDetail(Tutorials.MAIN_ID, fromOnboarding = true)
-                            else
-                                MainView.Config
-                        )
-                    }
+                    var view by viewState
 
                     val showLaunchRestore by showLaunchRestoreState
                     val pendingImportUri by pendingImportUriState
@@ -1111,6 +1194,9 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             QuicLocScreen(
                                 modifier = Modifier.padding(innerPadding),
                                 numbersList = numbersList,
+                                dialableCount = dialableCount,
+                                numbersByToken = numbersByToken,
+                                canRequestLocationByToken = canRequestLocationByToken,
                                 starredSet = starredSet,
                                 myNumber = myNumber,
                                 notificationAccessGranted = notificationAccessGranted,
@@ -1171,13 +1257,21 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     if (number.isNotBlank()) {
                                         whitelistManager.addNumber(number)
                                         numbersState.value = whitelistManager.getNumbers().toList()
+                                        dialableCountState.value = whitelistManager.getDialableNumbers().size
+                                        canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
                                         Toast.makeText(this, "Added — they can now ask for your location", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 onRemoveNumber = { number ->
                                     whitelistManager.removeNumber(number)
                                     numbersState.value = whitelistManager.getNumbers().toList()
+                                    dialableCountState.value = whitelistManager.getDialableNumbers().size
+                                    canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
                                     starredState.value = whitelistManager.getStarredNumbers()
+                                },
+                                onToggleCanRequestLocation = { token, newState ->
+                                    whitelistManager.setCanRequestLocation(token, newState)
+                                    canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
                                 },
                                 onPickContact = { launchContactPicker() },
                                 onOpenTutorials = { view = MainView.TutorialsHub },
@@ -1310,7 +1404,18 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         isAuthenticated = true
         authState.value = true
         pinGateState.value = false
-        checkPermissions()
+        // Only auto-walk the permission rationale chain once per process
+        // lifetime, not on every unlock. unlock() runs on every successful
+        // re-authentication -- an ordinary Home-button press backgrounds the
+        // activity and clears authState (see onPause), so without this gate,
+        // skipping (or simply not yet having reached) any one permission
+        // meant the full "Step 1 of N" dialog sequence re-fired every single
+        // time the user reopened the app. Missing permissions are still
+        // reachable any time via the Setup Checklist / All Permissions panel.
+        if (!hasRunPermissionChainThisSession) {
+            hasRunPermissionChainThisSession = true
+            checkPermissions()
+        }
     }
 
     /**
@@ -1368,33 +1473,71 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     // -------------------------------------------------------------------------
 
     private fun launchContactPicker() {
+        // Pick a CONTACT, not a single phone row: ACTION_PICK against the
+        // Phone content URI forces the system picker to resolve to exactly
+        // one number, so a contact with a mobile AND a home number would only
+        // ever get the one the user happened to tap. Picking the contact
+        // itself lets handleContactPicked enumerate every number on file.
         val intent = android.content.Intent(
             android.content.Intent.ACTION_PICK,
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+            ContactsContract.Contacts.CONTENT_URI
         )
         beginSystemFlow()
         contactPickerLauncher.launch(intent)
     }
 
     private fun handleContactPicked(uri: Uri) {
-        val projection = arrayOf(
-            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-            ContactsContract.CommonDataKinds.Phone.NUMBER
-        )
-        contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-            if (!cursor.moveToFirst()) return
-            val name = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME))
-            val number = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER))
+        try {
+            val contactCursor = contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.Contacts._ID, ContactsContract.Contacts.DISPLAY_NAME),
+                null, null, null
+            ) ?: return
+            contactCursor.use { cursor ->
+                if (!cursor.moveToFirst()) return
+                val idIdx = cursor.getColumnIndex(ContactsContract.Contacts._ID)
+                val nameIdx = cursor.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME)
+                if (idIdx < 0) return
+                val contactId = cursor.getString(idIdx)
+                val name = if (nameIdx >= 0) cursor.getString(nameIdx) else null
 
-            if (!number.isNullOrBlank()) {
-                whitelistManager.addContact(name, number)
-            } else if (!name.isNullOrBlank()) {
-                whitelistManager.addContact(name, "")
+                val numbers = mutableListOf<String>()
+                contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                    "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                    arrayOf(contactId),
+                    null
+                )?.use { phoneCursor ->
+                    val numberIdx = phoneCursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                    if (numberIdx >= 0) {
+                        while (phoneCursor.moveToNext()) {
+                            phoneCursor.getString(numberIdx)?.takeIf { it.isNotBlank() }?.let { numbers.add(it) }
+                        }
+                    }
+                }
+
+                // One whitelist entry per number, all sharing this contact's
+                // name -- WhitelistManager matches by name OR any of a
+                // contact's numbers, and the UI still shows a single row for
+                // the shared display name, so this doesn't create duplicates
+                // on screen while still answering from any of their numbers.
+                if (numbers.isNotEmpty()) {
+                    for (number in numbers.distinct()) {
+                        whitelistManager.addContact(name, number)
+                    }
+                } else if (!name.isNullOrBlank()) {
+                    whitelistManager.addContact(name, "")
+                }
+
+                numbersState.value = whitelistManager.getNumbers().toList()
+                dialableCountState.value = whitelistManager.getDialableNumbers().size
+                canRequestLocationByTokenState.value = computeCanRequestLocationByToken()
+                val toastName = name?.takeIf { it.isNotBlank() } ?: numbers.firstOrNull() ?: "Contact"
+                Toast.makeText(this, "Added $toastName — they can now ask for your location", Toast.LENGTH_SHORT).show()
             }
-
-            numbersState.value = whitelistManager.getNumbers().toList()
-            val toastName = name?.takeIf { it.isNotBlank() } ?: number ?: "Contact"
-            Toast.makeText(this, "Added $toastName — they can now ask for your location", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Couldn't read that contact — try again.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1474,7 +1617,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                     checkNotificationListenerPermission()
                 }
                 beginSystemFlow()
-                singlePermissionLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                launchPermissionRequest(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
             },
             onSkip = {
                 pendingRationaleState.value = null
@@ -1823,6 +1966,9 @@ fun BiometricGateScreen(
 fun QuicLocScreen(
     modifier: Modifier = Modifier,
     numbersList: List<String>,
+    dialableCount: Int = numbersList.size,
+    numbersByToken: Map<String, List<String>> = emptyMap(),
+    canRequestLocationByToken: Map<String, Boolean> = emptyMap(),
     starredSet: Set<String>,
     myNumber: String,
     notificationAccessGranted: Boolean,
@@ -1845,6 +1991,7 @@ fun QuicLocScreen(
     onRequestNotificationAccess: () -> Unit,
     onAddNumber: (String) -> Unit,
     onRemoveNumber: (String) -> Unit,
+    onToggleCanRequestLocation: (String, Boolean) -> Unit = { _, _ -> },
     onPickContact: () -> Unit,
     onOpenTutorials: () -> Unit = {},
     onOpenHistory: () -> Unit = {},
@@ -1861,13 +2008,18 @@ fun QuicLocScreen(
     val scrollState = rememberScrollState()
 
     val pinSet = currentPin.isNotBlank()
+    // Absent from the map defaults to true (can-request) — matches
+    // ContactEntry.canRequestLocation's own default for entries added before
+    // this existed, or not yet reflected in this snapshot.
+    val sharingCount = numbersList.count { canRequestLocationByToken[it] != false }
 
     // Same source of truth as the All Permissions table — the checklist and the
     // table can never disagree.
-    val setupSteps = remember(enabled, numbersList.size, myNumber, permissionStatuses, pinSet) {
+    val setupSteps = remember(enabled, numbersList.size, dialableCount, myNumber, permissionStatuses, pinSet) {
         Readiness.steps(
             enabled = enabled,
             whitelistCount = numbersList.size,
+            dialableWhitelistCount = dialableCount,
             myNumber = myNumber,
             permissions = permissionStatuses,
             pinSet = pinSet,
@@ -1933,21 +2085,23 @@ fun QuicLocScreen(
         )
 
         // ------------------------------------------------------------------
-        // 1 — Trusted contacts
+        // 1 — Emergency contacts
         // ------------------------------------------------------------------
         SectionCard(
             number = sectionNo("contacts"),
-            title = "Trusted contacts",
-            subtitle = "Who is allowed to ask where you are",
+            title = "Emergency contacts",
+            subtitle = "Who gets alerted, and who can ask",
             statusText = if (numbersList.isEmpty())
                 "Nobody yet — QuicLoc will ignore every request"
             else
-                "${numbersList.size} allowed · ${starredSet.size} of 3 starred",
+                "${numbersList.size} emergency · $sharingCount can ask · ${starredSet.size} of 3 starred",
             statusOk = numbersList.isNotEmpty(),
         ) {
             Text(
-                text = "Only the people listed here can trigger a reply. Anyone else who texts " +
-                    "the trigger word is ignored silently — they aren't told the app exists.",
+                text = "Everyone here gets your location when you tap the widget for a safety " +
+                    "check or an emergency alert. People marked \"can ask\" can also request it " +
+                    "themselves by texting the trigger word — anyone else who texts it is ignored " +
+                    "silently, without being told the app exists.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2000,14 +2154,45 @@ fun QuicLocScreen(
                 modifier = Modifier.padding(top = 4.dp)
             )
 
+            Spacer(modifier = Modifier.height(12.dp))
+            // Adding someone to the whitelist only does half the job — they
+            // also have to know the trigger word in the first place. Nothing
+            // else in the app ever tells a new contact that.
+            val inviteContext = LocalContext.current
+            OutlinedButton(
+                onClick = {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(
+                            Intent.EXTRA_TEXT,
+                            "Hey — I use QuicLoc so you can check on me. Text me the word " +
+                                "\"loc\" any time (as its own message) and I'll text back my " +
+                                "location automatically."
+                        )
+                    }
+                    inviteContext.startActivity(Intent.createChooser(send, "Tell them what to text"))
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Tell them what to text")
+            }
+            Text(
+                text = "Adding someone here only lets them ask — they still need to know the " +
+                    "word. Send them this so they do.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "Allowed to ask (${numbersList.size})",
+                text = "Emergency contacts (${numbersList.size})",
                 style = MaterialTheme.typography.titleSmall,
             )
             Text(
                 text = "★ marks a priority contact — the widget's 3-tap safety check goes to " +
-                    "these (up to 3). Everyone here gets the 4-tap emergency alert.",
+                    "these (up to 3). Everyone here gets the 4-tap emergency alert. Tap a " +
+                    "contact's \"can ask\" / \"alerts only\" line to flip it.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
@@ -2028,15 +2213,39 @@ fun QuicLocScreen(
                 // rendering is fine.
                 numbersList.forEach { number ->
                     val isStarred = starredSet.contains(number)
+                    // number is a displayToken: the contact's NAME when one
+                    // is set, which otherwise leaves no way to tell which
+                    // actual phone number is authorized for this row.
+                    val realNumbers = numbersByToken[number].orEmpty()
+                    val canRequest = canRequestLocationByToken[number] != false
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = number,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = number,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            if (realNumbers.isNotEmpty()) {
+                                Text(
+                                    text = realNumbers.joinToString(", "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Text(
+                                text = if (canRequest) "Can ask" else "Alerts only",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (canRequest)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.clickable {
+                                    onToggleCanRequestLocation(number, !canRequest)
+                                }
+                            )
+                        }
                         IconButton(onClick = { onToggleStar(number) }) {
                             Icon(
                                 imageVector = if (isStarred) Icons.Default.Star else Icons.Outlined.Star,
@@ -2160,10 +2369,10 @@ fun QuicLocScreen(
             statusOk = null,
         ) {
             Text(
-                text = "The widget is for sending your own location on purpose — parking spot, " +
-                    "safety check, emergency. Tap it repeatedly; the count decides who gets it. " +
-                    "Each tap must land within about half a second of the last one, and buzzes " +
-                    "to confirm.",
+                text = "The widget is for sending your own location on purpose — a safety check, " +
+                    "an emergency alert, or just finding your car. Tap it repeatedly; the count " +
+                    "decides who gets it. Each tap must land within about half a second of the " +
+                    "last one, and buzzes to confirm.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2226,9 +2435,10 @@ fun QuicLocScreen(
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        text = "Used by the 2-tap parking reminder only. This is YOUR number — " +
-                            "it is not a trusted contact and does not let anyone request your " +
-                            "location.",
+                        text = "Used by the 2-tap parking reminder. QuicLoc also always treats " +
+                            "this number as trusted — handy for testing the trigger word by " +
+                            "texting yourself from another device you own. It's still just your " +
+                            "own number: nobody else can use it to request your location.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
@@ -3417,7 +3627,7 @@ fun TutorialsHubScreen(
  * Full text of a single tutorial in a scrollable column, with a sticky
  * confirm button at the bottom.
  *
- * @param confirmLabel "Got it" during onboarding, "Done" otherwise.
+ * @param confirmLabel "Set QuicLoc up" during onboarding, "Done" otherwise.
  * @param onBrowseAll Optional secondary action shown only on the
  *   first-launch tutorial — taps mark onboarding complete *and* jump to
  *   the tutorials hub so the user can read more if they want.
@@ -3592,9 +3802,18 @@ fun DiagnosticsScreen(
     // Load + decrypt off the composition thread so navigating here never janks.
     var events by remember { mutableStateOf<List<DiagnosticEvent>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
+    // New events are written by SmsReceiver/NotificationListener/
+    // LocationReplyService — all background components this screen has no
+    // direct signal from. Poll while the screen is open so a trigger that
+    // arrives while the user is already looking at this screen (exactly the
+    // troubleshooting workflow this screen exists for) actually shows up,
+    // instead of only appearing after navigating away and back.
     LaunchedEffect(diagManager) {
-        events = withContext(Dispatchers.IO) { diagManager.getEvents() }
-        loaded = true
+        while (true) {
+            events = withContext(Dispatchers.IO) { diagManager.getEvents() }
+            loaded = true
+            delay(2000)
+        }
     }
     var captureAll by remember { mutableStateOf(initialCaptureAll) }
 
@@ -3793,15 +4012,24 @@ private fun StatusRow(label: String, ok: Boolean, value: String? = null) {
  * timeout, missing reply action, etc.) render on `errorContainer` with a
  * `✗` marker so they stand out.
  *
- * Data source: [RequestHistoryManager.getHistory], read once on first
- * composition. Capped at 100 entries (oldest evicted on insert).
+ * Data source: [RequestHistoryManager.getHistory], polled while this screen
+ * is open so a request handled by a background component (SmsReceiver,
+ * NotificationListener, LocationReplyService) while the user already has
+ * this screen open still shows up, not just on the next navigation here.
+ * Capped at 100 entries (oldest evicted on insert).
  */
 @Composable
 fun HistoryScreen(
     modifier: Modifier = Modifier,
     historyManager: RequestHistoryManager
 ) {
-    val history = remember { historyManager.getHistory() }
+    var history by remember { mutableStateOf(historyManager.getHistory()) }
+    LaunchedEffect(historyManager) {
+        while (true) {
+            delay(2000)
+            history = historyManager.getHistory()
+        }
+    }
 
     Column(
         modifier = modifier

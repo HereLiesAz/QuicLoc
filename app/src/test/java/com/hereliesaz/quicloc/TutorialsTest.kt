@@ -90,6 +90,35 @@ class TutorialsTest {
     }
 
     @Test
+    fun `the permissions tutorial does not describe find-my-phone while the feature is disabled`() {
+        // requiresFindMyPhone hides two whole tutorials, but "permissions" is
+        // a single doc covering every permission -- most of which are real
+        // regardless of find-my-phone, so it stays visible with its
+        // find-my-phone-only sections (Camera, Device Admin, Full-Screen
+        // Intent) conditionally omitted instead of hiding the whole thing.
+        val body = Tutorials.byId("permissions")!!.body
+        if (!FindMyPhone.ENABLED) {
+            assertTrue(
+                "should not mention Camera permission while find-my-phone is off",
+                !body.contains("Camera:")
+            )
+            assertTrue(
+                "should not mention Device Admin while find-my-phone is off",
+                !body.contains("Bind Device Admin")
+            )
+            assertTrue(
+                "should not mention Full-Screen Intent while find-my-phone is off",
+                !body.contains("Full-Screen Intent:")
+            )
+        }
+        // Regardless of the flag, this permission is genuinely unused.
+        assertTrue(
+            "should never claim READ_CONTACTS is requested -- it isn't declared",
+            !body.contains("Read Contacts:")
+        )
+    }
+
+    @Test
     fun `the first-launch tutorial is always visible`() {
         assertTrue(Tutorials.visible.any { it.id == Tutorials.MAIN_ID })
     }

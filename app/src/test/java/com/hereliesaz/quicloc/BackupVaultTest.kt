@@ -37,6 +37,7 @@ class BackupVaultTest {
         BackupVault.backupFile(context).delete()
         context.deleteSharedPreferences("quicloc_secure_prefs")
         context.deleteSharedPreferences("quicloc_secure_prefs_fallback")
+        context.deleteSharedPreferences("quicloc_backup_attempts")
         whitelist = WhitelistManager(context)
     }
 
@@ -142,6 +143,55 @@ class BackupVaultTest {
     }
 
     @Test
+    fun `restore preserves the phone number of a name+number contact`() {
+        // The regression this guards: snapshot() used to store only display
+        // tokens, so a contact added via "Pick from Contacts" (both a name
+        // AND a number) would restore as a name-only entry with no number,
+        // silently breaking the SMS trigger for that contact on a new device.
+        whitelist.setPin("123456")
+        whitelist.addContact("Mom", "+15551234567")
+        BackupVault.flush(context)
+        val savedBytes = BackupVault.backupFile(context).readBytes()
+
+        context.deleteSharedPreferences("quicloc_secure_prefs")
+        context.deleteSharedPreferences("quicloc_secure_prefs_fallback")
+        BackupVault.backupFile(context).writeBytes(savedBytes)
+
+        val result = BackupVault.restoreFromInternal(context, "123456")
+        assertTrue("restore failed: ${result.exceptionOrNull()?.message}", result.isSuccess)
+        assertEquals(1, result.getOrNull()!!.whitelistCount)
+
+        val restored = WhitelistManager(context)
+        assertTrue(restored.isWhitelisted("+15551234567"))
+        assertEquals(listOf("+15551234567"), restored.getDialableNumbers())
+        assertTrue(restored.isWhitelistedByName("Mom"))
+    }
+
+    @Test
+    fun `restore preserves an alerts-only contact's tier`() {
+        whitelist.setPin("123456")
+        whitelist.addContact("Mom", "+15551234567")
+        whitelist.addContact("Grandma", "+15559999999", canRequestLocation = false)
+        BackupVault.flush(context)
+        val savedBytes = BackupVault.backupFile(context).readBytes()
+
+        context.deleteSharedPreferences("quicloc_secure_prefs")
+        context.deleteSharedPreferences("quicloc_secure_prefs_fallback")
+        BackupVault.backupFile(context).writeBytes(savedBytes)
+
+        val result = BackupVault.restoreFromInternal(context, "123456")
+        assertTrue("restore failed: ${result.exceptionOrNull()?.message}", result.isSuccess)
+        assertEquals(2, result.getOrNull()!!.whitelistCount)
+
+        val restored = WhitelistManager(context)
+        assertTrue(restored.isWhitelisted("+15551234567"))
+        assertFalse(restored.isWhitelisted("+15559999999"))
+        // Still an emergency contact -- reachable by the widget -- just not
+        // able to trigger a reply by texting.
+        assertEquals(listOf("+15551234567", "+15559999999").sorted(), restored.getDialableNumbers().sorted())
+    }
+
+    @Test
     fun `export and import via byte arrays round-trip cleanly`() {
         whitelist.setPin("111111")
         whitelist.addNumber("+15551234567")
@@ -218,6 +268,66 @@ class BackupVaultTest {
                 assertFalse("$cat should not be recoverable", ex.isRecoverable)
             }
         }
+    }
+
+    // ---- attempt limiting -------------------------------------------------
+
+    @Test
+    fun `no lockout before any failed attempts`() {
+        assertEquals(0L, BackupVault.lockoutRemainingMs(context))
+    }
+
+    @Test
+    fun `repeated wrong PINs eventually lock out further attempts`() {
+        whitelist.setPin("123456")
+        whitelist.addNumber("+15551234567")
+        BackupVault.flush(context)
+
+        // Below the threshold: still WRONG_PIN, no lockout yet.
+        repeat(4) {
+            val result = BackupVault.restoreFromInternal(context, "000000")
+            assertCategory(result, BackupVault.RestoreException.Category.WRONG_PIN)
+        }
+        assertEquals(0L, BackupVault.lockoutRemainingMs(context))
+
+        // The 5th failure crosses the threshold and locks out further attempts.
+        val fifth = BackupVault.restoreFromInternal(context, "000000")
+        assertCategory(fifth, BackupVault.RestoreException.Category.WRONG_PIN)
+        assertTrue(BackupVault.lockoutRemainingMs(context) > 0)
+    }
+
+    @Test
+    fun `lockout blocks even the correct PIN until it expires`() {
+        whitelist.setPin("123456")
+        whitelist.addNumber("+15551234567")
+        BackupVault.flush(context)
+
+        repeat(5) { BackupVault.restoreFromInternal(context, "000000") }
+        assertTrue(BackupVault.lockoutRemainingMs(context) > 0)
+
+        // Even the right PIN is refused while locked out — the point is to
+        // bound the number of guesses, not just reject wrong ones.
+        val result = BackupVault.restoreFromInternal(context, "123456")
+        assertCategory(result, BackupVault.RestoreException.Category.LOCKED_OUT)
+    }
+
+    @Test
+    fun `LOCKED_OUT is not a recoverable category`() {
+        val ex = BackupVault.RestoreException(BackupVault.RestoreException.Category.LOCKED_OUT, "test")
+        assertFalse(ex.isRecoverable)
+    }
+
+    @Test
+    fun `a successful restore resets the failed-attempt counter`() {
+        whitelist.setPin("123456")
+        whitelist.addNumber("+15551234567")
+        BackupVault.flush(context)
+
+        repeat(3) { BackupVault.restoreFromInternal(context, "000000") }
+        val ok = BackupVault.restoreFromInternal(context, "123456")
+        assertTrue("restore failed: ${ok.exceptionOrNull()?.message}", ok.isSuccess)
+
+        assertEquals(0L, BackupVault.lockoutRemainingMs(context))
     }
 
     @Test

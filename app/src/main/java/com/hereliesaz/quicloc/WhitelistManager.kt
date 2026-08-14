@@ -3,7 +3,6 @@ package com.hereliesaz.quicloc
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
-import android.telephony.PhoneNumberUtils
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
@@ -16,7 +15,22 @@ import org.json.JSONObject
  */
 class WhitelistManager(context: Context) {
 
-    data class ContactEntry(val name: String?, val number: String) {
+    /**
+     * @param canRequestLocation Whether this contact is authorized to
+     *   request the location by sending the trigger word. Every contact —
+     *   regardless of this flag — still receives the home-screen widget's
+     *   safety-check / emergency alerts; that's the superset "emergency
+     *   contacts" list. `false` marks an "alerts only" contact: someone who
+     *   should be notified in an emergency but who can't themselves ask for
+     *   the location by texting. Defaults to `true` so existing entries (and
+     *   anything restored from an older backup with no such field) keep
+     *   today's behavior.
+     */
+    data class ContactEntry(
+        val name: String?,
+        val number: String,
+        val canRequestLocation: Boolean = true,
+    ) {
         /** The token users see for this entry and use to remove/star it. */
         val displayToken: String
             get() = name?.takeIf { it.isNotBlank() } ?: number
@@ -25,6 +39,7 @@ class WhitelistManager(context: Context) {
             return JSONObject().apply {
                 put("name", name ?: "")
                 put("number", number)
+                put("can_request_location", canRequestLocation)
             }.toString()
         }
 
@@ -35,7 +50,8 @@ class WhitelistManager(context: Context) {
                     val json = JSONObject(jsonStr)
                     val name = json.optString("name", "").takeIf { it.isNotBlank() }
                     val number = json.optString("number", "")
-                    ContactEntry(name, number)
+                    val canRequestLocation = json.optBoolean("can_request_location", true)
+                    ContactEntry(name, number, canRequestLocation)
                 } catch (e: Exception) {
                     // A plain (non-JSON) token: pre-migration legacy data, or a
                     // value round-tripped through BackupVault, which stores and
@@ -105,13 +121,13 @@ class WhitelistManager(context: Context) {
         return true
     }
 
-    fun addContact(name: String?, number: String) {
+    fun addContact(name: String?, number: String, canRequestLocation: Boolean = true) {
         val cleanNum = cleanPhoneNumber(number)
         if (cleanNum.isEmpty() && name.isNullOrBlank()) return
 
         val finalName = name?.trim()?.takeIf { it.isNotBlank() }
         val finalNumber = if (cleanNum.isNotEmpty()) cleanNum else number.trim()
-        val entry = ContactEntry(finalName, finalNumber)
+        val entry = ContactEntry(finalName, finalNumber, canRequestLocation)
 
         val currentJsonSet = prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
         val mutableSet = currentJsonSet.toMutableSet()
@@ -160,6 +176,28 @@ class WhitelistManager(context: Context) {
         BackupVault.snapshotAsync(appContext)
     }
 
+    /**
+     * Flips whether the contact(s) identified by [token] (a [ContactEntry.displayToken])
+     * are allowed to request the location by texting, without touching their
+     * name, number, or whether they're starred. A token can back more than
+     * one entry (e.g. a name with two numbers on file) — all of them move
+     * together so the row this corresponds to in the UI stays one consistent
+     * state rather than silently splitting.
+     */
+    fun setCanRequestLocation(token: String, canRequestLocation: Boolean) {
+        val currentJsonSet = prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
+        val newSet = currentJsonSet.mapNotNull { jsonStr ->
+            val entry = ContactEntry.fromJsonString(jsonStr) ?: return@mapNotNull jsonStr
+            if (entry.displayToken == token) {
+                entry.copy(canRequestLocation = canRequestLocation).toJsonString()
+            } else {
+                jsonStr
+            }
+        }.toSet()
+        saveNumbers(newSet)
+        BackupVault.snapshotAsync(appContext)
+    }
+
     private fun unstar(token: String) {
         val currentStarred = getStarredNumbers().toMutableSet()
         if (currentStarred.contains(token)) {
@@ -170,6 +208,18 @@ class WhitelistManager(context: Context) {
 
     fun replaceAllNumbers(numbers: Set<String>) {
         prefs.edit().putStringSet(KEY_WHITELIST, numbers).apply()
+        BackupVault.snapshotAsync(appContext)
+    }
+
+    /**
+     * Like [replaceAllNumbers], but takes full [ContactEntry] records instead
+     * of bare tokens — used by [BackupVault] restore so a contact added via
+     * "Pick from Contacts" (name AND number) keeps its number after
+     * restoring on a new device, instead of losing it the way round-tripping
+     * through [getNumbers]'s display tokens would.
+     */
+    fun replaceAllContacts(contacts: List<ContactEntry>) {
+        prefs.edit().putStringSet(KEY_WHITELIST, contacts.map { it.toJsonString() }.toSet()).apply()
         BackupVault.snapshotAsync(appContext)
     }
 
@@ -211,6 +261,13 @@ class WhitelistManager(context: Context) {
         BackupVault.snapshotAsync(appContext)
     }
 
+    /**
+     * Every emergency contact — the full superset the widget's safety-check
+     * and emergency alerts fan out to, regardless of each entry's
+     * [ContactEntry.canRequestLocation]. Use [getSharingNumbers] or filter
+     * by that field when "who can text me for my location" is what's
+     * actually needed.
+     */
     fun getContacts(): List<ContactEntry> {
         val strings = prefs.getStringSet(KEY_WHITELIST, emptySet()) ?: emptySet()
         return strings.mapNotNull { ContactEntry.fromJsonString(it) }
@@ -220,28 +277,67 @@ class WhitelistManager(context: Context) {
         return getContacts().map { it.displayToken }.toSet()
     }
 
+    /**
+     * Real, dialable phone numbers for every emergency contact that has one
+     * — deliberately including alerts-only entries: the widget's own taps
+     * are the one path an alerts-only contact CAN be reached through, since
+     * they can't request the location for themselves. Name-only entries
+     * (added by typing a handle with no digits, e.g. "Mom") are excluded —
+     * [ContactEntry.displayToken] would return their *name*, and sending SMS
+     * to that literal string as a destination address silently fails.
+     * Callers that need to actually text the whitelist (the widget's SMS
+     * fan-out) must use this instead of [getNumbers].
+     */
+    fun getDialableNumbers(): List<String> =
+        getContacts().mapNotNull { it.number.takeIf(String::isNotEmpty) }
+
+    /** [getDialableNumbers], restricted to starred entries. */
+    fun getDialableStarredNumbers(): List<String> {
+        val starred = getStarredNumbers()
+        return getContacts()
+            .filter { it.displayToken in starred }
+            .mapNotNull { it.number.takeIf(String::isNotEmpty) }
+    }
+
     fun isWhitelisted(number: String): Boolean {
         val cleanIncoming = cleanPhoneNumber(number)
         if (matchesMyNumber(cleanIncoming)) return true
-        return getContacts().any { entry -> numbersMatch(cleanIncoming, entry.number) }
+        return getContacts().any { entry ->
+            entry.canRequestLocation && numbersMatch(cleanIncoming, entry.number)
+        }
     }
+
+    /**
+     * Display tokens of contacts allowed to request the location by texting
+     * — i.e. [getContacts] filtered to [ContactEntry.canRequestLocation].
+     * Narrower than [getNumbers], which returns every emergency contact
+     * including alerts-only ones. Used where "who could plausibly have sent
+     * this trigger" matters, e.g. diagnostic messages.
+     */
+    fun getSharingNumbers(): Set<String> =
+        getContacts().filter { it.canRequestLocation }.map { it.displayToken }.toSet()
 
     private fun matchesMyNumber(cleanIncoming: String): Boolean {
         return numbersMatch(cleanIncoming, getMyNumber())
     }
 
-    /**
-     * [PhoneNumberUtils.compare] treats two blank strings as equal, so without
-     * this guard a name-only whitelist entry (empty number) would match any
-     * incoming number that also cleans to empty — a whitelist bypass.
-     */
-    private fun numbersMatch(cleanA: String, rawB: String): Boolean {
-        val cleanB = cleanPhoneNumber(rawB)
-        if (cleanA.isEmpty() || cleanB.isEmpty()) return false
-        return PhoneNumberUtils.compare(cleanA, cleanB)
-    }
+    private fun numbersMatch(cleanA: String, rawB: String): Boolean = PhoneNumbers.match(cleanA, rawB)
 
-    fun isWhitelistedByName(displayName: String): Boolean {
+    /**
+     * @param trustName Whether the caller has verified [displayName] actually
+     *   identifies the sender (e.g. resolved from the platform's Contacts
+     *   provider by the posting app), rather than being an arbitrary,
+     *   sender-controlled string (a self-set chat-app display name, or text
+     *   parsed out of the message body itself). When `false`, a name match is
+     *   never sufficient on its own — only an exact number match (or matching
+     *   the user's own number) authorizes the reply. Without this, anyone
+     *   could get a whitelisted user's location by setting their own display
+     *   name in any chat app to a name in that user's whitelist (e.g. "Mom")
+     *   and sending the trigger word — a real whitelist bypass, since chat
+     *   apps don't cryptographically verify a sender's self-declared identity
+     *   to this app.
+     */
+    fun isWhitelistedByName(displayName: String, trustName: Boolean = true): Boolean {
         val nameNorm = normalizeName(displayName)
         val cleanIncoming = cleanPhoneNumber(displayName)
         val contacts = getContacts()
@@ -249,8 +345,10 @@ class WhitelistManager(context: Context) {
         if (matchesMyNumber(cleanIncoming)) return true
 
         return contacts.any { entry ->
-            (nameNorm.isNotEmpty() && normalizeName(entry.name.orEmpty()) == nameNorm) ||
-                numbersMatch(cleanIncoming, entry.number)
+            entry.canRequestLocation && (
+                (trustName && nameNorm.isNotEmpty() && normalizeName(entry.name.orEmpty()) == nameNorm) ||
+                    numbersMatch(cleanIncoming, entry.number)
+            )
         }
     }
 
@@ -280,13 +378,18 @@ class WhitelistManager(context: Context) {
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build()
 
-            EncryptedSharedPreferences.create(
+            val prefs = EncryptedSharedPreferences.create(
                 context,
                 ENCRYPTED_PREFS_FILE,
                 masterKey,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
+            // Recover anything written to the plaintext fallback during an
+            // earlier, transient Keystore failure -- otherwise it's silently
+            // orphaned forever the moment Keystore starts working again.
+            migratePlaintextFallback(context, ENCRYPTED_PREFS_FILE + "_fallback", prefs)
+            prefs
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create EncryptedSharedPreferences, falling back to plaintext", e)
             context.getSharedPreferences(ENCRYPTED_PREFS_FILE + "_fallback", Context.MODE_PRIVATE)

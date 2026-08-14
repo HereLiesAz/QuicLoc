@@ -1,6 +1,5 @@
 package com.hereliesaz.quicloc
 
-import android.telephony.PhoneNumberUtils
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -16,8 +15,9 @@ import java.util.concurrent.ConcurrentHashMap
  * the duplicate always arrives within a second or two, never across a process
  * restart. Whichever path handles a sender first calls [markHandled]; the other
  * sees [wasRecentlyHandled] and defers. Matching is by phone number with
- * [PhoneNumberUtils.compare] so formatting differences (`(504) 326-9451` vs
- * `5043269451`) still collapse to one.
+ * [PhoneNumbers.match] so formatting differences (`(504) 326-9451` vs
+ * `5043269451`) still collapse to one, without treating two different real
+ * numbers as the same one.
  */
 object TriggerDedupe {
 
@@ -53,8 +53,7 @@ object TriggerDedupe {
     /**
      * Records that a `loc` reply was just dispatched for [number]. Non-numeric
      * inputs (e.g. a contact display name that a caller passes through) are
-     * ignored — only phone numbers are meaningful keys, and
-     * [PhoneNumberUtils.compare] is undefined on non-numeric strings.
+     * ignored — only phone numbers are meaningful keys.
      */
     fun markHandled(number: String) {
         if (!hasDigits(number)) return
@@ -65,7 +64,7 @@ object TriggerDedupe {
 
     /**
      * True if any (numeric) candidate in [candidates] matches a number handled
-     * within the window. Numbers are compared with [PhoneNumberUtils.compare] so
+     * within the window. Numbers are compared with [PhoneNumbers.match] so
      * differing formats still match; non-numeric candidates are skipped.
      */
     fun wasRecentlyHandled(candidates: Collection<String>): Boolean {
@@ -73,7 +72,7 @@ object TriggerDedupe {
         val numbers = candidates.filter { hasDigits(it) }
         if (numbers.isEmpty()) return false
         return handled.any { (stored, ts) ->
-            now - ts < WINDOW_MS && numbers.any { PhoneNumberUtils.compare(it, stored) }
+            now - ts < WINDOW_MS && numbers.any { PhoneNumbers.match(it, stored) }
         }
     }
 

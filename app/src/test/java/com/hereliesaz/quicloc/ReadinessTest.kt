@@ -35,7 +35,8 @@ class ReadinessTest {
         myNumber: String = "+15550100",
         permissions: List<PermissionStatus> = allGranted(),
         pinSet: Boolean = true,
-    ) = Readiness.steps(enabled, whitelistCount, myNumber, permissions, pinSet)
+        dialableWhitelistCount: Int = whitelistCount,
+    ) = Readiness.steps(enabled, whitelistCount, myNumber, permissions, pinSet, dialableWhitelistCount)
 
     @Test
     fun `fully configured app reports ready with nothing outstanding`() {
@@ -115,14 +116,22 @@ class ReadinessTest {
     }
 
     @Test
-    fun `notification access and battery are recommended, never required`() {
-        val steps = steps(
-            permissions = withRevoked(PermKeys.NOTIF_LISTENER, PermKeys.BATTERY)
-        )
-        assertTrue("chat apps and battery are nice-to-have", Readiness.isReady(steps))
-        assertEquals(2, Readiness.optionalRemaining(steps))
+    fun `notification access is recommended, never required`() {
+        val steps = steps(permissions = withRevoked(PermKeys.NOTIF_LISTENER))
+        assertTrue("chat apps are nice-to-have", Readiness.isReady(steps))
+        assertEquals(1, Readiness.optionalRemaining(steps))
         assertFalse(steps.first { it.id == "notification-access" }.required)
-        assertFalse(steps.first { it.id == "battery" }.required)
+    }
+
+    @Test
+    fun `battery optimization exemption is required and blocks readiness`() {
+        // Doze/App Standby can put a sleeping app's receivers on ice, so a
+        // safety app can't claim "ready" without this -- see the checklist's
+        // own copy about a 3am request being missed.
+        val steps = steps(permissions = withRevoked(PermKeys.BATTERY))
+        assertTrue(steps.first { it.id == "battery" }.required)
+        assertEquals(StepState.TODO, steps.first { it.id == "battery" }.state)
+        assertFalse(Readiness.isReady(steps))
     }
 
     @Test
@@ -189,9 +198,27 @@ class ReadinessTest {
         // platform-specific permission should be present.
         val steps = steps(enabled = false, whitelistCount = 0, myNumber = "", permissions = emptyList(), pinSet = false)
         assertEquals(
-            listOf("enabled", "sms", "location", "whitelist"),
+            listOf("enabled", "sms", "location", "whitelist", "battery"),
             steps.filter { it.required }.map { it.id }
         )
-        assertEquals(4, Readiness.requiredRemaining(steps))
+        assertEquals(5, Readiness.requiredRemaining(steps))
+    }
+
+    // ---- dialable whitelist count -----------------------------------------
+
+    @Test
+    fun `a whitelist made up entirely of name-only entries does not satisfy the whitelist step`() {
+        // whitelistCount > 0 (there are entries) but dialableWhitelistCount
+        // is 0 (none of them have a real phone number) -- can't answer an
+        // SMS trigger or the widget's SMS fan-out.
+        val steps = steps(whitelistCount = 2, dialableWhitelistCount = 0)
+        assertEquals(StepState.TODO, steps.first { it.id == "whitelist" }.state)
+        assertFalse(Readiness.isReady(steps))
+    }
+
+    @Test
+    fun `at least one dialable entry satisfies the whitelist step even with name-only entries too`() {
+        val steps = steps(whitelistCount = 3, dialableWhitelistCount = 1)
+        assertEquals(StepState.DONE, steps.first { it.id == "whitelist" }.state)
     }
 }

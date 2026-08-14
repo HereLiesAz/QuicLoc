@@ -20,15 +20,17 @@ Select: **No — SMS access is needed but it is not a messaging app**
 
 **Describe why your app needs SMS permissions:**
 
-> QuicLoc is an emergency safety app. RECEIVE_SMS monitors for an SOS trigger word from an encrypted whitelist; SEND_SMS auto-replies with GPS coordinates. The SMS Retriever API cannot be used because it requires messages to contain an 11-character app hash, which is impossible for natural emergency texts sent by human contacts. Intents cannot be used as the device may be unattended. No data is stored.
+> QuicLoc is a physical-safety / emergency-alert app. Its core mechanism is the home-screen widget: the user taps it to send a safety-check or emergency alert with their GPS location to their chosen emergency contacts — this requires no SMS access at all. RECEIVE_SMS and SEND_SMS extend that same safety mechanism by letting a subset of those emergency contacts (the ones the user has explicitly marked as allowed to ask, not merely added to the emergency list) also request the location themselves by texting a trigger word, which the app answers with the same GPS-coordinate reply the widget sends. The SMS Retriever API cannot be used because it requires messages to contain an 11-character app hash, which is impossible for natural texts sent by human contacts. Intents cannot be used as the device may be unattended. No data is stored.
 
 **Video instructions:**
 > **CRITICAL:** You MUST provide a video link here, even though the form says it's optional. Google Play will automatically reject the declaration without one.
-> Record a short screen recording showing:
-> 1. Opening QuicLoc and adding a phone number to the whitelist
-> 2. Sending "loc" from another device via SMS to trigger a response
-> 3. The automatic GPS location SMS reply arriving on the sending device
+> Record a short screen recording showing, in this order:
+> 1. Opening QuicLoc, adding an emergency contact, and demonstrating the home-screen widget itself — tap it 3 times for the safety-check alert and 4 times for the emergency alert, so the reviewer sees the app's core safety function working with no SMS involved at all.
+> 2. Adding a phone number as a contact who can also request the location by text (the "can ask" toggle in the emergency contacts list).
+> 3. Sending "loc" from that contact's device via SMS to trigger a response.
+> 4. The automatic GPS location SMS reply arriving on the sending device.
 >
+> Leading with the widget matters: it shows RECEIVE_SMS/SEND_SMS are an optional extension of an already-complete safety-alert app, not the app's entire reason for existing.
 > Upload this to YouTube (unlisted) and paste the link in the "Video instructions" field.
 
 
@@ -60,11 +62,12 @@ Select: **Yes**
 > QuicLoc's core function is to respond to incoming location requests automatically, including when the device screen is off and the app is not in the foreground. When a trigger message is received from a whitelisted contact, the app must obtain the device's current GPS coordinates to send a location reply. This is the sole purpose of background location access. The location is used only to generate a Google Maps link sent to the requesting contact. Location is never obtained proactively, stored, logged, or transmitted to any server or third party.
 
 **Provide a video demonstrating the background location use:**
-> Record a short screen recording showing:
-> 1. Opening QuicLoc and adding a phone number to the whitelist
-> 2. Locking the device / closing the app
-> 3. Sending "loc" from another device to trigger a response
-> 4. The automatic GPS reply arriving on the sending device
+> Record a short screen recording showing, in this order:
+> 1. Opening QuicLoc, adding an emergency contact, and demonstrating the widget's safety-check (3 taps) and emergency (4 taps) alerts.
+> 2. Adding a phone number as a contact who can also request the location by text.
+> 3. Locking the device / closing the app.
+> 4. Sending "loc" from that contact's device to trigger a response while the device is locked.
+> 5. The automatic GPS reply arriving on the sending device.
 >
 > Upload this to YouTube (unlisted) and paste the link in the Play Console form.
 
@@ -149,10 +152,10 @@ Select: **Yes**
 Fill in the Data safety form as follows:
 
 ### Does your app collect or share any of the required user data types?
-**No** — QuicLoc does not collect any data. It does not transmit any user data to the developer or any third party. The only outbound data is the location reply sent directly from the device to the requesting contact via SMS or notification reply, which is the explicit intended function of the app.
+**Yes — Location is shared (not collected).** Location is sent directly, device-to-device, to one or more of the user's own emergency contacts — either because the user tapped the home-screen widget to send a safety-check or emergency alert, or because a contact the user has specifically allowed to ask requested it by texting the trigger word. This is the explicit, sole function of the app. It is never collected, stored, or transmitted to the developer, an analytics service, or any other third party. See [`PLAY_PUBLISHING.md`](PLAY_PUBLISHING.md#data-safety--privacy).
 
-### Data types to declare as NOT collected:
-- Location — not collected (obtained on demand, used in-memory, discarded)
+### Data types to declare:
+- **Location — Shared.** Purpose: App functionality. Required (it's the app's core function). Obtained on demand, held in memory only long enough to send the reply, then discarded — never written to disk or a server.
 - Personal info — not collected
 - Financial info — not collected
 - Health and fitness — not collected
@@ -171,7 +174,7 @@ Fill in the Data safety form as follows:
 **N/A** — No data is transmitted to any server. The only transmission is the SMS/notification reply sent directly to the requesting contact through standard Android system APIs.
 
 ### Can users request data deletion?
-**Yes** — All user data (the whitelist) is stored locally on-device and can be deleted at any time by removing entries in the app or uninstalling the app entirely.
+**Yes** — All user data (the emergency contact list) is stored locally on-device and can be deleted at any time by removing entries in the app or uninstalling the app entirely.
 
 ---
 
@@ -190,4 +193,4 @@ The app will receive a rating of **Everyone**.
 
 If Google Play reviewers contact you for additional clarification, use this response template:
 
-> QuicLoc is a single-purpose personal safety tool. Its only function is to allow a user's pre-approved trusted contacts to request the user's location by sending a keyword. The app responds automatically with a Google Maps link. All sensitive permissions (SMS, notification access, background location) are used exclusively for this single function. No data is collected, stored server-side, or shared with any third party including the developer. The whitelist of approved contacts is encrypted on-device using Android Keystore-backed AES-256 encryption and is protected by biometric authentication. The app has no network connectivity of its own — it uses only Android system APIs and Google Play Services for GPS.
+> QuicLoc is a single-purpose personal safety tool built around a home-screen widget: the user taps it to send a safety-check or emergency alert, with their GPS location, to their chosen emergency contacts — no incoming message of any kind is required for this to work. SMS and notification access extend that same mechanism by additionally letting the user's pre-approved trusted contacts request the location themselves by sending a keyword, which the app answers automatically with a Google Maps link. All sensitive permissions (SMS, notification access, background location) are used exclusively for this single function. No data is collected, stored server-side, or shared with any third party including the developer. The list of emergency contacts is encrypted on-device using Android Keystore-backed AES-256 encryption and is protected by biometric authentication. The app has no network connectivity of its own — it uses only Android system APIs and Google Play Services for GPS.

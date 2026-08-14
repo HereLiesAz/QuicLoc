@@ -96,7 +96,7 @@ class SmsReceiver : BroadcastReceiver() {
                 if (looksLikeTrigger) diag.record(buildEvent(sender, body,
                     DiagOutcome.WHITELIST_NO_MATCH_BY_NUMBER,
                     "Trigger '$body' from $sender, but number not in whitelist. " +
-                        "Whitelist: [${whitelistManager.getNumbers().joinToString(", ")}]",
+                        "Contacts who can request: [${whitelistManager.getSharingNumbers().joinToString(", ")}]",
                     triggerMatched = true, whitelistMatched = false))
                 continue
             }

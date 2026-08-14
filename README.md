@@ -1,9 +1,9 @@
 # QuicLoc
 
-**QuicLoc answers "where are you?" for you.**
+**QuicLoc lets people you trust check that you're safe, without you touching your phone.**
 
 1. You list the people you trust.
-2. One of them texts you the word **`loc`**.
+2. One of them texts you the word **`loc`** — to check in on you, or because you didn't answer.
 3. Your phone texts back a Google Maps link — by itself, screen off, app closed.
 
 Your location is fetched only at that moment, sent only to that person, and never stored anywhere. No server, no account, no tracking.
@@ -12,7 +12,7 @@ Your location is fetched only at that moment, sent only to that person, and neve
 
 ## Is this the app you want?
 
-**Yes, if** you're tired of "you home yet?" texts, want your partner or parent to be able to check on you without you touching your phone, or want a panic button that texts your location to people you've already chosen.
+**Yes, if** you want a partner or parent to be able to confirm you got home safe without you touching your phone, want a panic button that texts your location to people you've already chosen, or just want to stop typing "on my way" every time someone checks on you.
 
 **No, if** you want a live map of where someone is over time. That's Google Maps Live Location, and QuicLoc deliberately doesn't do it — nothing is streamed, logged, or kept.
 
@@ -29,7 +29,7 @@ The app has a live checklist at the top of its settings screen that tracks all o
 | 1 | **Turn QuicLoc on** | The master switch, first thing on the settings screen. While it's off, every trigger is ignored. |
 | 2 | **Grant text messages + location** | QuicLoc reads incoming texts to spot the trigger word, and texts back a maps link. |
 | 3 | **Set location to "Allow all the time"** | *The step people miss.* Android asks twice. "While using the app" means QuicLoc can only answer while you're looking at it — which defeats the point. |
-| 4 | **Add at least one trusted contact** | Nobody else can trigger anything. An empty list means QuicLoc ignores the entire world. |
+| 4 | **Add at least one emergency contact** | Nobody else can trigger anything. An empty list means QuicLoc ignores the entire world. |
 
 Then **test it**: have someone on your list text you `loc`. A Google Maps link should come back within a few seconds. If it doesn't, open **Diagnostics** in the app — it shows the message arriving and the exact reason QuicLoc did or didn't act.
 
@@ -37,7 +37,7 @@ Then **test it**: have someone on your list text you `loc`. A Google Maps link s
 
 - **Notification Access** — extends the trigger to WhatsApp, Telegram, Signal, Messenger and Google Messages. Without it, only plain text messages work.
 - **Battery optimisation exemption** — so a request at 3am isn't slept through. QuicLoc does no background work, so this costs no battery.
-- **Your own number + the home-screen widget** — for the parking / safety-check / emergency shortcuts below.
+- **Your own number + the home-screen widget** — for the safety-check / emergency / parking shortcuts below.
 
 Install from [Releases](../../releases). On first launch you'll authenticate with your fingerprint or device PIN, then be walked through the permissions one at a time — "Step 2 of 5", with a plain-English explanation of what each one is for, what breaks if you skip it, and what QuicLoc will never do with it. Skipping is fine — the checklist lets you come back to any of them.
 
@@ -50,7 +50,7 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 | Section | What's in it |
 |---|---|
 | **Setup checklist** | Live ✓/✗ for everything QuicLoc needs, each with a one-tap fix |
-| **1 · Trusted contacts** | Who's allowed to ask, priority ★ stars, add by contact / number / name |
+| **1 · Emergency contacts** | Who gets alerted, who's also allowed to ask, priority ★ stars, add by contact / number / name |
 | **2 · The trigger word** | What they send, which apps work, Notification Access |
 | **3 · Home screen widget** | Your own number, the tap patterns and what each one needs |
 | **4 · Your QuicLoc PIN** | Set / change / remove the PIN that unlocks the app and encrypts your backup |
@@ -66,11 +66,11 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 ## Features
 
 - **Answers automatically** — no prompt, no ring, no tap. Works with the screen off and the app closed.
-- **Trusted contacts only** — anyone not on your list is ignored silently; they're never told the app exists.
+- **Emergency contacts only** — anyone not on your list is ignored silently; they're never told the app exists. Every contact gets the widget's safety-check and emergency alerts; you separately choose which of them, if any, can also request your location themselves by texting the trigger word.
 - **Works across messaging apps** — SMS always; WhatsApp, Telegram, Signal, Google Messages, Messenger and any app with an inline notification reply once Notification Access is granted.
-- **Home screen widget** — tap it twice to text your parking spot to yourself (`#Parking`), three times to alert up to 3 starred contacts (`#SafetyCheck`), four times to alert everyone on your list (`#Emergency`). One tap opens a help screen showing which of those are ready to use. Taps must land within about half a second of each other.
+- **Home screen widget** — tap it three times for a safety check to up to 3 starred contacts (`#SafetyCheck`), four times for an emergency alert to everyone on your list (`#Emergency`), or twice to just text your own location to yourself, e.g. to find a parked car (`#Parking`). One tap opens a help screen showing which of those are ready to use. Taps must land within about half a second of each other.
 - **Master on/off switch** — pauses every trigger without uninstalling. Optionally mirrored in a persistent notification with a one-tap toggle.
-- **Encrypted contact list** — trusted contacts, your own number and starred contacts are stored with AES-256-GCM keyed by the Android Keystore. The data never leaves your device.
+- **Encrypted contact list** — emergency contacts, your own number and starred contacts are stored with AES-256-GCM keyed by the Android Keystore. The data never leaves your device.
 - **Locked settings, two ways in** — fingerprint, face or device PIN, *or* a 6-digit QuicLoc PIN of your own for when a fingerprint won't read or the phone has no lock screen at all. The same PIN encrypts your backup. Background answering is deliberately *not* gated, so it keeps working while the phone is locked.
 - **Every permission explains itself before it's asked** — what it's for, exactly what breaks if you skip it, what QuicLoc will never do with it, and what screen you're about to see. Skipping is always allowed; the checklist lets you come back.
 - **Reliable location** — three-stage fallback (fresh GPS fix → cached location → forced update) so a request answers even from a cold start indoors.
@@ -131,7 +131,7 @@ Kotlin + Jetpack Compose, single activity, no backend.
 
 - **`SmsReceiver`** — `BroadcastReceiver` for incoming SMS; matches trigger word against the whitelist, hands off to a foreground service.
 - **`NotificationListener`** — `NotificationListenerService` that watches messaging-app notifications and replies through their inline reply action.
-- **`LocationHelper`** — Fused Location Provider with a three-stage fallback: `getCurrentLocation()` → `lastLocation` → `requestLocationUpdates()` with a 15-second timeout.
+- **`LocationHelper`** — Fused Location Provider with a three-stage fallback: `getCurrentLocation()` → `lastLocation` → `requestLocationUpdates()` with a 30-second timeout.
 - **`WhitelistManager`** — trusted contacts in `EncryptedSharedPreferences` (AES-256-GCM, Android Keystore), with migration of any legacy plaintext data.
 - **`Readiness`** — pure-Kotlin derivation of the setup checklist from the live permission snapshot; the same data drives the Permissions table, so the two can't disagree.
 - **`BiometricHelper`** — wraps `BiometricPrompt` to gate the UI. Background components are unaffected by auth state.
