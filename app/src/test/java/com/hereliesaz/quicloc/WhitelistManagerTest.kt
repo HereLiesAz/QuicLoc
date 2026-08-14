@@ -197,6 +197,51 @@ class WhitelistManagerTest {
         assertEquals(listOf("+15551234567"), whitelist.numbersForName("Mom ❤️"))
     }
 
+    // ---- name-spoofing bypass (trustName) ---------------------------------
+
+    @Test
+    fun `isWhitelistedByName with trustName=false does not authorize on a name match alone`() {
+        // An attacker who isn't whitelisted sets their own chat-app display
+        // name to "Mom" -- without the trustName gate this would incorrectly
+        // authorize them.
+        whitelist.addContact("Mom", "+15551234567")
+        assertFalse(whitelist.isWhitelistedByName("Mom", trustName = false))
+    }
+
+    @Test
+    fun `isWhitelistedByName with trustName=false still matches by number`() {
+        whitelist.addContact("Mom", "+15551234567")
+        assertTrue(whitelist.isWhitelistedByName("+15551234567", trustName = false))
+    }
+
+    @Test
+    fun `isWhitelistedByName with trustName=false still matches the user's own number`() {
+        whitelist.setMyNumber("+15551234567")
+        assertTrue(whitelist.isWhitelistedByName("+15551234567", trustName = false))
+    }
+
+    @Test
+    fun `isWhitelistedByName defaults to trusting the name`() {
+        whitelist.addContact("Mom", "+15551234567")
+        assertTrue(whitelist.isWhitelistedByName("Mom"))
+    }
+
+    // ---- strict number matching (no suffix-collision bypass) -------------
+
+    @Test
+    fun `isWhitelisted does not match a different number sharing only a 7-digit suffix`() {
+        // Two different real numbers, same last 7 digits, different area code.
+        whitelist.addNumber("+12125551234")
+        assertFalse(whitelist.isWhitelisted("+17185551234"))
+    }
+
+    @Test
+    fun `isWhitelisted still tolerates a missing or extra leading US country code`() {
+        whitelist.addNumber("+15551234567")
+        assertTrue(whitelist.isWhitelisted("5551234567"))
+        assertTrue(whitelist.isWhitelisted("15551234567"))
+    }
+
     // ---- own number is implicitly whitelisted ---------------------------
 
     @Test

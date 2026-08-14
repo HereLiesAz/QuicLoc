@@ -86,7 +86,8 @@ class NotificationListener : NotificationListenerService() {
             return
         }
 
-        val extraction = extractMessages(notification)
+        val isDefaultSmsApp = pkg == android.provider.Telephony.Sms.getDefaultSmsPackage(applicationContext)
+        val extraction = extractMessages(notification, isDefaultSmsApp)
         val candidates = extraction.messages
         if (candidates.isEmpty()) {
             if (captureAll) recordDiag(pkg, "", "", DiagOutcome.NO_MESSAGES_EXTRACTED,
@@ -127,7 +128,12 @@ class NotificationListener : NotificationListenerService() {
 
         Log.d(TAG, "msg from $sender via $pkg: '$body'")
 
-        val passphrase = whitelist.getPassphrase()
+        // The entire find-my-phone feature (and thus the passphrase) lives in
+        // the on-demand :feature_findmyphone module, which isn't shipped while
+        // FindMyPhone.ENABLED is false — skip this check entirely rather than
+        // decrypting/consuming a passphrase (and swallowing the message) for a
+        // feature that can't act on a match anyway.
+        val passphrase = if (FindMyPhone.ENABLED) whitelist.getPassphrase() else null
         val isPassphraseTrigger = !passphrase.isNullOrEmpty() &&
             (body == "$TRIGGER_PLAIN ${passphrase.lowercase()}" ||
              body == "$TRIGGER_PREFIXED ${passphrase.lowercase()}")
@@ -156,11 +162,12 @@ class NotificationListener : NotificationListenerService() {
             return
         }
 
-        if (!whitelist.isWhitelistedByName(sender)) {
+        if (!whitelist.isWhitelistedByName(sender, trustName = latest.verifiedContact)) {
             Log.d(TAG, "Sender '$sender' not whitelisted, ignoring.")
             recordDiag(pkg, sender, body, DiagOutcome.WHITELIST_NO_MATCH_BY_NAME,
-                "Trigger '$body' from \"$sender\" via $pkg, but sender not in whitelist. " +
-                    "Whitelist: [${whitelist.getNumbers().joinToString(", ")}]",
+                "Trigger '$body' from \"$sender\" via $pkg, but sender not in whitelist" +
+                    (if (!latest.verifiedContact) " (sender identity unverified — a name match alone isn't trusted)" else "") +
+                    ". Whitelist: [${whitelist.getNumbers().joinToString(", ")}]",
                 triggerMatched = true, whitelistMatched = false, extractionPath = extraction.path)
             return
         }
@@ -169,8 +176,7 @@ class NotificationListener : NotificationListenerService() {
         // notification is the duplicate of that SMS — dedupe against it. (RCS
         // and chat apps never fire SmsReceiver, so they fall through and reply
         // as normal; only the default SMS app's package is checked here.)
-        val defaultSms = android.provider.Telephony.Sms.getDefaultSmsPackage(applicationContext)
-        if (pkg == defaultSms) {
+        if (isDefaultSmsApp) {
             val candidates = buildList {
                 add(sender)
                 addAll(whitelist.numbersForName(sender))
@@ -180,16 +186,17 @@ class NotificationListener : NotificationListenerService() {
             // number-match it, so the time fallback must apply even if contact
             // resolution happened to add numbers that didn't match the SMS.
             val hasNumber = sender.any { it.isDigit() }
-            // Suppress if we can tie this notification to a number SmsReceiver
-            // already handled. When the notification gives us only a contact name
-            // we can't resolve to a number (no READ_CONTACTS), number matching is
-            // impossible — fall back to: did SmsReceiver handle ANY carrier
-            // trigger in the last few seconds? The carrier SMS and its default-app
-            // notification always arrive within ~1-2s, so this reliably collapses
-            // the duplicate without needing contacts. (RCS / chat apps don't fire
-            // SmsReceiver, so there's no recent carrier trigger and they reply.)
+            // The coarse "did SmsReceiver handle ANY carrier trigger recently"
+            // fallback is only safe to use when there's exactly one whitelisted
+            // contact — otherwise "a" recent carrier trigger might belong to a
+            // DIFFERENT contact than this notification's, and we'd silently
+            // drop this sender's legitimate reply instead of just double-texting
+            // (the much safer failure mode for a safety app). With one contact
+            // there's no ambiguity: any recent carrier trigger must be theirs.
+            val onlyOneWhitelistedContact = whitelist.getContacts().size == 1
             val alreadyHandledViaSms = TriggerDedupe.wasRecentlyHandled(candidates) ||
-                (!hasNumber && TriggerDedupe.carrierTriggerHandledWithin(SMS_NOTIF_DEDUPE_WINDOW_MS))
+                (!hasNumber && onlyOneWhitelistedContact &&
+                    TriggerDedupe.carrierTriggerHandledWithin(SMS_NOTIF_DEDUPE_WINDOW_MS))
             if (alreadyHandledViaSms) {
                 Log.d(TAG, "Duplicate of an SMS already handled — skipping notification from $pkg")
                 recordDiag(pkg, sender, body, DiagOutcome.DUPLICATE_SUPPRESSED,
@@ -273,8 +280,23 @@ class NotificationListener : NotificationListenerService() {
     /**
      * One extracted message with its sender and body. Group chats and
      * multi-message bundles produce multiple of these; we keep the latest.
+     *
+     * @property verifiedContact Whether [sender] is known to actually
+     *   identify the sender rather than being an arbitrary string the sender
+     *   (or the message body) controls. True only when the posting app
+     *   attached an `androidx.core.app.Person` with a non-null `uri` — the
+     *   platform's documented way to link a message to a real Contacts
+     *   provider entry. Everything else (a self-set chat-app display name for
+     *   an unsaved contact, or a "sender" parsed out of the raw message text)
+     *   is untrusted, and [WhitelistManager.isWhitelistedByName] will not
+     *   authorize a reply on a name match alone for it — see that method's
+     *   doc for why.
      */
-    private data class IncomingMessage(val sender: String, val body: String)
+    private data class IncomingMessage(
+        val sender: String,
+        val body: String,
+        val verifiedContact: Boolean = false,
+    )
 
     /**
      * The result of [extractMessages] plus which branch produced it, so the
@@ -284,7 +306,15 @@ class NotificationListener : NotificationListenerService() {
      */
     private data class Extraction(val path: String, val messages: List<IncomingMessage>)
 
-    private fun extractMessages(notification: Notification): Extraction {
+    /**
+     * @param isDefaultSmsApp Whether this notification came from the phone's
+     *   default SMS/RCS app — for that specific app the platform resolves the
+     *   notification title from the phone's own local Contacts (or shows the
+     *   raw sender number when unresolved), so an arbitrary remote party can't
+     *   set it themselves the way a chat-app profile display name can. Used
+     *   to decide whether the PlainText path's sender is trustworthy.
+     */
+    private fun extractMessages(notification: Notification, isDefaultSmsApp: Boolean): Extraction {
         val extras: Bundle = notification.extras ?: return Extraction("None", emptyList())
         val notifTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
 
@@ -302,10 +332,22 @@ class NotificationListener : NotificationListenerService() {
                         // For incoming, person.name is the sender. In 1:1 chats
                         // some apps leave person null and put the sender in the
                         // conversation title — fall back to that.
-                        val sender = m.person?.name?.toString().orEmpty()
+                        val personName = m.person?.name?.toString().orEmpty()
+                        val sender = personName
                             .ifEmpty { style.conversationTitle?.toString().orEmpty() }
                             .ifEmpty { notifTitle }
-                        IncomingMessage(sender = sender, body = m.text?.toString().orEmpty())
+                        // Only trust this sender string when it's literally the
+                        // platform-resolved Person's name AND that Person
+                        // carries a Contacts-provider URI — i.e. the posting
+                        // app itself vouches this message came from a saved
+                        // contact, not an arbitrary self-declared display name
+                        // an attacker could set to impersonate a whitelist entry.
+                        val verified = personName.isNotEmpty() && m.person?.uri != null
+                        IncomingMessage(
+                            sender = sender,
+                            body = m.text?.toString().orEmpty(),
+                            verifiedContact = verified,
+                        )
                     })
                 }
             }
@@ -314,6 +356,8 @@ class NotificationListener : NotificationListenerService() {
         }
 
         // 2. EXTRA_TEXT_LINES — used by some apps for bundled inbox-style.
+        //    The sender here is split out of the raw message text itself, so
+        //    it's never trustworthy (see parseSenderColonBody).
         val lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
         if (lines != null && lines.isNotEmpty()) {
             return Extraction("TextLines", lines.mapNotNull { line ->
@@ -332,7 +376,9 @@ class NotificationListener : NotificationListenerService() {
             text = text.substringAfter("$notifTitle: ")
         }
 
-        return Extraction("PlainText", listOf(IncomingMessage(sender = notifTitle, body = text)))
+        return Extraction("PlainText", listOf(
+            IncomingMessage(sender = notifTitle, body = text, verifiedContact = isDefaultSmsApp)
+        ))
     }
 
     /**

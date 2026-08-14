@@ -3,7 +3,6 @@ package com.hereliesaz.quicloc
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
-import android.telephony.PhoneNumberUtils
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
@@ -230,18 +229,23 @@ class WhitelistManager(context: Context) {
         return numbersMatch(cleanIncoming, getMyNumber())
     }
 
-    /**
-     * [PhoneNumberUtils.compare] treats two blank strings as equal, so without
-     * this guard a name-only whitelist entry (empty number) would match any
-     * incoming number that also cleans to empty — a whitelist bypass.
-     */
-    private fun numbersMatch(cleanA: String, rawB: String): Boolean {
-        val cleanB = cleanPhoneNumber(rawB)
-        if (cleanA.isEmpty() || cleanB.isEmpty()) return false
-        return PhoneNumberUtils.compare(cleanA, cleanB)
-    }
+    private fun numbersMatch(cleanA: String, rawB: String): Boolean = PhoneNumbers.match(cleanA, rawB)
 
-    fun isWhitelistedByName(displayName: String): Boolean {
+    /**
+     * @param trustName Whether the caller has verified [displayName] actually
+     *   identifies the sender (e.g. resolved from the platform's Contacts
+     *   provider by the posting app), rather than being an arbitrary,
+     *   sender-controlled string (a self-set chat-app display name, or text
+     *   parsed out of the message body itself). When `false`, a name match is
+     *   never sufficient on its own — only an exact number match (or matching
+     *   the user's own number) authorizes the reply. Without this, anyone
+     *   could get a whitelisted user's location by setting their own display
+     *   name in any chat app to a name in that user's whitelist (e.g. "Mom")
+     *   and sending the trigger word — a real whitelist bypass, since chat
+     *   apps don't cryptographically verify a sender's self-declared identity
+     *   to this app.
+     */
+    fun isWhitelistedByName(displayName: String, trustName: Boolean = true): Boolean {
         val nameNorm = normalizeName(displayName)
         val cleanIncoming = cleanPhoneNumber(displayName)
         val contacts = getContacts()
@@ -249,7 +253,7 @@ class WhitelistManager(context: Context) {
         if (matchesMyNumber(cleanIncoming)) return true
 
         return contacts.any { entry ->
-            (nameNorm.isNotEmpty() && normalizeName(entry.name.orEmpty()) == nameNorm) ||
+            (trustName && nameNorm.isNotEmpty() && normalizeName(entry.name.orEmpty()) == nameNorm) ||
                 numbersMatch(cleanIncoming, entry.number)
         }
     }
