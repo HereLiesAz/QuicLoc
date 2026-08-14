@@ -135,6 +135,24 @@ class WhitelistManagerTest {
         assertEquals(setOf("111", "333", "444"), whitelist.getStarredNumbers())
     }
 
+    // ---- dialable numbers (widget SMS fan-out) ---------------------------
+
+    @Test
+    fun `getDialableNumbers excludes name-only entries`() {
+        whitelist.addNumber("Mom") // no digits -- name-only, no number
+        whitelist.addNumber("+15551234567")
+        assertEquals(listOf("+15551234567"), whitelist.getDialableNumbers())
+    }
+
+    @Test
+    fun `getDialableStarredNumbers excludes a starred name-only entry`() {
+        whitelist.addContact("Mom", "")
+        whitelist.addContact("Dad", "+15551234567")
+        whitelist.toggleStarred("Mom")
+        whitelist.toggleStarred("Dad")
+        assertEquals(listOf("+15551234567"), whitelist.getDialableStarredNumbers())
+    }
+
     // ---- name vs number matching ----------------------------------------
 
     @Test

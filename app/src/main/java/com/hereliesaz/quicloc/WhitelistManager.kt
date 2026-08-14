@@ -219,6 +219,25 @@ class WhitelistManager(context: Context) {
         return getContacts().map { it.displayToken }.toSet()
     }
 
+    /**
+     * Real, dialable phone numbers for every whitelist entry that has one.
+     * Name-only entries (added by typing a handle with no digits, e.g.
+     * "Mom") are excluded — [ContactEntry.displayToken] would return their
+     * *name*, and sending SMS to that literal string as a destination address
+     * silently fails. Callers that need to actually text the whitelist (the
+     * widget's SMS fan-out) must use this instead of [getNumbers].
+     */
+    fun getDialableNumbers(): List<String> =
+        getContacts().mapNotNull { it.number.takeIf(String::isNotEmpty) }
+
+    /** [getDialableNumbers], restricted to starred entries. */
+    fun getDialableStarredNumbers(): List<String> {
+        val starred = getStarredNumbers()
+        return getContacts()
+            .filter { it.displayToken in starred }
+            .mapNotNull { it.number.takeIf(String::isNotEmpty) }
+    }
+
     fun isWhitelisted(number: String): Boolean {
         val cleanIncoming = cleanPhoneNumber(number)
         if (matchesMyNumber(cleanIncoming)) return true
