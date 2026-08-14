@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.text.TextUtils
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -835,6 +836,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The unlock PIN keypad, the QuicLoc PIN/passphrase fields, and the
+        // whitelist are all rendered somewhere in this activity -- without
+        // FLAG_SECURE, Android's default screenshot-for-recents behavior
+        // captures that content into the task-switcher thumbnail, visible to
+        // anyone with physical access to an unlocked phone.
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         enableEdgeToEdge()
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         whitelistManager = WhitelistManager(this)
@@ -1379,34 +1386,70 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     // -------------------------------------------------------------------------
 
     private fun launchContactPicker() {
+        // Pick a CONTACT, not a single phone row: ACTION_PICK against the
+        // Phone content URI forces the system picker to resolve to exactly
+        // one number, so a contact with a mobile AND a home number would only
+        // ever get the one the user happened to tap. Picking the contact
+        // itself lets handleContactPicked enumerate every number on file.
         val intent = android.content.Intent(
             android.content.Intent.ACTION_PICK,
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+            ContactsContract.Contacts.CONTENT_URI
         )
         beginSystemFlow()
         contactPickerLauncher.launch(intent)
     }
 
     private fun handleContactPicked(uri: Uri) {
-        val projection = arrayOf(
-            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-            ContactsContract.CommonDataKinds.Phone.NUMBER
-        )
-        contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-            if (!cursor.moveToFirst()) return
-            val name = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME))
-            val number = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER))
+        try {
+            val contactCursor = contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.Contacts._ID, ContactsContract.Contacts.DISPLAY_NAME),
+                null, null, null
+            ) ?: return
+            contactCursor.use { cursor ->
+                if (!cursor.moveToFirst()) return
+                val idIdx = cursor.getColumnIndex(ContactsContract.Contacts._ID)
+                val nameIdx = cursor.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME)
+                if (idIdx < 0) return
+                val contactId = cursor.getString(idIdx)
+                val name = if (nameIdx >= 0) cursor.getString(nameIdx) else null
 
-            if (!number.isNullOrBlank()) {
-                whitelistManager.addContact(name, number)
-            } else if (!name.isNullOrBlank()) {
-                whitelistManager.addContact(name, "")
+                val numbers = mutableListOf<String>()
+                contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                    "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                    arrayOf(contactId),
+                    null
+                )?.use { phoneCursor ->
+                    val numberIdx = phoneCursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                    if (numberIdx >= 0) {
+                        while (phoneCursor.moveToNext()) {
+                            phoneCursor.getString(numberIdx)?.takeIf { it.isNotBlank() }?.let { numbers.add(it) }
+                        }
+                    }
+                }
+
+                // One whitelist entry per number, all sharing this contact's
+                // name -- WhitelistManager matches by name OR any of a
+                // contact's numbers, and the UI still shows a single row for
+                // the shared display name, so this doesn't create duplicates
+                // on screen while still answering from any of their numbers.
+                if (numbers.isNotEmpty()) {
+                    for (number in numbers.distinct()) {
+                        whitelistManager.addContact(name, number)
+                    }
+                } else if (!name.isNullOrBlank()) {
+                    whitelistManager.addContact(name, "")
+                }
+
+                numbersState.value = whitelistManager.getNumbers().toList()
+                dialableCountState.value = whitelistManager.getDialableNumbers().size
+                val toastName = name?.takeIf { it.isNotBlank() } ?: numbers.firstOrNull() ?: "Contact"
+                Toast.makeText(this, "Added $toastName — they can now ask for your location", Toast.LENGTH_SHORT).show()
             }
-
-            numbersState.value = whitelistManager.getNumbers().toList()
-            dialableCountState.value = whitelistManager.getDialableNumbers().size
-            val toastName = name?.takeIf { it.isNotBlank() } ?: number ?: "Contact"
-            Toast.makeText(this, "Added $toastName — they can now ask for your location", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Couldn't read that contact — try again.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -2240,9 +2283,10 @@ fun QuicLocScreen(
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        text = "Used by the 2-tap parking reminder only. This is YOUR number — " +
-                            "it is not a trusted contact and does not let anyone request your " +
-                            "location.",
+                        text = "Used by the 2-tap parking reminder. QuicLoc also always treats " +
+                            "this number as trusted — handy for testing the trigger word by " +
+                            "texting yourself from another device you own. It's still just your " +
+                            "own number: nobody else can use it to request your location.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
