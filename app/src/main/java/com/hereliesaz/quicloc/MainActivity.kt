@@ -2123,6 +2123,36 @@ fun QuicLocScreen(
                 modifier = Modifier.padding(top = 4.dp)
             )
 
+            Spacer(modifier = Modifier.height(12.dp))
+            // Adding someone to the whitelist only does half the job — they
+            // also have to know the trigger word in the first place. Nothing
+            // else in the app ever tells a new contact that.
+            val inviteContext = LocalContext.current
+            OutlinedButton(
+                onClick = {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(
+                            Intent.EXTRA_TEXT,
+                            "Hey — I use QuicLoc so you can check on me. Text me the word " +
+                                "\"loc\" any time (as its own message) and I'll text back my " +
+                                "location automatically."
+                        )
+                    }
+                    inviteContext.startActivity(Intent.createChooser(send, "Tell them what to text"))
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Tell them what to text")
+            }
+            Text(
+                text = "Adding someone here only lets them ask — they still need to know the " +
+                    "word. Send them this so they do.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+
             Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = "Allowed to ask (${numbersList.size})",
