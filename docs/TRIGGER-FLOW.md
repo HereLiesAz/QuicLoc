@@ -150,7 +150,7 @@ LocationReplyService.onStartCommand
 
 ## Location fetch: `LocationHelper.fetchLocation`
 
-Three-stage fallback with a single 30 s deadline:
+Four-stage fallback with a single 60 s deadline:
 
 ```
 Stage 1  fusedClient.getCurrentLocation(HIGH_ACCURACY)
@@ -160,10 +160,16 @@ Stage 2  fusedClient.lastLocation
 Stage 3  fusedClient.requestLocationUpdates(1 update, HIGH_ACCURACY)
             └─ onLocationResult → reply
             └─ onLocationAvailability(false) → fail fast
-30 s deadline timer
+            └─ still pending after 15 s → also start Stage 4, racing it
+Stage 4  fusedClient.getCurrentLocation(BALANCED_POWER_ACCURACY)
+            └─ resolves first → reply (marked approximate), Stage 3 cancelled
+            └─ Stage 3 resolves first → Stage 4 cancelled
+60 s deadline timer
    └─ if it fires → fail with "Location timed out"
 ```
 
-If all stages fail, we send an error SMS/reply back to the requester *("QuicLoc Error: Location timed out…")* so they aren't left wondering whether you got the message. Failure is recorded in history.
+Stage 4 exists so a slow or unavailable GPS fix means "approximate reply", not "no reply": a network/cell-based fix can resolve indoors or with no sky view where GPS can't. Replies built from a fix coarser than ~100m accuracy, or older than a minute (Stage 2's cache), get an inline note (`"(approximate — accurate to ~NNNm)"` and/or `"(as of ~N min ago)"`) so the recipient doesn't mistake it for a live, precise position.
+
+Only if every stage fails do we send an error SMS/reply back to the requester *("QuicLoc Error: Location timed out…")* so they aren't left wondering whether you got the message. Failure is recorded in history.
 
 ## Tracking path (passphrase): see [LOCKDOWN.md](LOCKDOWN.md)

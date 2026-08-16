@@ -25,7 +25,7 @@
                        │ uses
                        ▼
             ┌──────────────────────┐
-            │   LocationHelper     │ 3-stage GPS fetch w/ 30s deadline
+            │   LocationHelper     │ 4-stage GPS+network fetch w/ 60s deadline
             └──────────┬───────────┘
                        │
                        ▼
@@ -81,7 +81,7 @@
 | Helper | File | Role |
 |---|---|---|
 | `Readiness` | [Readiness.kt](../app/src/main/java/com/hereliesaz/quicloc/Readiness.kt) | Pure Kotlin (no `android.*`): turns the live permission snapshot plus whitelist/own-number state into the ordered setup checklist. Shares its `PermissionStatus` input with the All Permissions table, so the two views can't disagree. Unit-tested without Robolectric. |
-| `LocationHelper` | [LocationHelper.kt](../app/src/main/java/com/hereliesaz/quicloc/LocationHelper.kt) | Three-stage GPS fetch (current → cached → forced) with a single 30 s deadline. Also has the SMS-send and notification-reply primitives. |
+| `LocationHelper` | [LocationHelper.kt](../app/src/main/java/com/hereliesaz/quicloc/LocationHelper.kt) | Four-stage location fetch (current GPS → cached → forced GPS, racing a network/cell fallback once GPS is slow) with a single 60 s deadline. Also has the SMS-send and notification-reply primitives. |
 | `BiometricHelper` | [BiometricHelper-1.kt](../app/src/main/java/com/hereliesaz/quicloc/BiometricHelper-1.kt) | Wraps `BiometricPrompt`. Falls back to device credential if no biometric is enrolled. When the device has no lock screen at all, `MainActivity` gates on the QuicLoc PIN instead (and only lets the user straight through when neither exists). |
 | `FindMyPhone` | [FindMyPhone.kt](../app/src/main/java/com/hereliesaz/quicloc/FindMyPhone.kt) | The base→module bridge for `:feature_findmyphone`. Addresses the module by `ComponentName` string: `requestInstall` (SplitInstall download), `trigger` (start `TrackingService`), `isAdminActive`/`adminComponent` (Device Admin status without referencing the receiver class). Degrades gracefully when the split isn't installed. |
 | `LockdownController` | [LockdownController.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/LockdownController.kt) | In `:feature_findmyphone`. Single decision point: `DevicePolicyManager.lockNow()` if Device Admin is granted, otherwise let the caller fall back to `TrackingLockActivity`. |

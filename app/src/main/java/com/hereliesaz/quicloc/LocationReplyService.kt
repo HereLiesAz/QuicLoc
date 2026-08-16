@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap
  *   BroadcastReceiver.goAsync() only buys 10 seconds before Android kills the
  *   process. GPS acquisition from a cold start can take 20-30 seconds in poor
  *   conditions. A foreground service has no such time limit and survives as
- *   long as needed (up to our own 30-second timeout), then stops itself.
+ *   long as needed (up to our own 60-second timeout), then stops itself.
  *
  * Started by SmsReceiver, NotificationListener, and the home-screen widget.
  * Stops itself once a reply is sent or the timeout is reached.
@@ -147,7 +147,7 @@ class LocationReplyService : Service() {
             updateWidgetStatus(this, statusText)
             // Clear the on-widget status after a few seconds. VISUAL ONLY — do
             // NOT stop the service here. The location fetch + reply below can
-            // take up to 30s; stopping at 3s would tear the service down before
+            // take up to 60s; stopping at 3s would tear the service down before
             // the SMS is sent (this was the "widget shows status but never sends"
             // bug). The service is stopped only once the reply completes.
             widgetTapHandler.postDelayed({ updateWidgetStatus(this, null) }, 3000)
@@ -184,7 +184,7 @@ class LocationReplyService : Service() {
             return@Runnable
         }
 
-        // Fetch the location (up to 30s) and send, THEN stop the service and
+        // Fetch the location (up to 60s) and send, THEN stop the service and
         // clear the status — so the send always completes.
         activeOperations.incrementAndGet()
         LocationHelper.handleWidgetTaps(this, count) { succeeded ->

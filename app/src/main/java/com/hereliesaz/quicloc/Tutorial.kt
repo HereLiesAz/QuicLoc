@@ -213,7 +213,7 @@ Tap pattern — each tap has to land within about half a second of the last one,
 
 The widget vibrates on each tap to confirm, and shows the action label briefly once the taps stop.
 
-Each pattern fetches a fresh GPS fix before sending — even if you're indoors with poor signal, the three-stage fallback (cached → fresh → forced) usually gets a position within 30 seconds.
+Each pattern fetches a fresh location fix before sending. If you're indoors or somewhere GPS struggles, QuicLoc falls back to a fast network-based fix (marked "approximate" in the text) rather than leaving your contact with nothing — GPS gets up to a minute to find you first.
 
 If a tap count has nothing to send to — no own number, no starred contacts, no trusted contacts — nothing is sent. The widget help screen (1 tap) shows which of the four are ready.
 """.trim(),
