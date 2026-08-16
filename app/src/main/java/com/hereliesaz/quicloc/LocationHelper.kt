@@ -20,19 +20,28 @@ import com.google.android.gms.tasks.CancellationTokenSource
  * and notification-inline-reply paths, and by [TrackingService] for the
  * find-my-phone periodic updates.
  *
- * The location fetch is a three-stage fallback with a single 30-second
+ * The location fetch is a four-stage fallback with a single 60-second
  * overall deadline:
  *
  *   1. [FusedLocationProviderClient.getCurrentLocation] HIGH_ACCURACY —
  *      fast if there's a recent fix.
  *   2. [FusedLocationProviderClient.lastLocation] — instant, may be stale,
- *      but better than nothing if 1 and 3 fail.
- *   3. [FusedLocationProviderClient.requestLocationUpdates] — forces the
- *      GPS radio on. May take 20–30 s on a cold start outdoors.
+ *      but better than nothing if 1 and 3/4 fail.
+ *   3. [FusedLocationProviderClient.requestLocationUpdates] HIGH_ACCURACY —
+ *      forces the GPS radio on. May take 20–30 s on a cold start outdoors,
+ *      so it gets the bulk of the deadline to work with.
+ *   4. A network/cell-based [FusedLocationProviderClient.getCurrentLocation]
+ *      BALANCED_POWER_ACCURACY fix, raced alongside stage 3 once it's taken
+ *      more than [COARSE_FALLBACK_DELAY_MS] — resolves fast even where GPS
+ *      can't (indoors, dense foliage). Whichever of 3/4 finishes first wins;
+ *      the loser is cancelled. Its reply is marked approximate.
  *
- * If all three fall through or the deadline expires, we send an error
- * reply back to the requester so they aren't left wondering whether the
- * trigger reached us at all.
+ * This means a slow or unavailable GPS fix no longer means "no reply": worst
+ * case the requester gets an approximate, network-based location instead of
+ * waiting out the full deadline. Only if every stage fails outright (no
+ * location services at all, permission revoked, or truly no signal of any
+ * kind for the full 60s) do we send an error reply back, so the requester
+ * isn't left wondering whether the trigger reached us at all.
  *
  * Three send modes:
  *
@@ -45,9 +54,21 @@ import com.google.android.gms.tasks.CancellationTokenSource
 object LocationHelper {
     private const val TAG = "QuicLoc.LocationHelper"
 
-    // Total time we'll wait across all three stages before giving up.
-    // 30 seconds is enough for a cold GPS fix in most conditions.
-    private const val LOCATION_TIMEOUT_MS = 30_000L
+    // Total time we'll wait across all stages before giving up. Extended
+    // from the original 30s: the foreground service that calls this has no
+    // OS-imposed time limit, so it's worth giving a stubborn GPS cold start
+    // more room rather than erroring out on someone who'd rather wait a bit
+    // longer for a fix than get nothing.
+    private const val LOCATION_TIMEOUT_MS = 60_000L
+
+    // If stage 3's forced high-accuracy fix hasn't resolved within this long,
+    // race a fast, low-accuracy network/cell fallback alongside it.
+    private const val COARSE_FALLBACK_DELAY_MS = 15_000L
+
+    // A location this coarse (radius, meters) is assumed to be a network/cell
+    // fix rather than a real GPS one, worth flagging to the recipient as
+    // approximate rather than precise.
+    private const val APPROXIMATE_ACCURACY_THRESHOLD_M = 100f
 
     // -------------------------------------------------------------------------
     // SMS reply — called from LocationReplyService (no PendingResult needed)
@@ -62,7 +83,7 @@ object LocationHelper {
         fetchLocation(context,
             onSuccess = { location ->
                 val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
-                val sent = sendSms(context, phoneNumber, "QuicLoc Location:\n$mapsLink${locationAgeNote(location)}")
+                val sent = sendSms(context, phoneNumber, "QuicLoc Location:\n$mapsLink${locationQualityNote(location)}")
                 onResult?.invoke(sent)
             },
             onFailure = { msg ->
@@ -86,7 +107,7 @@ object LocationHelper {
         fetchLocation(context,
             onSuccess = { location ->
                 val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
-                val sent = sendNotificationReply(context, replyAction, "QuicLoc: $mapsLink${locationAgeNote(location)}")
+                val sent = sendNotificationReply(context, replyAction, "QuicLoc: $mapsLink${locationQualityNote(location)}")
                 onResult?.invoke(sent)
             },
             onFailure = { msg ->
@@ -133,7 +154,7 @@ object LocationHelper {
         fetchLocation(context,
             onSuccess = { location ->
                 val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
-                val message = "QuicLoc Location:\n$mapsLink${locationAgeNote(location)}$suffix"
+                val message = "QuicLoc Location:\n$mapsLink${locationQualityNote(location)}$suffix"
                 // Report success only if every destination's send call actually
                 // went through -- History/Diagnostics should never claim an
                 // emergency alert succeeded when it silently didn't.
@@ -151,21 +172,27 @@ object LocationHelper {
     }
 
     // -------------------------------------------------------------------------
-    // Core location fetch — three-stage fallback with a single 30s deadline:
+    // Core location fetch — four-stage fallback with a single 60s deadline:
     //
     //   Stage 1: getCurrentLocation() HIGH_ACCURACY
     //            Fast if a recent fix exists. Returns null on cold start.
     //
     //   Stage 2: lastLocation
-    //            Instant. May be stale but better than nothing if stages 1 & 3
-    //            both fail.
+    //            Instant. May be stale but better than nothing if stages 1,
+    //            3 & 4 all fail.
     //
-    //   Stage 3: requestLocationUpdates()
+    //   Stage 3: requestLocationUpdates() HIGH_ACCURACY
     //            Forces the GPS radio on. Always works if location services are
     //            enabled. May take 20-30 seconds on a cold start outdoors.
     //
-    // The 30-second deadline applies to the entire chain. If all three stages
-    // are exhausted or time runs out, onFailure is called and the service stops.
+    //   Stage 4: getCurrentLocation() BALANCED_POWER_ACCURACY, raced alongside
+    //            stage 3 once it's run for COARSE_FALLBACK_DELAY_MS without
+    //            resolving. Network/cell-based, so it can return a fix where
+    //            GPS can't (indoors, no sky view). Whichever of 3/4 finishes
+    //            first wins; the loser is cancelled.
+    //
+    // The 60-second deadline applies to the entire chain. If every stage is
+    // exhausted or time runs out, onFailure is called and the service stops.
     // -------------------------------------------------------------------------
 
     @SuppressLint("MissingPermission")
@@ -183,6 +210,11 @@ object LocationHelper {
         // potentially keeping the GPS radio on) past the point this whole
         // fetch has already given up.
         var activeCallback: LocationCallback? = null
+        // Stage 4's cancellation token, if a coarse fallback attempt is in
+        // flight, so it can be called off the moment stage 3 (or the
+        // deadline) beats it to a result instead of running to completion
+        // pointlessly.
+        var activeCoarseCancellation: CancellationTokenSource? = null
 
         fun finish(success: Boolean, location: Location? = null, msg: String = "") {
             if (done) return
@@ -190,6 +222,8 @@ object LocationHelper {
             handler.removeCallbacksAndMessages(null)
             activeCallback?.let { fusedClient.removeLocationUpdates(it) }
             activeCallback = null
+            activeCoarseCancellation?.cancel()
+            activeCoarseCancellation = null
             if (success && location != null) onSuccess(location) else onFailure(msg)
         }
 
@@ -268,6 +302,39 @@ object LocationHelper {
                                         Log.e(TAG, "Missing location permission (stage 3)", e)
                                         activeCallback = null
                                         finish(false, msg = "Location permission not granted.")
+                                        return@addOnCompleteListener
+                                    }
+
+                                    // Stage 4 (raced against stage 3): if the forced
+                                    // GPS fix hasn't resolved after
+                                    // COARSE_FALLBACK_DELAY_MS, also try a fast
+                                    // network/cell fix. A slow or unavailable GPS
+                                    // fix should mean "approximate reply", not
+                                    // "no reply". Skipped if there isn't enough
+                                    // time left for it to plausibly help.
+                                    if (timeLeft > COARSE_FALLBACK_DELAY_MS) {
+                                        handler.postDelayed({
+                                            if (done) return@postDelayed
+                                            try {
+                                                val coarseCts = CancellationTokenSource()
+                                                activeCoarseCancellation = coarseCts
+                                                fusedClient.getCurrentLocation(
+                                                    Priority.PRIORITY_BALANCED_POWER_ACCURACY, coarseCts.token
+                                                ).addOnCompleteListener { coarseTask ->
+                                                    activeCoarseCancellation = null
+                                                    if (done) return@addOnCompleteListener
+                                                    val coarseLoc = coarseTask.result
+                                                    if (coarseTask.isSuccessful && coarseLoc != null) {
+                                                        Log.d(TAG, "Stage 4 (coarse) success while stage 3 still pending")
+                                                        finish(true, coarseLoc)
+                                                    }
+                                                    // Failure here just means stage 3 (or the
+                                                    // deadline) decides the outcome instead.
+                                                }
+                                            } catch (e: SecurityException) {
+                                                Log.w(TAG, "Stage 4 (coarse) failed to start", e)
+                                            }
+                                        }, COARSE_FALLBACK_DELAY_MS)
                                     }
                                 }
                             }
@@ -285,14 +352,19 @@ object LocationHelper {
 
     /**
      * A short note to append to a location reply when the fix might be
-     * noticeably stale (Stage 2's cached `lastLocation`), so the recipient
-     * doesn't mistake an old position for a live one. Silent for a fresh fix.
+     * noticeably stale (Stage 2's cached `lastLocation`) and/or approximate
+     * (Stage 4's network/cell fallback), so the recipient doesn't mistake an
+     * old or coarse position for a live, precise one. Silent for a fresh,
+     * precise fix.
      */
-    private fun locationAgeNote(location: Location): String {
+    private fun locationQualityNote(location: Location): String {
+        val notes = mutableListOf<String>()
         val ageMs = System.currentTimeMillis() - location.time
-        if (ageMs < 60_000L) return ""
-        val ageMin = ageMs / 60_000L
-        return " (as of ~$ageMin min ago)"
+        if (ageMs >= 60_000L) notes.add("as of ~${ageMs / 60_000L} min ago")
+        if (location.hasAccuracy() && location.accuracy > APPROXIMATE_ACCURACY_THRESHOLD_M) {
+            notes.add("approximate — accurate to ~${location.accuracy.toInt()}m")
+        }
+        return if (notes.isEmpty()) "" else " (${notes.joinToString("; ")})"
     }
 
     // -------------------------------------------------------------------------
