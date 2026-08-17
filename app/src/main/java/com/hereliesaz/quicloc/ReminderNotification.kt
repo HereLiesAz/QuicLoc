@@ -41,8 +41,15 @@ object ReminderNotification {
     private fun build(context: Context): Notification {
         val enabled = AppSettings.isEnabled(context)
 
+        // setPackage() pins these to our own app on top of the already-explicit
+        // target class -- CodeQL's implicit-PendingIntent check (and, more to
+        // the point, some OEM launchers/analysis tools) don't all credit
+        // Intent(context, Class) alone as unambiguously explicit, and an
+        // implicit PendingIntent handed to the system notification manager is
+        // interceptable by any app that can match it.
         val toggleIntent = Intent(context, ToggleReceiver::class.java).apply {
             action = ToggleReceiver.ACTION_TOGGLE
+            setPackage(context.packageName)
         }
         val togglePending = PendingIntent.getBroadcast(
             context,
@@ -53,6 +60,7 @@ object ReminderNotification {
 
         val openIntent = Intent(context, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            setPackage(context.packageName)
         }
         val openPending = PendingIntent.getActivity(
             context,
