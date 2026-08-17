@@ -20,7 +20,7 @@ import javax.crypto.spec.SecretKeySpec
 
 /**
  * PIN-encrypted backup of the user's sensitive settings (whitelist, starred,
- * my_number, passphrase, PIN, onboarding flag). The encrypted blob lives at
+ * my_number, passphrase, PIN, onboarding flag, Loc Notice locations). The encrypted blob lives at
  * files/quicloc_backup.qlb so Android Auto Backup ships it to Google Drive
  * automatically, AND it can be exported/imported manually via SAF.
  *
@@ -151,6 +151,7 @@ object BackupVault {
             put("passphrase", whitelist.getPassphrase() ?: JSONObject.NULL)
             put("pin", pin)
             put("onboarding_completed", whitelist.isOnboardingCompleted())
+            put("geofences", JSONArray(GeofenceStore(context).getAll().map { it.toJsonString() }))
         }
         val plaintext = json.toString().toByteArray(Charsets.UTF_8)
 
@@ -376,12 +377,22 @@ object BackupVault {
 
         whitelist.setOnboardingCompleted(json.optBoolean("onboarding_completed", false))
 
+        // Absent on a pre-Loc-Notice backup — optJSONArray returns null,
+        // geofences ends up empty, restore proceeds without a version branch
+        // (every field here is already read via opt*/defaults for the same
+        // forward-compatibility reason).
+        val geofences = json.optJSONArray("geofences")?.toStringSet()
+            ?.mapNotNull { GeofenceEntry.fromJsonString(it) } ?: emptyList()
+        GeofenceStore(context).replaceAll(geofences)
+        GeofenceRegistrar.sync(context)
+
         return RestoreSummary(
             whitelistCount = contacts.size,
             starredCount = starred.size,
             myNumberSet = whitelist.getMyNumber().isNotEmpty(),
             passphraseSet = passphrase != null,
             pinSet = pin != null,
+            geofenceCount = geofences.size,
         )
     }
 
@@ -402,6 +413,7 @@ object BackupVault {
         val myNumberSet: Boolean,
         val passphraseSet: Boolean,
         val pinSet: Boolean,
+        val geofenceCount: Int = 0,
     )
 
     /**

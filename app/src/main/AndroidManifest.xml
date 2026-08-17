@@ -106,6 +106,17 @@
             android:theme="@style/Theme.QuicLoc.Transparent"
             android:exported="false" />
 
+        <!--
+            Fires on ACTION_GEOFENCE_EVENT when a Loc Notice location is
+            entered or exited (see GeofenceRegistrar). Not exported: the
+            PendingIntent Play Services invokes is built by this app with an
+            explicit component target, so it's delivered directly regardless
+            of export status.
+        -->
+        <receiver
+            android:name=".GeofenceBroadcastReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".QuicLocWidgetProvider"
             android:label="@string/widget_label"

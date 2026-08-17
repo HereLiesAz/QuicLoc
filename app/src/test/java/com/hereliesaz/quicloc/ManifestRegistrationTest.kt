@@ -97,6 +97,18 @@ class ManifestRegistrationTest {
     }
 
     @Test
+    fun `GeofenceBroadcastReceiver is registered and NOT exported`() {
+        val info = pm.getReceiverInfo(
+            ComponentName(context, GeofenceBroadcastReceiver::class.java),
+            0
+        )
+        assertNotNull(info)
+        // Play Services invokes it via an explicit PendingIntent this app
+        // built itself -- no need for other apps to reach it.
+        assertTrue("GeofenceBroadcastReceiver must NOT be exported", !info.exported)
+    }
+
+    @Test
     fun `BootReceiver responds to BOOT_COMPLETED`() {
         val receivers = pm.queryBroadcastReceivers(
             Intent(Intent.ACTION_BOOT_COMPLETED),

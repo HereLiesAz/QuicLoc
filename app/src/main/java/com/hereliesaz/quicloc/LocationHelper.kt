@@ -9,7 +9,6 @@ import android.location.Location
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.telephony.SmsManager
 import android.util.Log
 import com.google.android.gms.location.*
 import com.google.android.gms.tasks.CancellationTokenSource
@@ -45,7 +44,7 @@ import com.google.android.gms.tasks.CancellationTokenSource
  *
  * Three send modes:
  *
- *   - [getCurrentLocationAndReply] — SMS send via [SmsManager].
+ *   - [getCurrentLocationAndReply] — SMS send via [SmsSender].
  *   - [getCurrentLocationAndReplyViaNotification] — chat-app inline reply
  *     via the original notification's [Notification.Action] `RemoteInput`.
  *   - [handleWidgetTaps] — SMS fan-out to multiple destinations based on
@@ -83,11 +82,11 @@ object LocationHelper {
         fetchLocation(context,
             onSuccess = { location ->
                 val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
-                val sent = sendSms(context, phoneNumber, "QuicLoc Location:\n$mapsLink${locationQualityNote(location)}")
+                val sent = SmsSender.send(context, phoneNumber, "QuicLoc Location:\n$mapsLink${locationQualityNote(location)}")
                 onResult?.invoke(sent)
             },
             onFailure = { msg ->
-                sendSms(context, phoneNumber, "QuicLoc Error: $msg")
+                SmsSender.send(context, phoneNumber, "QuicLoc Error: $msg")
                 onResult?.invoke(false)
             }
         )
@@ -158,13 +157,13 @@ object LocationHelper {
                 // Report success only if every destination's send call actually
                 // went through -- History/Diagnostics should never claim an
                 // emergency alert succeeded when it silently didn't.
-                val allSent = destinations.map { sendSms(context, it, message) }.all { it }
+                val allSent = destinations.map { SmsSender.send(context, it, message) }.all { it }
                 onResult?.invoke(allSent)
             },
             onFailure = { msg ->
                 val message = "QuicLoc Error: $msg$suffix"
                 for (dest in destinations) {
-                    sendSms(context, dest, message)
+                    SmsSender.send(context, dest, message)
                 }
                 onResult?.invoke(false)
             }
@@ -365,46 +364,6 @@ object LocationHelper {
             notes.add("approximate — accurate to ~${location.accuracy.toInt()}m")
         }
         return if (notes.isEmpty()) "" else " (${notes.joinToString("; ")})"
-    }
-
-    // -------------------------------------------------------------------------
-    // SMS sending
-    // -------------------------------------------------------------------------
-
-    /**
-     * @return Whether the send call was actually issued to the radio without
-     *   throwing. `sentIntent` is intentionally null (no PendingIntent-based
-     *   delivery-report wiring exists), so this does NOT confirm carrier-level
-     *   delivery — only that we didn't fail synchronously (SmsManager missing,
-     *   a malformed destination address, SEND_SMS revoked, etc). That's still
-     *   a real improvement over the previous unconditional "true": those
-     *   synchronous failures are exactly what happens when, e.g., a
-     *   destination address is malformed.
-     */
-    private fun sendSms(context: Context, phoneNumber: String, message: String): Boolean {
-        return try {
-            val smsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                context.getSystemService(SmsManager::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                SmsManager.getDefault()
-            }
-            if (smsManager != null) {
-                val parts = smsManager.divideMessage(message)
-                if (parts.size > 1) {
-                    smsManager.sendMultipartTextMessage(phoneNumber, null, parts, null, null)
-                } else {
-                    smsManager.sendTextMessage(phoneNumber, null, message, null, null)
-                }
-                true
-            } else {
-                Log.e(TAG, "Failed to get SmsManager")
-                false
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to send SMS to $phoneNumber", e)
-            false
-        }
     }
 
     // -------------------------------------------------------------------------

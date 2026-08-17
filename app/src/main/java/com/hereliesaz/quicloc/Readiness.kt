@@ -47,6 +47,8 @@ object PermKeys {
     const val MY_NUMBER = "setup.my_number"
     /** Open the QuicLoc PIN section and scroll to it. */
     const val SET_PIN = "setup.set_pin"
+    /** Open the Loc Notice screen so the user can add a usable location. */
+    const val OPEN_LOC_NOTICE = "setup.open_locnotice"
 }
 
 /** Whether a setup step is satisfied, still needs the user, or can't be checked. */
@@ -104,6 +106,13 @@ object Readiness {
      *   a whitelist made up entirely of name-only entries can never satisfy
      *   an SMS trigger (SmsReceiver only number-matches) or the widget's SMS
      *   fan-out, so it should not be reported as "done".
+     * @param locNoticeEnabled Whether the separate Loc Notice master toggle
+     *   is on. Loc Notice gets no "turn it on" row of its own — like
+     *   find-my-phone, it's an opt-in feature that isn't penalized for being
+     *   off — but once enabled, it needs at least one usable location or
+     *   it's on and doing nothing.
+     * @param locNoticeUsableCount Enabled Loc Notice locations that have at
+     *   least one resolvable contact selected.
      */
     fun steps(
         enabled: Boolean,
@@ -112,6 +121,8 @@ object Readiness {
         permissions: List<PermissionStatus>,
         pinSet: Boolean = false,
         dialableWhitelistCount: Int = whitelistCount,
+        locNoticeEnabled: Boolean = false,
+        locNoticeUsableCount: Int = 0,
     ): List<SetupStep> {
         val byKey = permissions.associateBy { it.key }
         fun state(key: String): PermStatus? = byKey[key]?.state
@@ -163,7 +174,8 @@ object Readiness {
                 id = "background-location",
                 title = "Set location to \"Allow all the time\"",
                 detail = "This is the one people miss. Without it QuicLoc only answers while you " +
-                    "happen to have the app open on screen — which defeats the point.",
+                    "happen to have the app open on screen — which defeats the point." +
+                    if (locNoticeEnabled) " Loc Notice also can't detect arrivals or departures without it." else "",
                 state = if (granted(PERM_BACKGROUND_LOCATION)) StepState.DONE else StepState.TODO,
                 required = true,
                 actionKey = PERM_BACKGROUND_LOCATION,
@@ -218,6 +230,23 @@ object Readiness {
             actionKey = PermKeys.BATTERY,
             actionLabel = "Allow",
         )
+
+        // Loc Notice gets no "turn it on" row — like find-my-phone, it's an
+        // opt-in feature not penalized for being off. But once the user has
+        // turned it on, an empty or contact-less Loc Notice does nothing, the
+        // same logic as an empty whitelist, so this is required while shown.
+        if (locNoticeEnabled) {
+            steps += SetupStep(
+                id = "locnotice-setup",
+                title = "Add at least one working Loc Notice location",
+                detail = "Loc Notice is on but has nothing to alert on. Add a location, turn on " +
+                    "arrival or departure, and pick who gets told.",
+                state = if (locNoticeUsableCount > 0) StepState.DONE else StepState.TODO,
+                required = true,
+                actionKey = PermKeys.OPEN_LOC_NOTICE,
+                actionLabel = "Add",
+            )
+        }
 
         // ---- Recommended, not required -------------------------------------
 

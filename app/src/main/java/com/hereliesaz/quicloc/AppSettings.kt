@@ -16,6 +16,7 @@ object AppSettings {
     private const val KEY_FULL_SCREEN_PROMPTED = "full_screen_intent_prompted"
     private const val KEY_PHONE_HINT_PROMPTED = "phone_hint_prompted"
     private const val KEY_DIAG_CAPTURE_ALL = "diag_capture_all"
+    private const val KEY_LOCNOTICE_ENABLED = "locnotice_enabled"
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
@@ -75,5 +76,19 @@ object AppSettings {
 
     fun setDiagCaptureAll(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_DIAG_CAPTURE_ALL, enabled).apply()
+    }
+
+    /**
+     * Master switch for Loc Notice (passive arrival/departure alerts),
+     * independent of [isEnabled] (the on-demand request-reply master
+     * switch) — a user may want one without the other. Default off: this is
+     * an opt-in, always-on background feature, unlike the reply feature
+     * which is on by default but only ever acts when asked.
+     */
+    fun isLocNoticeEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_LOCNOTICE_ENABLED, false)
+
+    fun setLocNoticeEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_LOCNOTICE_ENABLED, enabled).apply()
     }
 }
