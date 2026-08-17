@@ -31,19 +31,21 @@ object FindMyPhone {
     /**
      * Master kill switch for the entire find-my-phone / lockdown feature.
      *
-     * When `false` (current state), every entry point below short-circuits, so
-     * the base never tries to install, trigger, or query the module — the
-     * passphrase trigger no-ops and the setup UI is hidden (see MainActivity).
+     * When `false`, every entry point below short-circuits, so the base never
+     * tries to install, trigger, or query the module — the passphrase trigger
+     * no-ops and the setup UI is hidden (see MainActivity).
      *
-     * This flag is the *runtime* half of disabling the feature; the *packaging*
-     * half is that `:feature_findmyphone` is removed from `settings.gradle.kts`
+     * This flag is the *runtime* half of enabling the feature; the *packaging*
+     * half is `:feature_findmyphone` being included in `settings.gradle.kts`
      * and the app's `dynamicFeatures`, so the module's manifest (CAMERA,
      * USE_FULL_SCREEN_INTENT, the Device Admin receiver, the tracking service)
-     * is no longer merged into the shipped app and those permissions aren't
-     * declared. To re-enable find-my-phone, flip this to `true` AND re-add the
-     * module in both Gradle files. The module's code is kept intact in the repo.
+     * is merged into the app and those permissions are declared. To disable
+     * find-my-phone again, flip this to `false` — removing the module from
+     * both Gradle files as well is optional (it just stops the module's code
+     * from being compiled/shipped at all; `ENABLED = false` alone already
+     * makes every entry point a no-op).
      */
-    const val ENABLED = false
+    const val ENABLED = true
 
     const val MODULE = "feature_findmyphone"
 
