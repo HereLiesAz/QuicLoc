@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    claude/permissions-declaration-form-mashva
-  Commit:    e24dee587d12874069da8d648ab417c1bc4988d2
-  Timestamp: 2026-08-17 15:59:50 UTC
+  Branch:    main
+  Commit:    f7489f27444c3e9f0cec5c62c9d487768540bc36
+  Timestamp: 2026-08-17 16:08:48 UTC
 ======================================================
 
 
@@ -10990,8 +10990,15 @@ object ReminderNotification {
     private fun build(context: Context): Notification {
         val enabled = AppSettings.isEnabled(context)
 
+        // setPackage() pins these to our own app on top of the already-explicit
+        // target class -- CodeQL's implicit-PendingIntent check (and, more to
+        // the point, some OEM launchers/analysis tools) don't all credit
+        // Intent(context, Class) alone as unambiguously explicit, and an
+        // implicit PendingIntent handed to the system notification manager is
+        // interceptable by any app that can match it.
         val toggleIntent = Intent(context, ToggleReceiver::class.java).apply {
             action = ToggleReceiver.ACTION_TOGGLE
+            setPackage(context.packageName)
         }
         val togglePending = PendingIntent.getBroadcast(
             context,
@@ -11002,6 +11009,7 @@ object ReminderNotification {
 
         val openIntent = Intent(context, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            setPackage(context.packageName)
         }
         val openPending = PendingIntent.getActivity(
             context,
