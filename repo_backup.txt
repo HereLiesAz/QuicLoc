@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    claude/permissions-declaration-form-mashva
-  Commit:    15979517f514ee34fb74fd985a97e429469e382b
-  Timestamp: 2026-08-17 15:44:15 UTC
+  Commit:    59363b0545803b602a84195364e91e91ef1caf42
+  Timestamp: 2026-08-17 15:46:49 UTC
 ======================================================
 
 
@@ -1791,7 +1791,7 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 | **8 · Backup & restore** | Export / import your setup |
 | **9 · Help & troubleshooting** | Tutorials, request history, diagnostics |
 
-(Numbering shifts by one when the find-my-phone feature is enabled — see below.)
+(Numbering shifts by one when the find-my-phone feature is enabled — see [docs/LOCKDOWN.md](docs/LOCKDOWN.md).)
 
 ---
 
@@ -1809,10 +1809,7 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 - **Reliable location** — three-stage fallback (fresh GPS fix → cached location → forced update) so a request answers even from a cold start indoors.
 - **Diagnostics** — every trigger QuicLoc saw and the exact decision it reached, in plain English. Built for "I texted loc and nothing happened".
 - **No data collection** — no analytics, no crash reporters, no servers. Nothing leaves your device except the location reply, sent directly to the person who asked.
-
-### Temporarily disabled: find my phone
-
-**Passphrase lockdown**, **intruder photo** and **real device lock (Device Admin)** are built but **not shipped in the current build** — the whole feature lives in an on-demand module that is currently excluded from the app, and its UI, tutorials and permissions are hidden along with it. See [docs/LOCKDOWN.md](docs/LOCKDOWN.md). When enabled, a single-use passphrase texted from *any* number locks the phone and reports its location back every 5 minutes.
+- **Find-my-phone / anti-theft lockdown** — set a private passphrase and PIN, and texting `loc <passphrase>` (or `quicloc <passphrase>`) from *any* number — deliberately not just your emergency contacts, since you might be borrowing a stranger's phone — locks the device and reports its location back every 5 minutes, or every 1 minute after 3 wrong PIN attempts on the lock screen. A 3rd wrong attempt also takes one photo of whoever's holding the phone and sends it the same way. Stops the moment your QuicLoc PIN is entered correctly on the device itself. Real lock (`DevicePolicyManager.lockNow()`) with an optional Device Admin grant; without it, a cover-screen still blocks casual access. Lives in its own on-demand module, so its permissions (Camera, Device Admin, Full-Screen Notifications) aren't declared until you set it up. See [docs/LOCKDOWN.md](docs/LOCKDOWN.md).
 
 ---
 
@@ -16427,7 +16424,7 @@ See [TRIGGER-FLOW.md](TRIGGER-FLOW.md) for the step-by-step. Quick summary:
 
 1. **SMS trigger.** `SmsReceiver` → `WhitelistManager.isWhitelisted(phone)` → `LocationReplyService.startForSms` → `LocationHelper.getCurrentLocationAndReply` → `SmsManager.sendTextMessage`.
 2. **Notification trigger.** `NotificationListener` → `WhitelistManager.isWhitelistedByName(senderName)` → `LocationReplyService.startForNotification(action)` → `LocationHelper.getCurrentLocationAndReplyViaNotification` → `Notification.Action.actionIntent.send(...)`.
-3. **Passphrase trigger** (any number). `SmsReceiver` or `NotificationListener` → `WhitelistManager.clearPassphraseSync()` → `FindMyPhone.trigger(...)` (starts the `TrackingService` in the on-demand `:feature_findmyphone` module by `ComponentName`; no-op if the module was never installed) → `LockdownController.lockNow()` (DevicePolicyManager.lockNow if admin else cover-screen Activity + full-screen-intent notification) → 5-min interval location updates until the user enters PIN.
+3. **Passphrase trigger** (any number — deliberately not whitelist-gated). `SmsReceiver` or `NotificationListener` → `FindMyPhone.trigger(...)` (starts the `TrackingService` in the on-demand `:feature_findmyphone` module by `ComponentName`; returns `false` and starts nothing if the module isn't installed) → only on success, `WhitelistManager.clearPassphraseSync()` (burning the single-use passphrase; on failure `FindMyPhone.requestInstall(...)` is kicked off instead and the passphrase is left armed for a retry) → `claimForeground()` + `engageLockdown()` (`LockdownController.lockNow()` — `DevicePolicyManager.lockNow()` if admin, else cover-screen Activity + full-screen-intent notification) → `AlarmManager`-driven 5-min interval location updates (1-min in panic mode) until the user enters the PIN.
 
 Loc Notice is not request-driven and runs separately from all three paths above — see [LOC-NOTICE-FLOW.md](LOC-NOTICE-FLOW.md): `GeofenceRegistrar` registers named places with `GeofencingClient`; `GeofenceBroadcastReceiver` fires on a crossing and texts the configured contacts directly, with no incoming message involved.
 
@@ -17397,16 +17394,7 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 
 The dialog is also labelled `Step N of M` against the length of the chain, and its dismiss button reads "Not now" — skipping is always allowed, and the setup checklist on the settings screen lets the user come back to any skipped row. Copy lives in `MainActivity.RATIONALES`, keyed by permission; the special-access flows (background location, notification access, Device Admin, battery, full-screen intent) build the same `RationaleDialogState` inline.
 
-### On-demand (dynamic feature module) — currently DISABLED
-
-> **Status: the find-my-phone / lockdown feature is currently disabled and not shipped.**
-> `:feature_findmyphone` is excluded from the build (`settings.gradle.kts` + the app's
-> `dynamicFeatures`) and `FindMyPhone.ENABLED` is `false`, so the module's manifest is **not merged**
-> and the app declares **no `CAMERA`, no `USE_FULL_SCREEN_INTENT`, and no `BIND_DEVICE_ADMIN`** —
-> none of these need to be declared to Google Play while the feature is off. The setup UI is hidden
-> and the passphrase trigger no-ops. The module's code is kept in the repo; re-enable by re-adding the
-> module in both Gradle files and flipping `FindMyPhone.ENABLED` to `true`. The section below
-> describes the feature's permission model **when enabled**.
+### On-demand (dynamic feature module)
 
 The **entire** find-my-phone / lockdown feature lives in the on-demand `:feature_findmyphone`
 module: the `TrackingService` (FGS), `TrackingLockActivity` (lock screen), `QuicLocDeviceAdmin`
@@ -17418,7 +17406,7 @@ it on-demand.
 
 | Permission | Why | When |
 |---|---|---|
-| `CAMERA` | Panic-mode intruder photo (module-internal `IntruderCamera`) after 3 wrong PINs | **Not in the base install.** Declared in `:feature_findmyphone`. Requested right after the module installs (foreground), because the lock activity can't show a permission dialog over the keyguard. If CAMERA isn't granted, panic mode still locks — just without a photo. |
+| `CAMERA` | Panic-mode intruder photo (module-internal `IntruderCamera`) after 3 wrong PINs | **Not in the base install.** Declared in `:feature_findmyphone`. Requested right after the module installs (foreground), because the lock activity can't show a permission dialog over the keyguard — `TrackingLockActivity` itself never requests it; if it wasn't granted during setup, panic mode still locks, just without a photo. |
 | `USE_FULL_SCREEN_INTENT` | `setFullScreenIntent` on the tracking notification (surfaces the lock screen over the keyguard) | **Not in the base install.** Declared in `:feature_findmyphone`. Android 14+ also requires a *runtime* grant via Settings — see the dedicated section below. |
 
 Because Device Admin, CAMERA, and the tracking components only exist once the module is merged in,
@@ -17497,7 +17485,7 @@ The battery optimization exemption requires a Play Console disclosure — see [D
 | Notification trigger | SEND_SMS *(implicit dependency through fallbacks)*, *_LOCATION, ACCESS_BACKGROUND_LOCATION | Notification Access |
 | Widget tap | SEND_SMS, *_LOCATION, ACCESS_BACKGROUND_LOCATION, POST_NOTIFICATIONS | — |
 | Passphrase / find-my-phone | RECEIVE_SMS, SEND_SMS, *_LOCATION, BACKGROUND_LOCATION, CAMERA | — for cover-screen mode; Device Admin for real lock |
-| MMS panic photo | SEND_SMS, CAMERA | — |
+| MMS panic photo | SEND_SMS, CAMERA | The `android-smsmms` library also pulls in `ACCESS_NETWORK_STATE`, already declared by the base for Play Services — not a new permission surface introduced by this path |
 
 ## Permissions explicitly NOT requested
 
@@ -17515,7 +17503,7 @@ The battery optimization exemption requires a Play Console disclosure — see [D
 - `READ_SMS` — we only receive new SMS, never read the user's SMS history.
 - `WRITE_SMS` — `SmsManager.sendTextMessage` doesn't need it.
 - `WAKE_LOCK` — FGS keeps the process alive; we don't need a manual wake lock.
-- `SCHEDULE_EXACT_ALARM` — we use `Handler.postDelayed`, not `AlarmManager`.
+- `SCHEDULE_EXACT_ALARM` / `USE_EXACT_ALARM` — `TrackingService`'s ticks are scheduled with `AlarmManager.set(ELAPSED_REALTIME_WAKEUP, ...)`, a **non-exact** wakeup alarm (see [LOCKDOWN.md](LOCKDOWN.md#ticking-alarmmanager-not-handler)) — deliberately not `setExactAndAllowWhileIdle`, so no exact-alarm permission is needed. A non-exact alarm still forces a real CPU wake during deep sleep, which is what the cadence actually needs; Doze may defer delivery into the next maintenance window by some margin rather than firing at the exact millisecond, which is an acceptable trade for a 1–5 minute tracking interval.
 - `MANAGE_OVERLAY_PERMISSION` / `SYSTEM_ALERT_WINDOW` — we don't draw overlays; the lock screen is a real `Activity`.
 
 Adding any of these requires updating [DECLARATIONS.md](../DECLARATIONS.md) and the privacy policy.
@@ -17613,6 +17601,9 @@ debug APKs for sideloading.
     Contacts" button uses `Intent.ACTION_PICK`, which needs no permission (see
     [PERMISSIONS.md](PERMISSIONS.md)). The `BIND_*` signature permissions (Notification Listener,
     Device Admin) were intentionally left in the base/module — see the PR discussion.
+- **R8 / resource shrinking: enabled.** `isMinifyEnabled` and `isShrinkResources` are true in `release` builds to optimize performance and reduce APK size. ProGuard rules are configured in `app/proguard-rules.pro`.
+  (Compose and CameraX ship their own consumer ProGuard rules.)
+- **Play in-app updates (Play Core):** an optional future enhancement; not wired up.
 
 ### Sideload APK build (GitHub Releases)
 
@@ -17631,9 +17622,6 @@ tag) and `build-apk.yml` (`workflow_dispatch`) instead:
 
 This is what makes the sideload APK a genuinely fused build: it's the one artifact in the whole pipeline
 built specifically by reading `dist:fusing`, rather than assuming AGP does it.
-- **R8 / resource shrinking: enabled.** `isMinifyEnabled` and `isShrinkResources` are true in `release` builds to optimize performance and reduce APK size. ProGuard rules are configured in `app/proguard-rules.pro`.
-  (Compose and CameraX ship their own consumer ProGuard rules.)
-- **Play in-app updates (Play Core):** an optional future enhancement; not wired up.
 
 ## Signing
 
@@ -18176,10 +18164,14 @@ Everything below has to be exercised on a real device or emulator.
 |---|---|
 | From any phone, send `loc <passphrase>` | Tracking starts, cover-screen lock activity attempts to appear (may not on Android 10+ from SMS trigger — known limitation) |
 | Same trigger from a WhatsApp message (with Notification Access) | Cover screen DOES appear (Notification Listener grants BAL) |
-| Send the same passphrase again from anywhere | No effect (single-use, was cleared on first fire) |
-| Enter wrong PIN 3× | Photo captured, sent via MMS to the triggering number, tracking interval shortens to 1 min |
+| Send the same passphrase again from anywhere | No effect (single-use, was cleared once tracking started on first fire) |
+| Send `loc <passphrase>` before find-my-phone setup finished installing the module | No tracking starts; passphrase stays armed (check Diagnostics for the "module not installed yet" row); resend the same text after setup finishes and it should work |
+| Enter wrong PIN 3× | Photo captured, sent via MMS to the triggering number once, tracking interval shortens to 1 min |
+| Enter wrong PIN a 4th and 5th time | No new photo, no new MMS — just a "Device Locked." toast each time |
 | Enter correct PIN | Tracking stops, screen unlocks |
-| Force-stop the QuicLoc process during tracking | Service restarts via START_STICKY, restores state, continues tracking |
+| Force-stop the QuicLoc process during tracking | Next `TrackingAlarmReceiver` alarm restarts the service, which restores state from `quicloc_tracking_state` and continues tracking (within one tick interval, not instantly) |
+| Reboot the device during tracking, then unlock it once | Tracking resumes automatically (`BootReceiver` → `FindMyPhone.resumeTrackingAfterBoot`) — should NOT resume before that first post-reboot unlock |
+| With a passphrase armed, clear the app PIN from Settings → 5 · Your QuicLoc PIN | Confirmation dialog warns this will also disarm find-my-phone; after confirming, the passphrase is cleared too (re-sending it has no effect) |
 
 ### 5. Find-my-phone (Device Admin granted)
 
