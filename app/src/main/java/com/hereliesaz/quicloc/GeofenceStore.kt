@@ -41,19 +41,29 @@ class GeofenceStore(context: Context) {
 
     fun get(id: String): GeofenceEntry? = getAll().firstOrNull { it.id == id }
 
-    /** Assigns a fresh id if [entry] doesn't have one, and returns the saved entry. */
+    /** Assigns a fresh id (and creation timestamp) if [entry] doesn't have one, and returns the saved entry. */
     fun add(entry: GeofenceEntry): GeofenceEntry {
-        val saved = if (entry.id.isBlank()) entry.copy(id = UUID.randomUUID().toString()) else entry
+        val saved = if (entry.id.isBlank()) {
+            entry.copy(id = UUID.randomUUID().toString(), createdAt = System.currentTimeMillis())
+        } else entry
         val current = prefs.getStringSet(KEY_ENTRIES, emptySet()) ?: emptySet()
         saveAll(current + saved.toJsonString())
         BackupVault.snapshotAsync(appContext)
         return saved
     }
 
+    /**
+     * [entry.createdAt] is ignored in favor of the existing stored record's
+     * value — createdAt is immutable creation metadata, not something an
+     * edit should be able to reset (the edit screen doesn't round-trip it,
+     * so trusting the caller's copy would zero it out on every save).
+     */
     fun update(entry: GeofenceEntry) {
         val current = getAll()
+        val original = current.firstOrNull { it.id == entry.id }
+        val toSave = if (original != null) entry.copy(createdAt = original.createdAt) else entry
         val newSet = current.filterNot { it.id == entry.id }.map { it.toJsonString() }.toSet()
-        saveAll(newSet + entry.toJsonString())
+        saveAll(newSet + toSave.toJsonString())
         BackupVault.snapshotAsync(appContext)
     }
 

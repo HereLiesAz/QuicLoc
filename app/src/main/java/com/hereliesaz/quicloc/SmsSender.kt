@@ -41,7 +41,11 @@ object SmsSender {
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to send SMS to $phoneNumber", e)
+            // Deliberately not logging the destination number -- logcat is
+            // readable by any app holding READ_LOGS on older/rooted devices,
+            // and this is exactly the "who's on the whitelist" metadata the
+            // rest of the app goes out of its way to keep encrypted at rest.
+            Log.e(TAG, "Failed to send SMS", e)
             false
         }
     }

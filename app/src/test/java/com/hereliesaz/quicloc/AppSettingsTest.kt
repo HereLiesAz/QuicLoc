@@ -82,4 +82,29 @@ class AppSettingsTest {
         assertFalse(AppSettings.wasPhoneHintAutoPrompted(context))
         assertFalse(AppSettings.wasFullScreenIntentPrompted(context))
     }
+
+    // ---- Loc Notice master toggle ------------------------------------------
+
+    @Test
+    fun `Loc Notice defaults to off`() {
+        // Opt-in, unlike isEnabled -- a fresh install must not start
+        // watching the user's location in the background.
+        assertFalse(AppSettings.isLocNoticeEnabled(context))
+    }
+
+    @Test
+    fun `Loc Notice toggle persists across reads`() {
+        AppSettings.setLocNoticeEnabled(context, true)
+        assertTrue(AppSettings.isLocNoticeEnabled(context))
+        AppSettings.setLocNoticeEnabled(context, false)
+        assertFalse(AppSettings.isLocNoticeEnabled(context))
+    }
+
+    @Test
+    fun `Loc Notice toggle is independent of the request-reply master toggle`() {
+        AppSettings.setEnabled(context, false)
+        AppSettings.setLocNoticeEnabled(context, true)
+        assertFalse(AppSettings.isEnabled(context))
+        assertTrue(AppSettings.isLocNoticeEnabled(context))
+    }
 }

@@ -53,4 +53,19 @@ object MapsHandoff {
             ?.toString()
         return CoordinateParser.parse(text)
     }
+
+    /**
+     * Opens Maps centered on an already-pinned coordinate — lets the user
+     * verify or re-derive a saved location (e.g. after a bad paste, or just
+     * to sanity-check it looks right) without redoing the address search.
+     */
+    fun viewCoordinatesInMaps(context: Context, latitude: Double, longitude: Double) {
+        val uri = Uri.parse("geo:$latitude,$longitude?q=$latitude,$longitude")
+        val intent = Intent(Intent.ACTION_VIEW, uri)
+        if (intent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(intent)
+        } else {
+            context.startActivity(Intent.createChooser(intent, "Open location in a maps app"))
+        }
+    }
 }

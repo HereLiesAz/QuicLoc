@@ -162,15 +162,56 @@ fi
 # the edit for review the moment it's committed, and refuses (HTTP 400) for
 # an edit that stages draft releases on tracks like alpha/beta/production --
 # those are deliberately left as drafts for a human to review and submit
-# from the Play Console UI, not auto-sent. Harmless for the completed
-# internal-track rollout above, which doesn't go through review anyway.
+# from the Play Console UI, not auto-sent. Verified (not just assumed)
+# harmless for the completed rollout above: per Google's own Play Console
+# help docs, internal-track releases "go live within minutes" and "may not
+# be subject to the usual Play policy or security reviews" -- so a flag
+# that only defers *review submission* is a genuine no-op for that track,
+# not a guess. If completed_track is ever changed to something that DOES
+# go through review (alpha/beta/production), that assumption needs
+# revisiting -- see the read-back verification in step 6 below, which
+# would catch the release silently not going live either way.
 commit_out="$tmp/commit.json"
 http=$(req POST "$api/edits/${edit_id}:commit?changesNotSentForReview=true" "$commit_out")
 if [ "$http" != "200" ] && [ "$http" != "201" ]; then
   echo "::error::Failed to commit edit (HTTP $http)"
   echo "Response:"
   cat "$commit_out"
+  # Same reasoning as every other failure path above: don't leave an open
+  # edit (holding the uploaded bundle) dangling in Play Console just
+  # because this was the step that happened to fail.
+  curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" "$api/edits/${edit_id}" || true
   exit 1
+fi
+
+# 6) Read back the live track state to confirm the release actually took
+#    effect. A 200 on step 5 only means Play *accepted the commit request*
+#    -- it doesn't by itself prove the completed_track rollout is genuinely
+#    live, and this pipeline has already been burned once by an
+#    unverified assumption about commit-time behavior (see the comment on
+#    changesNotSentForReview above). A verification-call failure (network
+#    blip, transient API error) is a warning, not a hard failure -- the
+#    commit may well have succeeded and this just couldn't double-check.
+#    Confirming the commit succeeded but the versionCode is absent from
+#    the live track, though, is a real failure: it means "Published" would
+#    otherwise be reported for a release that isn't actually out.
+if [ -n "$completed_track" ]; then
+  verify_out="$tmp/verify.json"
+  http=$(req GET "$api/tracks/${completed_track}" "$verify_out")
+  if [ "$http" != "200" ]; then
+    echo "::warning::Could not verify the $completed_track track's live state after commit (HTTP $http) -- the commit itself was accepted, but this could not be independently confirmed. Response:"
+    cat "$verify_out"
+  else
+    live_match=$(jq -r --arg vc "$version_code" \
+      '[.releases[]? | select(.versionCodes != null) | select(.versionCodes[]? == $vc)] | length' \
+      "$verify_out")
+    if [ "$live_match" = "0" ]; then
+      echo "::error::Commit reported success, but versionCode $version_code was not found in the live $completed_track track afterward. Response:"
+      cat "$verify_out"
+      exit 1
+    fi
+    echo "Verified versionCode $version_code is present in the live $completed_track track."
+  fi
 fi
 
 # Write structured output

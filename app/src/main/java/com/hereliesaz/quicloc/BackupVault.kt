@@ -54,12 +54,19 @@ object BackupVault {
     private const val GCM_TAG_BYTES = GCM_TAG_BITS / 8
     private const val HEADER_BYTES = 1 + SALT_BYTES + GCM_IV_BYTES
 
-    // Restore-attempt rate limiting. The PBKDF2 work factor makes offline
-    // brute force of an exported file expensive on its own, but a 4-6 digit
-    // PIN is still weak against someone guessing through the app's own UI —
-    // this bounds that path. Tracked in a small plaintext prefs file (just a
-    // counter + timestamp, not sensitive) so it's independent of PIN
-    // correctness and survives process death.
+    // Restore-attempt rate limiting bounds guessing through the app's own
+    // UI. It does NOT meaningfully protect an exported/backed-up file
+    // against offline attack: the PIN is exactly 6 digits (a 10^6 keyspace
+    // — see AppPinCard's `pin.length == 6` validation), and per
+    // docs/SECURITY.md's own PIN-entropy analysis, full brute force of that
+    // keyspace at 600k PBKDF2 iterations takes on the order of ~17 minutes
+    // on capable GPU hardware — PBKDF2 raises the cost per guess, it
+    // doesn't make a keyspace this small "expensive" to exhaust. The blob
+    // also now carries Loc Notice's saved places (home/work coordinates),
+    // which raises what's actually at stake in that file. Tracked in a
+    // small plaintext prefs file (just a counter + timestamp, not
+    // sensitive) so it's independent of PIN correctness and survives
+    // process death.
     private const val ATTEMPTS_PREFS_FILE = "quicloc_backup_attempts"
     private const val KEY_FAILED_COUNT = "failed_count"
     private const val KEY_LOCKED_UNTIL = "locked_until"

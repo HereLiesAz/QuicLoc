@@ -16,7 +16,7 @@ Your location is fetched only at that moment, sent only to that person, and neve
 
 **No, if** you want a live map of where someone is over time. That's Google Maps Live Location, and QuicLoc deliberately doesn't do it — nothing is streamed, logged, or kept.
 
-The trade-off is the whole design: **someone has to ask.** Between requests, QuicLoc does nothing at all — no polling, no background GPS, effectively zero battery.
+The trade-off is the whole design: **someone has to ask.** Between requests, QuicLoc does nothing at all — no polling, no background GPS, effectively zero battery. The one exception is Loc Notice (below): an entirely separate, opt-in feature, off by default, that watches your location in the background to alert people when you arrive at or leave places you've named — turning it on is a deliberate trade of some battery for that convenience, and it has nothing to do with the ask-and-answer design described above.
 
 ---
 

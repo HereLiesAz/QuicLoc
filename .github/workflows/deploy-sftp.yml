@@ -23,6 +23,11 @@ jobs:
           PASSWORD: ${{ secrets.FTP_PASSWORD }}
           PORT: ${{ vars.SFTP_PORT || '22' }}
           REMOTE_DIR: '/quicloc'
+          # Optional: the server's known_hosts-format SSH host key line
+          # (e.g. the output of `ssh-keyscan -p <port> <host>`), so the host
+          # key can be pinned instead of blindly trusted. Not set yet on
+          # this repo -- see the warning this step prints until it is.
+          SFTP_HOST_KEY: ${{ secrets.SFTP_HOST_KEY }}
         run: |
           set -e
           sudo apt-get install -y lftp
@@ -30,8 +35,29 @@ jobs:
           USER_TRIMMED=$(printf '%s' "$USERNAME" | tr -d ' \t\r\n')
           PW_TRIMMED=$(printf '%s' "$PASSWORD" | tr -d '\r\n')
 
-          # Mirror the docs directory to /quicloc
+          # sftp:auto-confirm yes accepts ANY host key on first connection
+          # with no verification -- a DNS hijack or network-position MITM
+          # gets silently trusted and handed the FTP credentials. Pin the
+          # real host key via the SFTP_HOST_KEY secret when it's set
+          # (`ssh-keyscan -p "$PORT" "$HOST"` run once, out of band, to
+          # obtain it); until then, fall back to the old trust-on-first-use
+          # behavior but say so loudly instead of silently.
+          if [ -n "$SFTP_HOST_KEY" ]; then
+            known_hosts="$RUNNER_TEMP/sftp_known_hosts"
+            printf '%s\n' "$SFTP_HOST_KEY" > "$known_hosts"
+            AUTO_CONFIRM=no
+            SET_KNOWN_HOSTS="set sftp:known-hosts-files \"$known_hosts\";"
+          else
+            echo "::warning::SFTP_HOST_KEY secret is not set -- the deploy host's SSH key is trusted on first use with no verification (sftp:auto-confirm). Run 'ssh-keyscan -p $PORT $HOST' once and store the output as the SFTP_HOST_KEY secret to close this."
+            AUTO_CONFIRM=yes
+            SET_KNOWN_HOSTS=""
+          fi
+
+          # Mirror the docs directory to /quicloc. No `ssl:verify-certificate`
+          # setting here -- SFTP runs over SSH, not TLS, so that option
+          # (a leftover from FTPS-flavored lftp configs) doesn't apply to
+          # this sftp:// connection and disabling it bought nothing.
           lftp -u "$USER_TRIMMED","$PW_TRIMMED" \
             -p "$PORT" \
-            -e "set sftp:auto-confirm yes; set ssl:verify-certificate no; mirror -R --verbose ./docs/ $REMOTE_DIR; quit" \
+            -e "$SET_KNOWN_HOSTS set sftp:auto-confirm $AUTO_CONFIRM; mirror -R --verbose ./docs/ $REMOTE_DIR; quit" \
             sftp://"$HOST"
