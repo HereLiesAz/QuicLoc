@@ -2,37 +2,10 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    claude/permissions-declaration-form-mashva
-  Commit:    7be3ad6becfbfd1739ead79e6ad07d9b028ce5a3
-  Timestamp: 2026-08-17 09:58:06 UTC
+  Branch:    main
+  Commit:    18b32f52f8958e19b6b652c87a42ecd1ff900298
+  Timestamp: 2026-08-17 10:52:29 UTC
 ======================================================
-
-
-######################################################
-# FILE: .claude/settings.local.json
-######################################################
-
-{
-  "permissions": {
-    "allow": [
-      "Bash(find /home/az/StudioProjects/QuicLoc -path \"*/build\" -prune -o -type f -name \"*.kt\" -o -name \"*.java\" 2>/dev/null | grep -v build)",
-      "Bash(find /home/az/StudioProjects/QuicLoc -name \"*.xml\" -path \"*/layout/*\" 2>/dev/null | grep -v build)",
-      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -30)",
-      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -20)",
-      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -15)",
-      "Bash(./gradlew assembleDebug)",
-      "Bash(awk 'BEGIN{o=0;c=0} { for\\(i=1;i<=length\\($0\\);i++\\){ch=substr\\($0,i,1\\); if\\(ch==\"{\"\\)o++; else if\\(ch==\"}\"\\)c++} } END{print \"open=\",o,\" close=\",c,\" diff=\",o-c}' app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt)",
-      "Bash(git add *)",
-      "Bash(sh ./gradlew compileReleaseKotlin)",
-      "Bash(git commit -m ' *)",
-      "Bash(git stash *)",
-      "Bash(git pull *)",
-      "Bash(./gradlew :app:compileDebugKotlin)",
-      "Bash(sh /run/media/az/0722-7C65/QuicLoc/gradlew -p /run/media/az/0722-7C65/QuicLoc :app:compileDebugKotlin)",
-      "Bash(./gradlew testDebugUnitTest:*)"
-    ]
-  }
-}
 
 
 ######################################################
@@ -1554,6 +1527,11 @@ render.experimental.xml
 *.jks
 *.keystore
 keystore.properties
+
+# Claude Code local settings (per-machine/per-session tool-permission
+# grants) -- not shared repo config, shouldn't churn the commit history
+# every time a session auto-approves a new tool.
+.claude/settings.local.json
 
 # Google Services (e.g. APIs or Firebase)
 google-services.json
