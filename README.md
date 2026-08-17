@@ -60,7 +60,7 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 | **8 · Backup & restore** | Export / import your setup |
 | **9 · Help & troubleshooting** | Tutorials, request history, diagnostics |
 
-(Numbering shifts by one when the find-my-phone feature is enabled — see below.)
+(Numbering shifts by one when the find-my-phone feature is enabled — see [docs/LOCKDOWN.md](docs/LOCKDOWN.md).)
 
 ---
 
@@ -78,10 +78,7 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 - **Reliable location** — three-stage fallback (fresh GPS fix → cached location → forced update) so a request answers even from a cold start indoors.
 - **Diagnostics** — every trigger QuicLoc saw and the exact decision it reached, in plain English. Built for "I texted loc and nothing happened".
 - **No data collection** — no analytics, no crash reporters, no servers. Nothing leaves your device except the location reply, sent directly to the person who asked.
-
-### Temporarily disabled: find my phone
-
-**Passphrase lockdown**, **intruder photo** and **real device lock (Device Admin)** are built but **not shipped in the current build** — the whole feature lives in an on-demand module that is currently excluded from the app, and its UI, tutorials and permissions are hidden along with it. See [docs/LOCKDOWN.md](docs/LOCKDOWN.md). When enabled, a single-use passphrase texted from *any* number locks the phone and reports its location back every 5 minutes.
+- **Find-my-phone / anti-theft lockdown** — set a private passphrase and PIN, and texting `loc <passphrase>` (or `quicloc <passphrase>`) from *any* number — deliberately not just your emergency contacts, since you might be borrowing a stranger's phone — locks the device and reports its location back every 5 minutes, or every 1 minute after 3 wrong PIN attempts on the lock screen. A 3rd wrong attempt also takes one photo of whoever's holding the phone and sends it the same way. Stops the moment your QuicLoc PIN is entered correctly on the device itself. Real lock (`DevicePolicyManager.lockNow()`) with an optional Device Admin grant; without it, a cover-screen still blocks casual access. Lives in its own on-demand module, so its permissions (Camera, Device Admin, Full-Screen Notifications) aren't declared until you set it up. See [docs/LOCKDOWN.md](docs/LOCKDOWN.md).
 
 ---
 

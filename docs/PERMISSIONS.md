@@ -41,16 +41,7 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 
 The dialog is also labelled `Step N of M` against the length of the chain, and its dismiss button reads "Not now" — skipping is always allowed, and the setup checklist on the settings screen lets the user come back to any skipped row. Copy lives in `MainActivity.RATIONALES`, keyed by permission; the special-access flows (background location, notification access, Device Admin, battery, full-screen intent) build the same `RationaleDialogState` inline.
 
-### On-demand (dynamic feature module) — currently DISABLED
-
-> **Status: the find-my-phone / lockdown feature is currently disabled and not shipped.**
-> `:feature_findmyphone` is excluded from the build (`settings.gradle.kts` + the app's
-> `dynamicFeatures`) and `FindMyPhone.ENABLED` is `false`, so the module's manifest is **not merged**
-> and the app declares **no `CAMERA`, no `USE_FULL_SCREEN_INTENT`, and no `BIND_DEVICE_ADMIN`** —
-> none of these need to be declared to Google Play while the feature is off. The setup UI is hidden
-> and the passphrase trigger no-ops. The module's code is kept in the repo; re-enable by re-adding the
-> module in both Gradle files and flipping `FindMyPhone.ENABLED` to `true`. The section below
-> describes the feature's permission model **when enabled**.
+### On-demand (dynamic feature module)
 
 The **entire** find-my-phone / lockdown feature lives in the on-demand `:feature_findmyphone`
 module: the `TrackingService` (FGS), `TrackingLockActivity` (lock screen), `QuicLocDeviceAdmin`
@@ -62,7 +53,7 @@ it on-demand.
 
 | Permission | Why | When |
 |---|---|---|
-| `CAMERA` | Panic-mode intruder photo (module-internal `IntruderCamera`) after 3 wrong PINs | **Not in the base install.** Declared in `:feature_findmyphone`. Requested right after the module installs (foreground), because the lock activity can't show a permission dialog over the keyguard. If CAMERA isn't granted, panic mode still locks — just without a photo. |
+| `CAMERA` | Panic-mode intruder photo (module-internal `IntruderCamera`) after 3 wrong PINs | **Not in the base install.** Declared in `:feature_findmyphone`. Requested right after the module installs (foreground), because the lock activity can't show a permission dialog over the keyguard — `TrackingLockActivity` itself never requests it; if it wasn't granted during setup, panic mode still locks, just without a photo. |
 | `USE_FULL_SCREEN_INTENT` | `setFullScreenIntent` on the tracking notification (surfaces the lock screen over the keyguard) | **Not in the base install.** Declared in `:feature_findmyphone`. Android 14+ also requires a *runtime* grant via Settings — see the dedicated section below. |
 
 Because Device Admin, CAMERA, and the tracking components only exist once the module is merged in,
@@ -141,7 +132,7 @@ The battery optimization exemption requires a Play Console disclosure — see [D
 | Notification trigger | SEND_SMS *(implicit dependency through fallbacks)*, *_LOCATION, ACCESS_BACKGROUND_LOCATION | Notification Access |
 | Widget tap | SEND_SMS, *_LOCATION, ACCESS_BACKGROUND_LOCATION, POST_NOTIFICATIONS | — |
 | Passphrase / find-my-phone | RECEIVE_SMS, SEND_SMS, *_LOCATION, BACKGROUND_LOCATION, CAMERA | — for cover-screen mode; Device Admin for real lock |
-| MMS panic photo | SEND_SMS, CAMERA | — |
+| MMS panic photo | SEND_SMS, CAMERA | The `android-smsmms` library also pulls in `ACCESS_NETWORK_STATE`, already declared by the base for Play Services — not a new permission surface introduced by this path |
 
 ## Permissions explicitly NOT requested
 
@@ -159,7 +150,7 @@ The battery optimization exemption requires a Play Console disclosure — see [D
 - `READ_SMS` — we only receive new SMS, never read the user's SMS history.
 - `WRITE_SMS` — `SmsManager.sendTextMessage` doesn't need it.
 - `WAKE_LOCK` — FGS keeps the process alive; we don't need a manual wake lock.
-- `SCHEDULE_EXACT_ALARM` — we use `Handler.postDelayed`, not `AlarmManager`.
+- `SCHEDULE_EXACT_ALARM` / `USE_EXACT_ALARM` — `TrackingService`'s ticks are scheduled with `AlarmManager.set(ELAPSED_REALTIME_WAKEUP, ...)`, a **non-exact** wakeup alarm (see [LOCKDOWN.md](LOCKDOWN.md#ticking-alarmmanager-not-handler)) — deliberately not `setExactAndAllowWhileIdle`, so no exact-alarm permission is needed. A non-exact alarm still forces a real CPU wake during deep sleep, which is what the cadence actually needs; Doze may defer delivery into the next maintenance window by some margin rather than firing at the exact millisecond, which is an acceptable trade for a 1–5 minute tracking interval.
 - `MANAGE_OVERLAY_PERMISSION` / `SYSTEM_ALERT_WINDOW` — we don't draw overlays; the lock screen is a real `Activity`.
 
 Adding any of these requires updating [DECLARATIONS.md](../DECLARATIONS.md) and the privacy policy.

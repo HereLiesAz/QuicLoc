@@ -93,10 +93,14 @@ Everything below has to be exercised on a real device or emulator.
 |---|---|
 | From any phone, send `loc <passphrase>` | Tracking starts, cover-screen lock activity attempts to appear (may not on Android 10+ from SMS trigger — known limitation) |
 | Same trigger from a WhatsApp message (with Notification Access) | Cover screen DOES appear (Notification Listener grants BAL) |
-| Send the same passphrase again from anywhere | No effect (single-use, was cleared on first fire) |
-| Enter wrong PIN 3× | Photo captured, sent via MMS to the triggering number, tracking interval shortens to 1 min |
+| Send the same passphrase again from anywhere | No effect (single-use, was cleared once tracking started on first fire) |
+| Send `loc <passphrase>` before find-my-phone setup finished installing the module | No tracking starts; passphrase stays armed (check Diagnostics for the "module not installed yet" row); resend the same text after setup finishes and it should work |
+| Enter wrong PIN 3× | Photo captured, sent via MMS to the triggering number once, tracking interval shortens to 1 min |
+| Enter wrong PIN a 4th and 5th time | No new photo, no new MMS — just a "Device Locked." toast each time |
 | Enter correct PIN | Tracking stops, screen unlocks |
-| Force-stop the QuicLoc process during tracking | Service restarts via START_STICKY, restores state, continues tracking |
+| Force-stop the QuicLoc process during tracking | Next `TrackingAlarmReceiver` alarm restarts the service, which restores state from `quicloc_tracking_state` and continues tracking (within one tick interval, not instantly) |
+| Reboot the device during tracking, then unlock it once | Tracking resumes automatically (`BootReceiver` → `FindMyPhone.resumeTrackingAfterBoot`) — should NOT resume before that first post-reboot unlock |
+| With a passphrase armed, clear the app PIN from Settings → 5 · Your QuicLoc PIN | Confirmation dialog warns this will also disarm find-my-phone; after confirming, the passphrase is cleared too (re-sending it has no effect) |
 
 ### 5. Find-my-phone (Device Admin granted)
 

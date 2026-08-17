@@ -86,6 +86,9 @@ debug APKs for sideloading.
     Contacts" button uses `Intent.ACTION_PICK`, which needs no permission (see
     [PERMISSIONS.md](PERMISSIONS.md)). The `BIND_*` signature permissions (Notification Listener,
     Device Admin) were intentionally left in the base/module — see the PR discussion.
+- **R8 / resource shrinking: enabled.** `isMinifyEnabled` and `isShrinkResources` are true in `release` builds to optimize performance and reduce APK size. ProGuard rules are configured in `app/proguard-rules.pro`.
+  (Compose and CameraX ship their own consumer ProGuard rules.)
+- **Play in-app updates (Play Core):** an optional future enhancement; not wired up.
 
 ### Sideload APK build (GitHub Releases)
 
@@ -104,9 +107,6 @@ tag) and `build-apk.yml` (`workflow_dispatch`) instead:
 
 This is what makes the sideload APK a genuinely fused build: it's the one artifact in the whole pipeline
 built specifically by reading `dist:fusing`, rather than assuming AGP does it.
-- **R8 / resource shrinking: enabled.** `isMinifyEnabled` and `isShrinkResources` are true in `release` builds to optimize performance and reduce APK size. ProGuard rules are configured in `app/proguard-rules.pro`.
-  (Compose and CameraX ship their own consumer ProGuard rules.)
-- **Play in-app updates (Play Core):** an optional future enhancement; not wired up.
 
 ## Signing
 
