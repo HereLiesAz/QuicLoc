@@ -301,9 +301,18 @@ class TrackingService : Service() {
         Log.d(TAG, "Lock attempt: realLockSucceeded=$realLockSucceeded")
     }
 
+    // Explicit setClass()/setPackage() calls, not just the Intent(context,
+    // Class) constructor -- static analysis (CodeQL's implicit-PendingIntent
+    // check) pattern-matches on the explicit-targeting method calls
+    // themselves rather than crediting the constructor overload, and a truly
+    // implicit PendingIntent handed to AlarmManager/the notification manager
+    // is interceptable by any app that can match it.
+
     private fun lockActivityPendingIntent(): PendingIntent {
         val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            setClass(this@TrackingService, TrackingLockActivity::class.java)
+            setPackage(packageName)
         }
         return PendingIntent.getActivity(
             this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -311,7 +320,10 @@ class TrackingService : Service() {
     }
 
     private fun tickPendingIntent(): PendingIntent {
-        val intent = Intent(this, TrackingAlarmReceiver::class.java)
+        val intent = Intent(this, TrackingAlarmReceiver::class.java).apply {
+            setClass(this@TrackingService, TrackingAlarmReceiver::class.java)
+            setPackage(packageName)
+        }
         return PendingIntent.getBroadcast(
             this, ALARM_REQUEST_CODE, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
