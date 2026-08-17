@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    f7489f27444c3e9f0cec5c62c9d487768540bc36
-  Timestamp: 2026-08-17 16:08:48 UTC
+  Branch:    claude/permissions-declaration-form-mashva
+  Commit:    04db6d60f29ebc61a7f9663392e0527e70176370
+  Timestamp: 2026-08-17 16:17:59 UTC
 ======================================================
 
 
@@ -1038,6 +1038,16 @@ on:
   pull_request:
     branches: [ main ]
 
+# Least-privilege default for every job in this workflow — CodeQL's Actions
+# query flags jobs with no explicit permissions block, since the implicit
+# default GITHUB_TOKEN scope depends on a repo-level setting that can be
+# read-write. Only `release` and `publish-play` need more (contents: write,
+# to create the GitHub Release / commit the version bump); they already
+# declare their own permissions block, which overrides this default for
+# just those jobs.
+permissions:
+  contents: read
+
 # Serializes runs on the same ref so two close-together pushes to main (or
 # two tag pushes) can't race each other through the versionCode-dependent
 # release/publish path. Non-tag runs cancel their predecessor (a superseded
@@ -1231,6 +1241,12 @@ on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
+
+# This workflow only checks out the repo and mirrors docs/ over SFTP — no
+# GitHub API calls, no releases, no commits. Least-privilege explicit scope
+# rather than relying on the repo's default GITHUB_TOKEN permissions.
+permissions:
+  contents: read
 
 concurrency:
   group: sftp-deploy
@@ -3067,7 +3083,6 @@ object BiometricHelper {
 
         val executor = ContextCompat.getMainExecutor(activity)
 
-        // codeql[java/android/insecure-local-authentication] Background SMS replies cannot use a biometric-locked KeyStore key.
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 onSuccess()
@@ -3092,6 +3107,17 @@ object BiometricHelper {
             .setAllowedAuthenticators(AUTHENTICATORS)
             .build()
 
+        // This is a UI gate on the settings screen, not a CryptoObject-backed
+        // unlock of a stored secret — deliberately. The whitelist/PIN data it
+        // protects also has to be readable by SmsReceiver/NotificationListener
+        // with no UI and no biometric session, to answer a trigger while the
+        // screen is off. Binding this prompt to a CryptoObject would make
+        // that background path (the app's actual purpose) impossible, in
+        // exchange for hardening a much smaller threat (someone with the
+        // unlocked phone in hand editing the whitelist) that the OS-level
+        // authenticate() result already stops for any non-instrumented
+        // attacker.
+        // codeql[java/android/insecure-local-authentication]
         prompt.authenticate(promptInfo)
     }
 }
