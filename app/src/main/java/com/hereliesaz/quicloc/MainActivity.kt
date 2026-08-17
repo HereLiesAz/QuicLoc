@@ -1296,12 +1296,29 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     ).show()
                                 },
                                 onClearAppPin = {
+                                    // The find-my-phone passphrase trigger can only ever
+                                    // be stopped by this same PIN (TrackingLockActivity
+                                    // checks it, not a separate one). Removing the PIN
+                                    // while a passphrase is still armed would leave a
+                                    // trigger that locks the device and starts panic-mode
+                                    // photography with literally no PIN that can ever
+                                    // match — the owner locks themselves out of their own
+                                    // safety feature. Disarm it in the same action instead
+                                    // of leaving that trap live.
+                                    val wasArmed = currentPassphrase.isNotBlank()
                                     whitelistManager.setPin(null)
                                     currentPin = ""
+                                    if (wasArmed) {
+                                        whitelistManager.setPassphrase(null)
+                                        currentPassphrase = ""
+                                    }
                                     refreshBackupSnapshot()
                                     Toast.makeText(
                                         this@MainActivity,
-                                        "PIN removed. The encrypted backup has been deleted.",
+                                        if (wasArmed)
+                                            "PIN removed. The encrypted backup has been deleted, and find-my-phone has been turned off (it had no other way to stop tracking)."
+                                        else
+                                            "PIN removed. The encrypted backup has been deleted.",
                                         Toast.LENGTH_LONG
                                     ).show()
                                 },
@@ -2658,8 +2675,12 @@ fun QuicLocScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
-                    onClick = { onSavePassphrase(passphraseInput, pinInput) },
-                    enabled = passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
+                    // Validate (and save) the trimmed form — WhitelistManager
+                    // trims on store too, but checking the untrimmed length
+                    // here would let this button read "enabled" for a value
+                    // that actually saves as too-short or empty.
+                    onClick = { onSavePassphrase(passphraseInput.trim(), pinInput) },
+                    enabled = passphraseInput.trim().length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Save passphrase & PIN")
@@ -2852,6 +2873,7 @@ fun QuicLocScreen(
                     pinSet = pinSet,
                     onSetAppPin = onSetAppPin,
                     onClearAppPin = onClearAppPin,
+                    findMyPhoneArmed = FindMyPhone.ENABLED && currentPassphrase.isNotBlank(),
                 )
             }
         }
@@ -3464,6 +3486,7 @@ private fun AppPinCard(
     pinSet: Boolean,
     onSetAppPin: (String) -> Unit,
     onClearAppPin: () -> Unit,
+    findMyPhoneArmed: Boolean = false,
 ) {
     var editing by remember(pinSet) { mutableStateOf(!pinSet) }
     var pin by remember { mutableStateOf("") }
@@ -3567,7 +3590,13 @@ private fun AppPinCard(
                 Text(
                     text = "You'll no longer be able to unlock QuicLoc with a PIN, and your " +
                         "encrypted backup is deleted — the PIN is its only key. Your trusted " +
-                        "contacts and settings on this phone are untouched.",
+                        "contacts and settings on this phone are untouched." +
+                        (if (findMyPhoneArmed)
+                            "\n\nFind my phone is currently armed, and this PIN is the only " +
+                                "thing that can stop it once triggered — removing it here also " +
+                                "turns find-my-phone off, so it can never lock the device with " +
+                                "no PIN able to stop it."
+                        else ""),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },

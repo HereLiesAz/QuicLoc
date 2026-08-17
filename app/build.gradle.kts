@@ -102,15 +102,8 @@ android {
 
     // The ENTIRE find-my-phone / lockdown feature (tracking service, lock
     // screen, Device Admin receiver, intruder camera) lives in the
-    // :feature_findmyphone dynamic feature module. It is currently DISABLED:
-    // the module is kept in the repo but excluded from the build (here and in
-    // settings.gradle.kts) so its manifest — and the CAMERA,
-    // USE_FULL_SCREEN_INTENT, and BIND_DEVICE_ADMIN permissions it declares —
-    // is NOT merged into the shipped app and those permissions need not be
-    // declared to Google Play. To re-enable: uncomment the line below, re-add
-    // include(":feature_findmyphone") in settings.gradle.kts, and flip
-    // FindMyPhone.ENABLED to true.
-    // dynamicFeatures += setOf(":feature_findmyphone")
+    // :feature_findmyphone dynamic feature module — see docs/LOCKDOWN.md.
+    dynamicFeatures += setOf(":feature_findmyphone")
 
     signingConfigs {
         if (hasReleaseSigning) {
@@ -194,6 +187,24 @@ dependencies {
     // lockdown feature's heavy deps (CameraX, klinker MMS) live in the module,
     // not the base.
     implementation(libs.play.feature.delivery)
+
+    // Pinned to match :feature_findmyphone's CameraX-driven transitive
+    // version. Without this, the base resolves an older androidx.tracing
+    // (pulled in transitively at a lower version) than the module does, and
+    // R8 sees two different-version copies of androidx/tracing/R at
+    // :app:minifyReleaseWithR8 ("Type ... is defined multiple times") because
+    // AGP only dedupes a feature module's copy of a library against the
+    // base's when both resolve to the identical version.
+    implementation(libs.androidx.tracing)
+
+    // Forces the same empty-shim resolution :feature_findmyphone gets for
+    // free from its full `guava` dependency (CameraX's ListenableFuture
+    // support). Without this, the base transitively resolves the real,
+    // class-carrying `com.google.guava:listenablefuture:1.0` artifact while
+    // the module resolves the empty "9999.0-empty-to-avoid-conflict"
+    // artifact real Guava supersedes it with — two different-content
+    // ListenableFuture.class copies, another R8 "defined multiple times".
+    implementation(libs.guava.listenablefuture)
 
     // Material Icons
     implementation(libs.androidx.compose.material.icons.core)

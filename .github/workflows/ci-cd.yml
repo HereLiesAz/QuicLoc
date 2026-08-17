@@ -91,7 +91,7 @@ jobs:
           expected-sha1: ${{ secrets.KEYSTORE_SHA1 }}
           expected-owner: ${{ secrets.KEYSTORE_OWNER }}
 
-      - name: Build signed Release APK + Bundle
+      - name: Build signed Release Bundle
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         env:
           QUICLOC_KEYSTORE_FILE: ${{ steps.keystore.outputs.keystore-path }}
@@ -100,31 +100,50 @@ jobs:
           QUICLOC_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           QUICLOC_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           QUICLOC_REQUIRE_SIGNING: 'true'
-        run: ./gradlew assembleRelease bundleRelease
+        # Only the AAB, not assembleRelease's plain base-module APK: that APK
+        # never contained :feature_findmyphone (AGP doesn't fold dynamic
+        # feature modules into `assembleRelease`, only bundletool reads
+        # dist:fusing — see the build-universal-apk action below), so it was
+        # the wrong artifact to publish as the sideload download.
+        run: ./gradlew bundleRelease
 
-      - name: Collect signed artifacts
+      - name: Collect signed AAB
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        id: collect-aab
         run: |
           set -euo pipefail
           mkdir -p signed
-          apk=$(find app/build/outputs/apk/release -name "*.apk" ! -name "*-unsigned.apk" | head -n1)
           aab=$(find app/build/outputs/bundle/release -name "*.aab" | head -n1)
-          if [ -z "$apk" ] || [ -z "$aab" ]; then
-            echo "::error::Expected a signed APK and an AAB. Found apk='$apk' aab='$aab'."
-            find app/build/outputs -name "*.apk" -o -name "*.aab" || true
+          if [ -z "$aab" ]; then
+            echo "::error::Expected a signed AAB. Found none."
+            find app/build/outputs -name "*.aab" || true
             exit 1
           fi
           version=$(./gradlew -q :app:printVersionName)
-          cp "$apk" "signed/QuicLoc-v${version}.apk"
           cp "$aab" "signed/QuicLoc-v${version}.aab"
-          echo "SIGNED_APK=signed/QuicLoc-v${version}.apk" >> "$GITHUB_ENV"
           echo "SIGNED_AAB=signed/QuicLoc-v${version}.aab" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$version" >> "$GITHUB_ENV"
+
+      # The sideload APK attached to the GitHub Release must actually contain
+      # find-my-phone (fused via dist:fusing), which assembleRelease alone
+      # cannot produce — see the action's own header comment.
+      - name: Build fused universal APK (sideload download)
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        id: universal-apk
+        uses: ./.github/actions/build-universal-apk
+        with:
+          aab-path: ${{ env.SIGNED_AAB }}
+          keystore-path: ${{ steps.keystore.outputs.keystore-path }}
+          keystore-password: ${{ secrets.KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.KEY_ALIAS }}
+          key-password: ${{ secrets.KEY_PASSWORD }}
+          output-path: signed/QuicLoc-v${{ env.VERSION_NAME }}.apk
 
       - name: Verify APK signature
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: ./.github/actions/verify-android-signature
         with:
-          artifact: ${{ env.SIGNED_APK }}
+          artifact: ${{ steps.universal-apk.outputs.apk-path }}
           expected-sha256: ${{ steps.keystore.outputs.sha256 }}
 
       - name: Verify bundle signature

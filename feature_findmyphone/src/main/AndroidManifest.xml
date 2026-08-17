@@ -48,6 +48,15 @@
             android:foregroundServiceType="location" />
 
         <!--
+            Drives TrackingService's periodic ticks via AlarmManager wakeup
+            alarms — see TrackingAlarmReceiver's class doc for why this
+            replaced a Handler-based schedule.
+        -->
+        <receiver
+            android:name=".TrackingAlarmReceiver"
+            android:exported="false" />
+
+        <!--
             Cover-screen PIN gate, drawn over the keyguard. Launched by
             TrackingService; calls SplitCompat.installActivity so the split's
             code/resources load in-process on AAB installs.

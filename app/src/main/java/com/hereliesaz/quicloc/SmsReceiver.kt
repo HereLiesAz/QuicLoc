@@ -69,25 +69,51 @@ class SmsReceiver : BroadcastReceiver() {
 
         for ((sender, bodyBuilder) in messagesBySender) {
             val body = bodyBuilder.toString().trim().lowercase()
-            Log.d(TAG, "SMS from $sender: '$body'")
             val looksLikeTrigger = body.contains("loc")
 
-            val passphrase = whitelistManager.getPassphrase()
-            val isPassphraseTrigger = passphrase != null && passphrase.isNotEmpty() &&
+            // The entire find-my-phone feature (and thus the passphrase)
+            // lives in the on-demand :feature_findmyphone module — skip this
+            // check entirely rather than decrypting/consuming a passphrase
+            // for a feature that isn't shipped in this build (matches
+            // NotificationListener's identical guard).
+            val passphrase = if (FindMyPhone.ENABLED) whitelistManager.getPassphrase() else null
+            val isPassphraseTrigger = !passphrase.isNullOrEmpty() &&
                 (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
 
+            // Never log the raw body of a passphrase match — it's the secret
+            // itself, and Log.d output ends up in logcat/bugreports. Every
+            // other body (trigger or not) is fine to log as before.
+            Log.d(TAG, if (isPassphraseTrigger) "SMS from $sender: '[passphrase redacted]'" else "SMS from $sender: '$body'")
+
             if (isPassphraseTrigger) {
-                Log.d(TAG, "Passphrase trigger from $sender — starting find-my-phone")
-                diag.record(buildEvent(sender, body, DiagOutcome.PASSPHRASE_TRIGGER,
-                    "Find-my-phone passphrase matched — starting tracking", triggerMatched = true))
-                // Commit synchronously so a crash between now and the next boot
-                // can't leave the single-use passphrase usable a second time.
-                // Clear even if the module isn't installed — the passphrase was
-                // already exposed in transit.
-                whitelistManager.clearPassphraseSync()
-                // Tracking lives in the on-demand :feature_findmyphone module;
-                // no-op (returns false) if it was never downloaded.
-                FindMyPhone.trigger(context, sender, "SMS")
+                // Tracking lives in the on-demand :feature_findmyphone
+                // module; returns false if it was never downloaded (or the
+                // download is still pending). Only burn the single-use
+                // passphrase once tracking has actually started — a phone
+                // that hasn't finished setup, or where the module install
+                // failed, would otherwise permanently disarm itself for no
+                // protection gained: nothing was intercepted-and-replayed to
+                // guard against if the trigger never took effect.
+                val started = FindMyPhone.trigger(context, sender, "SMS")
+                if (started) {
+                    Log.d(TAG, "Passphrase trigger from $sender — starting find-my-phone")
+                    diag.record(buildEvent(sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
+                        "Find-my-phone passphrase matched — starting tracking", triggerMatched = true))
+                    // Commit synchronously so a crash between now and the next
+                    // boot can't leave the single-use passphrase usable a
+                    // second time now that tracking has genuinely begun.
+                    whitelistManager.clearPassphraseSync()
+                } else {
+                    Log.w(TAG, "Passphrase trigger from $sender — module not installed yet, requesting install")
+                    diag.record(buildEvent(sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
+                        "Find-my-phone passphrase matched, but the feature module isn't installed yet — " +
+                            "requesting install now. Passphrase left armed so the same text can retry.",
+                        triggerMatched = true))
+                    // Best-effort: get the module downloaded so a retry (or a
+                    // resend of the same "loc <passphrase>" text) can succeed
+                    // without the user having to redo setup from a stolen phone.
+                    FindMyPhone.requestInstall(context)
+                }
                 continue
             }
 

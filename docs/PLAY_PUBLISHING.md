@@ -21,12 +21,6 @@ debug APKs for sideloading.
 - **App Bundle auto-splits.** Play generates per-device APKs split by **screen density** and
   **language** automatically from the single `.aab` — no extra artifacts or config. (There are
   no native libraries in this app, so there's no ABI split to worry about.)
-- **Dynamic feature module: `:feature_findmyphone` — CURRENTLY DISABLED.** The find-my-phone /
-  lockdown feature is not shipped right now: the module is excluded from `settings.gradle.kts` and the
-  app's `dynamicFeatures`, and `FindMyPhone.ENABLED` is `false`. So the published app declares no
-  `CAMERA` / `USE_FULL_SCREEN_INTENT` / `BIND_DEVICE_ADMIN` and there is nothing extra to declare in
-  the Play Console for it. The module's code remains in the repo. Re-enable by re-adding the module in
-  both Gradle files and flipping `FindMyPhone.ENABLED`. The description below applies when enabled.
 - **Dynamic feature module: `:feature_findmyphone` (on-demand, fused into APKs).** The **entire**
   find-my-phone / lockdown feature — the tracking foreground service, the PIN-gate lock screen, the
   Device Admin receiver, and the panic-mode intruder camera (CameraX) — is delivered as one on-demand
@@ -44,31 +38,72 @@ debug APKs for sideloading.
     receiver class. `QuicLocApp : SplitCompatApplication` + `SplitCompat.installActivity` make the
     freshly-installed code loadable in-process. There is no longer a reflective `IntruderCamera`
     boundary — the camera lives in the same split as its caller, `TrackingLockActivity`.
-  - **`<dist:fusing dist:include="true"/>`** means the module is **fused into the monolithic
-    `assembleDebug`/`assembleRelease` APKs**, so sideload users (the GitHub-Releases APK) still get
-    find-my-phone with its components present at install time. The Play **AAB** path keeps it
-    on-demand: it's downloaded via `SplitInstall` during find-my-phone setup and won't fetch from a
-    bare `assembleRelease` APK.
+  - **`<dist:fusing dist:include="true"/>`** marks the module for fusing, but that attribute is read by
+    **bundletool, not by AGP's `assembleRelease`/`assembleDebug`** — `./gradlew assembleRelease` on the
+    base module only ever builds the base module's own code, dynamic-feature modules never get folded
+    in regardless of `dist:fusing`. This used to mean the plain base APK that was attached straight to
+    GitHub Releases shipped with **zero** find-my-phone/lockdown code for every sideload user, silently,
+    even in a build where the feature was otherwise fully wired up. The fix: build the signed `.aab`
+    (`bundleRelease` — this already correctly contains every module) and then run it through
+    bundletool's **universal mode** (`build-apks --mode=universal`, wrapped as the composite action
+    [`.github/actions/build-universal-apk`](../.github/actions/build-universal-apk/action.yml)), which
+    reads `dist:fusing` itself and produces one signed APK with every fusing-marked module folded in.
+    `ci-cd.yml` and `build-apk.yml` both build the AAB then hand it to this action to produce the
+    GitHub-Release APK — see "Sideload APK build" below. The Play **AAB** path was never affected by
+    this bug: it keeps the module on-demand, downloaded via `SplitInstall` during find-my-phone setup.
   - **Setup is install-first.** Device Admin and `CAMERA` are only grantable *after* the module is
     installed (their declarations must be in the merged manifest before
     `ACTION_ADD_DEVICE_ADMIN` / the runtime CAMERA prompt can resolve). So `MainActivity`'s
     find-my-phone setup sequences: grant SMS/location → `FindMyPhone.requestInstall` → on installed,
     request `CAMERA` then prompt for Device Admin.
-  - Needs **device testing** (cannot be covered by CI): on the **AAB** path confirm the module
+  - Needs **device testing** (cannot be covered by CI): on the **AAB/Play** path confirm the module
     downloads at setup, the Device Admin prompt resolves post-install, a passphrase trigger launches
-    the tracking service via `ComponentName`, and a build *without* the module degrades (a
-    `loc <passphrase>` just doesn't start tracking; core `loc` still replies). On the **APK** path
-    confirm the fused feature is present and works. Also verify the base AAB manifest carries no
-    `CAMERA`/`USE_FULL_SCREEN_INTENT` and no lockdown components.
-  - **Note for R8:** `isMinifyEnabled` is true, so the module's components are addressed by
-    `ComponentName` string from the base, so keep them:
-    `-keep class com.hereliesaz.quicloc.lockdown.** { *; }`.
+    the tracking service via `ComponentName`, and (if you build a variant without the module) a build
+    *without* it degrades gracefully (a `loc <passphrase>` just doesn't start tracking; core `loc` still
+    replies). On the **sideload APK** path — the universal APK bundletool produces, not a plain
+    `assembleRelease` build — confirm the fused feature is actually present and reachable at install
+    time (find-my-phone setup completes without ever downloading anything, since the module's already
+    in the APK) and works end-to-end. Also verify the base AAB manifest carries no
+    `CAMERA`/`USE_FULL_SCREEN_INTENT` and no lockdown components until the module installs.
+  - **Note for R8:** `isMinifyEnabled` is true, and the module's components are addressed by
+    `ComponentName` string from the base, not a compile-time class reference, so R8 has no call site to
+    infer keep rules from. `app/proguard-rules.pro` keeps them explicitly:
+    `-keep class com.hereliesaz.quicloc.lockdown.** { *; }` (same reasoning for
+    `-keep class com.klinker.android.send_message.** { *; }`, the MMS library, which drives sending via
+    reflection). Losing either rule doesn't fail the build — it fails at runtime, with the module's
+    classes present but unreachable by name once R8 has renamed/stripped them.
+  - **androidx.tracing / guava:listenablefuture version pinning.** With the module enabled, R8 used to
+    fail the release/bundle build outright with `Type ... is defined multiple times` — `:app` and
+    `:feature_findmyphone` were pulling in different transitive versions of `androidx.tracing` (and
+    guava's empty `listenablefuture` shim), so R8 saw two copies of the same class at merge time. Both
+    modules now `implementation` the exact same pinned versions
+    (`libs.androidx.tracing`, `libs.guava.listenablefuture` in `gradle/libs.versions.toml`), so R8 sees
+    one copy of each. Without this fix, the feature literally could not ship — `bundleRelease` failed
+    before producing an artifact at all.
   - The core SMS + location permissions stay in the base on purpose: they're driven by a
     manifest `SmsReceiver` the system delivers broadcasts to, and the app must answer `loc` the
     moment it's installed. `READ_CONTACTS` is not declared anywhere in the app — the "Pick from
     Contacts" button uses `Intent.ACTION_PICK`, which needs no permission (see
     [PERMISSIONS.md](PERMISSIONS.md)). The `BIND_*` signature permissions (Notification Listener,
     Device Admin) were intentionally left in the base/module — see the PR discussion.
+
+### Sideload APK build (GitHub Releases)
+
+The APK attached to a GitHub Release is **not** `assembleRelease`'s output. Both `ci-cd.yml` (on a `v*`
+tag) and `build-apk.yml` (`workflow_dispatch`) instead:
+
+1. `./gradlew bundleRelease` — build the signed `.aab`, which already contains every module correctly.
+2. Run [`.github/actions/build-universal-apk`](../.github/actions/build-universal-apk/action.yml), which
+   downloads a pinned `bundletool` release and runs
+   `build-apks --bundle=<aab> --mode=universal --ks=<keystore> ...`, then unzips the single
+   `universal.apk` bundletool produces — already signed with the same keystore Gradle used, no separate
+   `apksigner` step needed.
+3. The resulting universal APK is verified with
+   [`.github/actions/verify-android-signature`](../.github/actions/verify-android-signature) before it's
+   attached to the release, same as the AAB.
+
+This is what makes the sideload APK a genuinely fused build: it's the one artifact in the whole pipeline
+built specifically by reading `dist:fusing`, rather than assuming AGP does it.
 - **R8 / resource shrinking: enabled.** `isMinifyEnabled` and `isShrinkResources` are true in `release` builds to optimize performance and reduce APK size. ProGuard rules are configured in `app/proguard-rules.pro`.
   (Compose and CameraX ship their own consumer ProGuard rules.)
 - **Play in-app updates (Play Core):** an optional future enhancement; not wired up.

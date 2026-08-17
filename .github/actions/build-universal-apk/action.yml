@@ -1,0 +1,107 @@
+name: Build a fused universal APK from an AAB
+description: >
+  Turn a signed .aab into a single installable .apk that carries every
+  dist:fusing-marked dynamic feature module, via bundletool's universal mode.
+
+# Why this exists: `./gradlew assembleRelease` on the base app module ONLY
+# builds the base module's own code — Android Gradle Plugin does not fold
+# dynamic-feature modules into it, regardless of `dist:fusing` in the
+# feature's manifest. That attribute is read by bundletool, not by
+# `assembleRelease`. So the plain base APK that used to be attached straight
+# to GitHub Releases silently shipped with zero find-my-phone/lockdown code
+# for every sideload user, even while the feature was fully wired up and
+# `FindMyPhone.ENABLED` was true. This action is the fix: build the AAB
+# (which DOES contain every module — `bundleRelease` already worked
+# correctly), then ask bundletool for a "universal" split — one APK with
+# every dist:fusing module folded in — and sign it with the same release key
+# Gradle would have used.
+
+inputs:
+  aab-path:
+    description: Path to the signed .aab produced by `bundleRelease`.
+    required: true
+  keystore-path:
+    description: Path to the release keystore (same one Gradle signed the AAB with).
+    required: true
+  keystore-password:
+    description: Keystore (store) password.
+    required: true
+  key-alias:
+    description: Alias of the signing key inside the keystore.
+    required: true
+  key-password:
+    description: Key password. Defaults to the store password when empty.
+    required: false
+    default: ''
+  bundletool-version:
+    description: Pinned bundletool release version to download.
+    required: false
+    default: '1.18.1'
+  output-path:
+    description: Where to write the resulting universal .apk.
+    required: true
+
+outputs:
+  apk-path:
+    description: Path to the fused, signed universal .apk (same as output-path).
+    value: ${{ steps.build.outputs.apk-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: build
+      shell: bash
+      env:
+        AAB_PATH: ${{ inputs.aab-path }}
+        KEYSTORE_PATH: ${{ inputs.keystore-path }}
+        KEYSTORE_PASSWORD: ${{ inputs.keystore-password }}
+        KEY_ALIAS: ${{ inputs.key-alias }}
+        KEY_PASSWORD: ${{ inputs.key-password }}
+        BUNDLETOOL_VERSION: ${{ inputs.bundletool-version }}
+        OUTPUT_PATH: ${{ inputs.output-path }}
+      run: |
+        set -euo pipefail
+
+        if [ ! -f "$AAB_PATH" ]; then
+          echo "::error::No .aab found at $AAB_PATH — run bundleRelease first."
+          exit 1
+        fi
+        if [ -z "${KEY_PASSWORD:-}" ]; then
+          KEY_PASSWORD="$KEYSTORE_PASSWORD"
+        fi
+
+        work="$RUNNER_TEMP/bundletool"
+        mkdir -p "$work"
+
+        jar="$work/bundletool.jar"
+        url="https://github.com/google/bundletool/releases/download/${BUNDLETOOL_VERSION}/bundletool-all-${BUNDLETOOL_VERSION}.jar"
+        echo "Downloading bundletool ${BUNDLETOOL_VERSION}..."
+        curl -sSL -o "$jar" "$url"
+        if [ ! -s "$jar" ]; then
+          echo "::error::Failed to download bundletool from $url"
+          exit 1
+        fi
+
+        apks="$work/app.apks"
+        rm -f "$apks"
+        java -jar "$jar" build-apks \
+          --bundle="$AAB_PATH" \
+          --output="$apks" \
+          --mode=universal \
+          --ks="$KEYSTORE_PATH" \
+          --ks-pass="pass:$KEYSTORE_PASSWORD" \
+          --ks-key-alias="$KEY_ALIAS" \
+          --key-pass="pass:$KEY_PASSWORD"
+
+        mkdir -p "$(dirname "$OUTPUT_PATH")"
+        # `build-apks --mode=universal` writes a .apks zip containing exactly
+        # one entry, universal.apk, at its root — already signed with the
+        # keystore we just passed it, no separate apksigner step needed.
+        unzip -p "$apks" universal.apk > "$OUTPUT_PATH"
+        if [ ! -s "$OUTPUT_PATH" ]; then
+          echo "::error::bundletool produced no universal.apk inside $apks"
+          exit 1
+        fi
+
+        echo "apk-path=$OUTPUT_PATH" >> "$GITHUB_OUTPUT"
+        echo "Universal APK written to $OUTPUT_PATH ($(du -h "$OUTPUT_PATH" | cut -f1))"

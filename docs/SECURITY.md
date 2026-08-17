@@ -27,7 +27,7 @@ The background components (`SmsReceiver`, `NotificationListener`, `LocationReply
 
 ### The QuicLoc PIN as a second unlock method
 
-There is one 6-digit QuicLoc PIN (`WhitelistManager.getPin`/`setPin`), and it does three jobs: it unlocks the settings UI, it is the PBKDF2 input for the backup blob, and — when find-my-phone is enabled — it stops tracking.
+There is one 6-digit QuicLoc PIN (`WhitelistManager.getPin`/`setPin`), and it does three jobs: it unlocks the settings UI, it is the PBKDF2 input for the backup blob, and — when find-my-phone is enabled — it stops tracking. Because that third job depends on the PIN existing at all, removing the PIN while a find-my-phone passphrase is still armed also clears the passphrase (`MainActivity.onClearAppPin`) — an armed trigger with no PIN left to stop it would lock and photograph the phone's own owner with no way back in. See [LOCKDOWN.md](LOCKDOWN.md#setup) for the mechanics; this is documented here because it's a direct consequence of the PIN's dual role, not a UI-only detail.
 
 `MainActivity.promptBiometric` picks the gate:
 
@@ -100,9 +100,18 @@ This is weak by modern standards, and got weaker in practice once Loc Notice shi
 | Diagnostic log | | | ✓ (privacy choice — see below) |
 | Active tracking state | | | ✓ (runtime only) |
 | Loc Notice transition state (last enter/exit per place) | | | ✓ (runtime only) |
-| Intruder photos (panic mode) | | | ✓ (forensic, ephemeral) |
+| Intruder photos (panic mode) | | | ✓ (see lifecycle below) |
 
 History and the diagnostic log are intentionally excluded from backup. Both are logs of who's been interacting with your location (who asked, or which app/number triggered what) — restoring either to a new device leaks that log into the user's backup chain. Since both are just in-app troubleshooting/UI conveniences, dropping them is the safer default.
+
+**Intruder photo lifecycle.** The panic-mode photo is written to `externalMediaDirs` (MediaStore-visible,
+excluded from Auto Backup via `data_extraction_rules.xml`, so it never enters the backup chain regardless
+of the table above) and lives there only until `TrackingService` successfully MMS-sends it to whoever
+triggered tracking — `sendMmsPhoto` deletes the local file immediately once that send succeeds. It is
+kept only if the send itself fails (a decode error or MMS transport failure), so a failed attempt doesn't
+lose the only copy; a later successful retry still deletes it. Exactly one send is attempted per panic
+escalation (see [LOCKDOWN.md](LOCKDOWN.md#wrong-pin-flow-panic-mode)), so there's no unbounded
+accumulation of photo files from repeated wrong PINs or repeated ticks.
 
 ## Code paths reviewed for security
 

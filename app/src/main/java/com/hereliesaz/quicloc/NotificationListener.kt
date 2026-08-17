@@ -126,8 +126,6 @@ class NotificationListener : NotificationListenerService() {
             recentlyProcessed.entries.removeAll { now - it.value > DEDUPE_WINDOW_MS }
         }
 
-        Log.d(TAG, "msg from $sender via $pkg: '$body'")
-
         // The entire find-my-phone feature (and thus the passphrase) lives in
         // the on-demand :feature_findmyphone module, which isn't shipped while
         // FindMyPhone.ENABLED is false — skip this check entirely rather than
@@ -138,17 +136,45 @@ class NotificationListener : NotificationListenerService() {
             (body == "$TRIGGER_PLAIN ${passphrase.lowercase()}" ||
              body == "$TRIGGER_PREFIXED ${passphrase.lowercase()}")
 
+        // Never log the raw body of a passphrase match — it's the secret
+        // itself, and Log.d output ends up in logcat/bugreports.
+        Log.d(TAG, if (isPassphraseTrigger) "msg from $sender via $pkg: '[passphrase redacted]'" else "msg from $sender via $pkg: '$body'")
+
         if (isPassphraseTrigger) {
-            Log.d(TAG, "Passphrase trigger from '$sender' via $pkg")
-            recordDiag(pkg, sender, body, DiagOutcome.PASSPHRASE_TRIGGER,
-                "Find-my-phone passphrase matched — starting tracking",
-                triggerMatched = true, extractionPath = extraction.path)
-            // Clear even if the module isn't installed — the passphrase was
-            // already exposed in transit.
-            whitelist.clearPassphraseSync()
+            // TrackingService replies over SMS, so it needs an actual phone
+            // number — a notification's "sender" is often just a chat-app
+            // display name (no digits) with no number this app can resolve.
+            // Starting tracking anyway would lock the device and burn the
+            // passphrase for a reply that silently goes nowhere.
+            if (!sender.any { it.isDigit() }) {
+                Log.w(TAG, "Passphrase trigger from '$sender' via $pkg — sender has no resolvable phone number, ignoring")
+                recordDiag(pkg, sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
+                    "Find-my-phone passphrase matched, but the sender \"$sender\" is a name with no " +
+                        "phone number this app can reply to — not starting tracking. Trigger from " +
+                        "SMS instead, or from an app that surfaces the sender's number.",
+                    triggerMatched = true, extractionPath = extraction.path)
+                return
+            }
             // Tracking lives in the on-demand :feature_findmyphone module;
-            // no-op (returns false) if it was never downloaded.
-            FindMyPhone.trigger(applicationContext, sender = sender, source = pkg)
+            // returns false if it was never downloaded (or the download is
+            // still pending). Only burn the single-use passphrase once
+            // tracking has actually started — see SmsReceiver's identical
+            // reasoning for why burning it on a no-op trigger is a pure loss.
+            val started = FindMyPhone.trigger(applicationContext, sender = sender, source = pkg)
+            if (started) {
+                Log.d(TAG, "Passphrase trigger from '$sender' via $pkg")
+                recordDiag(pkg, sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
+                    "Find-my-phone passphrase matched — starting tracking",
+                    triggerMatched = true, extractionPath = extraction.path)
+                whitelist.clearPassphraseSync()
+            } else {
+                Log.w(TAG, "Passphrase trigger from '$sender' via $pkg — module not installed yet, requesting install")
+                recordDiag(pkg, sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
+                    "Find-my-phone passphrase matched, but the feature module isn't installed yet — " +
+                        "requesting install now. Passphrase left armed so the same message can retry.",
+                    triggerMatched = true, extractionPath = extraction.path)
+                FindMyPhone.requestInstall(applicationContext)
+            }
             return
         }
 

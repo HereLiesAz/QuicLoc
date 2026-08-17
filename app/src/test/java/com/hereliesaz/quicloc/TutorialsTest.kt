@@ -110,6 +110,24 @@ class TutorialsTest {
                 "should not mention Full-Screen Intent while find-my-phone is off",
                 !body.contains("Full-Screen Intent:")
             )
+        } else {
+            // The other half of the same contract: once the feature ships,
+            // these sections must actually be there, not just absent while
+            // it's off. Without this branch the assertions above are
+            // unreachable in a build with the feature enabled and this test
+            // would pass even if the whole conditional block went missing.
+            assertTrue(
+                "should mention Camera permission while find-my-phone is on",
+                body.contains("Camera:")
+            )
+            assertTrue(
+                "should mention Device Admin while find-my-phone is on",
+                body.contains("Bind Device Admin")
+            )
+            assertTrue(
+                "should mention Full-Screen Intent while find-my-phone is on",
+                body.contains("Full-Screen Intent:")
+            )
         }
         // Regardless of the flag, this permission is genuinely unused.
         assertTrue(

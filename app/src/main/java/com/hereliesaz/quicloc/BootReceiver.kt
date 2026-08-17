@@ -12,7 +12,9 @@ import android.content.Intent
  * persisted [AppSettings] state. Also re-registers Loc Notice's geofences,
  * since Android drops all `GeofencingClient` registrations on reboot —
  * [GeofenceRegistrar.sync] is a cheap no-op if Loc Notice is off or has no
- * locations, so no extra gating is needed here.
+ * locations, so no extra gating is needed here. Also resumes an in-progress
+ * find-my-phone tracking session — see [FindMyPhone.resumeTrackingAfterBoot]
+ * for why that needs its own explicit boot-time recovery.
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -22,5 +24,6 @@ class BootReceiver : BroadcastReceiver() {
         ) return
         ReminderNotification.refresh(context)
         GeofenceRegistrar.sync(context)
+        FindMyPhone.resumeTrackingAfterBoot(context)
     }
 }

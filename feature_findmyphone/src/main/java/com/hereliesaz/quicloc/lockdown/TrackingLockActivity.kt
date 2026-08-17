@@ -4,19 +4,20 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.play.core.splitcompat.SplitCompat
 import com.hereliesaz.quicloc.WhitelistManager
@@ -32,13 +33,14 @@ import com.hereliesaz.quicloc.WhitelistManager
  * Home — though this background activity launch is restricted on Android
  * 10+ and may not always succeed.
  *
- * 3 wrong PIN entries → panic mode:
+ * The 3rd wrong PIN entry (and only the 3rd — see [onPinEntered]) triggers
+ * panic mode:
  *
- *   1. Capture a front-camera photo via [IntruderCamera] (returns no photo if
- *      the camera isn't ready / CAMERA wasn't granted).
- *   2. Hand the photo path to [TrackingService.enterPanicMode] which
+ *   1. Lazily bind and capture a front-camera photo via [IntruderCamera]
+ *      (returns no photo if CAMERA was never granted, or binding fails).
+ *   2. Hand the photo path to [TrackingService.enterPanicMode], which
  *      shortens the tracking interval to 1 min and sends the photo via MMS
- *      on the next tick.
+ *      exactly once.
  *
  * Correct PIN → [TrackingService.stopTracking] + `finishAndRemoveTask`.
  *
@@ -49,20 +51,19 @@ import com.hereliesaz.quicloc.WhitelistManager
  *     there, or use Recents.
  *   - PIN comparison uses `==` (not constant-time). The 3-strikes rule is
  *     the practical defense.
- *   - CAMERA can't be requested over the keyguard, so we rely on it being
- *     granted up front during find-my-phone setup. If it wasn't, panic mode
- *     still proceeds, just without a photo.
+ *   - CAMERA is never requested here — a runtime permission dialog shown to
+ *     whoever is holding the phone would both tip them off and give them a
+ *     one-tap way to permanently deny it. It must already be granted from
+ *     the find-my-phone setup flow (MainActivity requests it right after the
+ *     module installs); if it wasn't, panic mode still proceeds, just
+ *     without a photo.
  */
 class TrackingLockActivity : ComponentActivity() {
 
-    companion object {
-        private const val TAG = "QuicLoc.TrackingLockActivity"
-    }
-
     private var failCount = 0
-    // The camera lives in this same split, so it's always present here. It only
-    // produces a photo once start() has bound the front camera (which needs the
-    // CAMERA permission); otherwise capture() returns null and the lock proceeds.
+    // The camera lives in this same split, so it's always present here. Only
+    // bound lazily, right before a capture — see IntruderCamera's class doc
+    // for why binding it for the whole lock session would be worse.
     private val intruderCamera = IntruderCamera()
 
     override fun attachBaseContext(newBase: Context) {
@@ -102,48 +103,40 @@ class TrackingLockActivity : ComponentActivity() {
             // Do nothing to prevent back button
         }
 
-        // Bind the front camera now if CAMERA is already granted (it can't be
-        // requested over the keyguard, so a denial here just means no photo).
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            intruderCamera.start(this)
-        } else {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
-        }
-
         setContent {
             MaterialTheme {
-                LockScreenUI(
-                    onPinEntered = { pin ->
-                        val expectedPin = WhitelistManager(this).getPin()
-                        if (pin == expectedPin) {
-                            TrackingService.stopTracking(this)
-                            finishAndRemoveTask()
-                        } else {
-                            failCount++
-                            if (failCount >= 3) {
-                                triggerPanicMode()
-                            } else {
-                                Toast.makeText(this, "Incorrect PIN", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                )
+                LockScreenUI(onPinEntered = ::onPinEntered)
             }
         }
     }
 
-    // Removed the invalid override fun super.onBackPressed()
-
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 10 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            intruderCamera.start(this)
+    private fun onPinEntered(pin: String) {
+        val expectedPin = WhitelistManager(this).getPin()
+        when (val outcome = PinAttemptDecision.evaluate(pin, expectedPin, failCount)) {
+            is PinAttemptOutcome.Unlocked -> {
+                TrackingService.stopTracking(this)
+                finishAndRemoveTask()
+            }
+            is PinAttemptOutcome.WrongPin -> {
+                failCount = outcome.failCount
+                Toast.makeText(this, "Incorrect PIN", Toast.LENGTH_SHORT).show()
+            }
+            is PinAttemptOutcome.PanicTriggered -> {
+                // Escalate exactly once, on the transition into the 3rd
+                // wrong attempt — PinAttemptDecision returns AlreadyLocked
+                // (not another PanicTriggered) for every attempt after this
+                // one, so this branch fires at most once per lock session.
+                failCount = outcome.failCount
+                triggerPanicMode()
+            }
+            is PinAttemptOutcome.AlreadyLocked -> {
+                failCount = outcome.failCount
+                Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
     override fun onUserLeaveHint() {
-
         super.onUserLeaveHint()
         if (!isFinishing) {
             val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {
@@ -153,18 +146,24 @@ class TrackingLockActivity : ComponentActivity() {
         }
     }
 
-
     /**
-     * Fires after 3 wrong PIN entries. Captures a front-camera photo (if the
-     * camera bound successfully) and escalates [TrackingService] into panic
-     * mode. The photo lives in [externalMediaDirs] — excluded from Auto Backup
-     * via `data_extraction_rules.xml`. If no photo is available, panic mode
-     * still proceeds without one.
+     * Fires exactly once per lock session, on the 3rd wrong PIN. Binds the
+     * front camera (if CAMERA is granted) and captures a photo, then
+     * escalates [TrackingService] into panic mode regardless of whether the
+     * photo succeeded. The photo lives in [externalMediaDirs] and is deleted
+     * by [TrackingService] once it's been sent — see that class's
+     * `sendMmsPhoto`.
      */
     private fun triggerPanicMode() {
         Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
-        intruderCamera.capture(this) { path ->
-            TrackingService.enterPanicMode(this@TrackingLockActivity, path)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            intruderCamera.start(this) {
+                intruderCamera.capture(this) { path ->
+                    TrackingService.enterPanicMode(this@TrackingLockActivity, path)
+                }
+            }
+        } else {
+            TrackingService.enterPanicMode(this, null)
         }
     }
 }
@@ -187,9 +186,11 @@ fun LockScreenUI(onPinEntered: (String) -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
             OutlinedTextField(
                 value = pin,
-                onValueChange = { pin = it },
+                onValueChange = { pin = it.filter(Char::isDigit).take(6) },
                 label = { Text("Enter 6-digit PIN to unlock") },
-                singleLine = true
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                visualTransformation = PasswordVisualTransformation(),
             )
             Spacer(modifier = Modifier.height(16.dp))
             Button(onClick = { onPinEntered(pin) }) {

@@ -38,6 +38,9 @@ android {
             excludes += "/META-INF/*.version"
         }
     }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
@@ -69,6 +72,10 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
 
+    // Pinned to match the base's explicit version (see app/build.gradle.kts)
+    // so R8 sees one androidx.tracing copy, not a base/module version skew.
+    implementation(libs.androidx.tracing)
+
     // Guava ListenableFuture needed for CameraX.
     implementation(libs.androidx.concurrent.futures)
     implementation(libs.androidx.concurrent.futures.ktx)
@@ -77,4 +84,9 @@ dependencies {
     // MMS — panic mode sends the intruder photo via MMS. Only TrackingService
     // uses klinker, so the dependency lives here, not in the base.
     implementation(libs.android.smsmms)
+
+    // Test-only. Matches :app's own test dependency set.
+    testImplementation(libs.junit)
+    testImplementation(libs.core.ktx)
+    testImplementation(libs.robolectric)
 }

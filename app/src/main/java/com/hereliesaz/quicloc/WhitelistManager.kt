@@ -232,8 +232,19 @@ class WhitelistManager(context: Context) {
         return prefs.getString(KEY_PASSPHRASE, null)
     }
 
+    /**
+     * Trims before storing. The multi-line entry field this feeds makes a
+     * trailing/leading space or newline easy to add invisibly; every
+     * comparison against an incoming trigger message trims the message body
+     * (see [SmsReceiver]/[NotificationListener]) but never touches the
+     * stored passphrase, so an untrimmed value here would silently never
+     * match again — "armed" in the UI, permanently inert in practice. A
+     * whitespace-only passphrase is stored as unset rather than as an
+     * unmatchable non-null value.
+     */
     fun setPassphrase(passphrase: String?) {
-        prefs.edit().putString(KEY_PASSPHRASE, passphrase).apply()
+        val normalized = passphrase?.trim()?.takeIf { it.isNotEmpty() }
+        prefs.edit().putString(KEY_PASSPHRASE, normalized).apply()
         BackupVault.snapshotAsync(appContext)
     }
 

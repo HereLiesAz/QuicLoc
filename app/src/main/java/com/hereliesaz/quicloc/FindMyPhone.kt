@@ -58,9 +58,49 @@ object FindMyPhone {
     const val EXTRA_SENDER = "sender"
     const val EXTRA_SOURCE = "source"
 
-    /** Whether the find-my-phone split is installed and its code is available. */
+    /**
+     * Action TrackingService treats as "resume an already-persisted tracking
+     * session" — used by both the module's own TrackingAlarmReceiver (each
+     * periodic tick) and [resumeTrackingAfterBoot] here in the base. Defined
+     * here for the same reason as [EXTRA_SENDER]/[EXTRA_SOURCE].
+     */
+    const val ACTION_TICK = "com.hereliesaz.quicloc.TICK_TRACKING"
+
+    private const val TRACKING_STATE_PREFS = "quicloc_tracking_state"
+
+    /**
+     * Whether the find-my-phone module's code is actually present and
+     * loadable right now.
+     *
+     * Resolves [SERVICE_CLASS] through [android.content.pm.PackageManager]
+     * rather than asking `SplitInstallManager.installedModules` alone:
+     * `installedModules` is Play Feature Delivery bookkeeping keyed by split
+     * name, and a sideload build has no splits at all — the module is fused
+     * into one monolithic APK by `dist:fusing` (see
+     * `.github/actions/build-universal-apk`). On a fused install
+     * `installedModules` would report the module absent even though its
+     * classes and manifest entries are right there, which used to make this
+     * whole feature permanently unreachable for every sideload user. Package
+     * Manager reports the real, current merged-manifest truth for both
+     * shapes of install (fused sideload APK and Play on-demand split), which
+     * is exactly the "can I actually start `TrackingService` right now?"
+     * question every caller here is really asking.
+     */
     fun isInstalled(context: Context): Boolean {
         if (!ENABLED) return false
+        val resolvable = try {
+            context.packageManager.getServiceInfo(ComponentName(PKG, SERVICE_CLASS), 0)
+            true
+        } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
+            false
+        } catch (t: Throwable) {
+            false
+        }
+        if (resolvable) return true
+        // Fallback for the Play on-demand path: covers the narrow window
+        // right after a SplitInstall download completes, in case the merged
+        // manifest PackageManager just queried hasn't caught up to it yet on
+        // this exact frame.
         return try {
             SplitInstallManagerFactory.create(context.applicationContext)
                 .installedModules.contains(MODULE)
@@ -128,12 +168,14 @@ object FindMyPhone {
      */
     fun requestInstall(context: Context, onInstalled: () -> Unit = {}) {
         if (!ENABLED) return
+        if (isInstalled(context)) {
+            // Covers the fused sideload build (no Play Feature Delivery
+            // involved at all) as well as an already-downloaded Play split.
+            onInstalled()
+            return
+        }
         try {
             val manager = SplitInstallManagerFactory.create(context.applicationContext)
-            if (manager.installedModules.contains(MODULE)) {
-                onInstalled()
-                return
-            }
             val listener = object : SplitInstallStateUpdatedListener {
                 override fun onStateUpdate(state: SplitInstallSessionState) {
                     when (state.status()) {
@@ -159,6 +201,61 @@ object FindMyPhone {
             }
         } catch (e: Throwable) {
             Log.w(TAG, "Could not request find-my-phone module install", e)
+        }
+    }
+
+    /**
+     * Whether `TrackingService` believed it was actively tracking the last
+     * time its state was persisted. Reads `quicloc_tracking_state` directly
+     * — the same plain-`SharedPreferences` file/key `TrackingService` itself
+     * writes — rather than through a module class reference, for the same
+     * reason every other entry point here addresses the module by name (see
+     * the class doc). Used by [resumeTrackingAfterBoot].
+     *
+     * `internal` rather than `private` only so it's directly unit-testable
+     * from this module's own test source set — Robolectric currently can't
+     * bootstrap `:feature_findmyphone`'s own test environment (its
+     * dynamic-feature resource package ID hits an unrelated Robolectric
+     * limitation), so this bridge logic's coverage lives here in the base
+     * instead. `:feature_findmyphone` has no reason to call this directly
+     * and shouldn't.
+     */
+    internal fun wasTrackingActive(context: Context): Boolean {
+        if (!ENABLED) return false
+        return context.getSharedPreferences(TRACKING_STATE_PREFS, Context.MODE_PRIVATE)
+            .getString("sender", null) != null
+    }
+
+    /**
+     * Resumes tracking after a reboot, if [wasTrackingActive]; no-op
+     * otherwise. `TrackingService` is `START_STICKY`, which the OS uses to
+     * restart a *killed process* — it does nothing across an actual reboot,
+     * so without this call a thief power-cycling a tracked device (the
+     * single most obvious thing to try) would end protection permanently,
+     * with no way to re-arm since the passphrase that started this session
+     * was already consumed as single-use.
+     *
+     * Reads plain `SharedPreferences`, which live in credential-encrypted
+     * storage: this can only resume tracking once the device has been
+     * unlocked at least once since the reboot (i.e. from [BootReceiver]'s
+     * normal `BOOT_COMPLETED`, not before). That is not full Direct Boot
+     * support — genuinely resuming *before* any post-reboot unlock would
+     * additionally require `WhitelistManager`'s PIN/passphrase (Keystore-backed
+     * `EncryptedSharedPreferences`) to be readable pre-unlock too, which
+     * they are not, and re-architecting that trades away real security
+     * elsewhere for a narrower theft window. Documented here rather than
+     * silently assumed.
+     */
+    fun resumeTrackingAfterBoot(context: Context) {
+        if (!ENABLED || !isInstalled(context) || !wasTrackingActive(context)) return
+        try {
+            val intent = Intent().apply {
+                component = ComponentName(PKG, SERVICE_CLASS)
+                action = ACTION_TICK
+            }
+            context.startForegroundService(intent)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Could not resume tracking after boot", t)
         }
     }
 }

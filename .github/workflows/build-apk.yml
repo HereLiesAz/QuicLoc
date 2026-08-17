@@ -70,7 +70,13 @@ jobs:
           expected-sha1: ${{ secrets.KEYSTORE_SHA1 }}
           expected-owner: ${{ secrets.KEYSTORE_OWNER }}
 
-      - name: Build signed Release APK
+      # Only the AAB, not assembleRelease's plain base-module APK: AGP does
+      # not fold dynamic-feature modules (:feature_findmyphone) into
+      # assembleRelease's output, only bundletool (reading dist:fusing) does
+      # — see .github/actions/build-universal-apk's header comment. Building
+      # assembleRelease here used to silently ship the GitHub-Release APK
+      # with zero find-my-phone code.
+      - name: Build signed Release Bundle
         if: github.event_name == 'workflow_dispatch'
         env:
           QUICLOC_KEYSTORE_FILE: ${{ steps.keystore.outputs.keystore-path }}
@@ -78,9 +84,9 @@ jobs:
           QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           QUICLOC_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           QUICLOC_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          # Fail the build rather than emit app-release-unsigned.apk.
+          # Fail the build rather than emit app-release-unsigned.aab.
           QUICLOC_REQUIRE_SIGNING: 'true'
-        run: ./gradlew assembleRelease
+        run: ./gradlew bundleRelease
 
       # ---- CI path (push / pull_request): DEBUG APK artifact only ----------
       - name: Build Debug APK
@@ -92,26 +98,39 @@ jobs:
       - name: Get App Version
         run: echo "VERSION_NAME=$(./gradlew -q :app:printVersionName)" >> "$GITHUB_ENV"
 
+      # Fuse :feature_findmyphone into a single installable APK via
+      # bundletool's universal mode, so sideload users get the same feature
+      # set a Play install would download on demand.
+      - name: Build fused universal APK
+        if: github.event_name == 'workflow_dispatch'
+        id: universal-apk
+        uses: ./.github/actions/build-universal-apk
+        with:
+          aab-path: app/build/outputs/bundle/release/app-release.aab
+          keystore-path: ${{ steps.keystore.outputs.keystore-path }}
+          keystore-password: ${{ secrets.KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.KEY_ALIAS }}
+          key-password: ${{ secrets.KEY_PASSWORD }}
+          output-path: app/build/outputs/QuicLoc-v${{ env.VERSION_NAME }}.apk
+
       - name: Locate & rename APK
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Signing is mandatory on this path, so an *-unsigned.apk here means
-            # something went wrong upstream — refuse it rather than ship it.
-            SRC=$(find app/build/outputs/apk/release -name "*.apk" ! -name "*-unsigned.apk" | head -n1)
-            if [ -z "$SRC" ]; then
-              echo "::error::No signed release APK was produced. Only these exist:"
-              find app/build/outputs/apk/release -name "*.apk" || true
+            SRC="${{ steps.universal-apk.outputs.apk-path }}"
+            if [ -z "$SRC" ] || [ ! -f "$SRC" ]; then
+              echo "::error::No fused universal APK was produced at '$SRC'."
               exit 1
             fi
+            echo "APK_PATH=$SRC" >> "$GITHUB_ENV"
           else
             SRC=app/build/outputs/apk/debug/app-debug.apk
+            if [ ! -f "$SRC" ]; then
+              echo "::error::No APK found to publish ($SRC)"; exit 1
+            fi
+            OUT="app/build/outputs/QuicLoc-v${VERSION_NAME}.apk"
+            mv "$SRC" "$OUT"
+            echo "APK_PATH=$OUT" >> "$GITHUB_ENV"
           fi
-          if [ -z "$SRC" ] || [ ! -f "$SRC" ]; then
-            echo "::error::No APK found to publish ($SRC)"; exit 1
-          fi
-          OUT="app/build/outputs/QuicLoc-v${VERSION_NAME}.apk"
-          mv "$SRC" "$OUT"
-          echo "APK_PATH=$OUT" >> "$GITHUB_ENV"
 
       - name: Verify the APK is signed by the expected key
         if: github.event_name == 'workflow_dispatch'

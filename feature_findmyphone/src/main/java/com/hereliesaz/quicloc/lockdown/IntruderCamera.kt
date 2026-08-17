@@ -18,26 +18,39 @@ import java.io.File
  * activity's external media dir on capture. Every call degrades gracefully
  * (returns `null`) when the camera isn't ready, so a failed capture never
  * blocks the lock.
+ *
+ * [start] is deliberately called lazily — right before the capture it's for,
+ * not for the whole lock session — because binding a `CameraX` use case
+ * opens the camera device immediately, lighting the OS privacy indicator for
+ * as long as it stays bound. Binding it for the entire session would light
+ * that indicator well before any capture actually happens, telegraphing the
+ * trap to whoever is holding the phone.
  */
 class IntruderCamera {
 
     private var imageCapture: ImageCapture? = null
 
-    /** Bind the front camera to [activity]'s lifecycle so a capture is ready. */
-    fun start(activity: ComponentActivity) {
+    /**
+     * Bind the front camera to [activity]'s lifecycle so a capture is ready.
+     * [onReady] runs once binding finishes (success or failure) — [capture]
+     * called before that would just find nothing ready and report no photo,
+     * so callers should wait for it.
+     */
+    fun start(activity: ComponentActivity, onReady: () -> Unit) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(activity)
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
             val capture = ImageCapture.Builder().build()
-            imageCapture = capture
             try {
                 cameraProvider.unbindAll()
                 cameraProvider.bindToLifecycle(
                     activity, CameraSelector.DEFAULT_FRONT_CAMERA, capture
                 )
+                imageCapture = capture
             } catch (exc: Exception) {
                 Log.e(TAG, "Use case binding failed", exc)
             }
+            onReady()
         }, ContextCompat.getMainExecutor(activity))
     }
 

@@ -14,10 +14,23 @@ All unit tests live in `app/src/test/java/com/hereliesaz/quicloc/`. Most use Rob
 | [WhitelistManagerTest](../app/src/test/java/com/hereliesaz/quicloc/WhitelistManagerTest.kt) | Add/remove/dedup, normalization, starred 3-cap + slot reuse, removing a number un-stars it, name-vs-number matching (`isWhitelistedByName`), bulk `replaceAllNumbers`/`replaceStarred` (used by restore), my-number / passphrase / PIN / onboarding round-trips, persistence across new manager instances |
 | [AppSettingsTest](../app/src/test/java/com/hereliesaz/quicloc/AppSettingsTest.kt) | All defaults (`isEnabled=true`, `reminderNotificationEnabled=false`, all "prompted" flags = false), all setter round-trips, prompted flags are independent |
 | [RequestHistoryManagerTest](../app/src/test/java/com/hereliesaz/quicloc/RequestHistoryManagerTest.kt) | Empty default, newest-first ordering, 100-entry cap with correct eviction (sender0…sender19 evicted, sender20…sender119 kept), `clearHistory`, `formattedTime` renders, cross-instance persistence |
-| [TutorialsTest](../app/src/test/java/com/hereliesaz/quicloc/TutorialsTest.kt) | `MAIN_ID` resolvable, `byId` unknown returns null, every tutorial has non-empty title/summary/body, IDs are unique + kebab-case, the catalog contains the expected 9 tutorials |
-| [ManifestRegistrationTest](../app/src/test/java/com/hereliesaz/quicloc/ManifestRegistrationTest.kt) | Every receiver (widget, SMS, toggle, boot, device admin), service (location reply, tracking, notification listener), and activity (main, tracking-lock, widget-help) is declared, exported correctly, and where needed declares the right `permission`. Backup XML is wired up in the application tag. |
+| [TutorialsTest](../app/src/test/java/com/hereliesaz/quicloc/TutorialsTest.kt) | `MAIN_ID` resolvable, `byId` unknown returns null, every tutorial has non-empty title/summary/body, IDs are unique + kebab-case, the catalog contains the expected 12 tutorials, the find-my-phone/real-lockdown tutorials (and the Camera/Device Admin/Full-Screen-Intent sections of the permissions tutorial) are present when `FindMyPhone.ENABLED` and absent when it isn't — both directions asserted |
+| [ManifestRegistrationTest](../app/src/test/java/com/hereliesaz/quicloc/ManifestRegistrationTest.kt) | Every **base-manifest** receiver (widget, SMS, toggle, boot), service (location reply, notification listener), and activity (main, widget-help) is declared, exported correctly, and where needed declares the right `permission`. Backup XML is wired up in the application tag. **Does not cover `QuicLocDeviceAdmin`, `TrackingService`, or `TrackingLockActivity`** — those live in the on-demand `:feature_findmyphone` module, so they're absent from the base merged manifest Robolectric reads here; the test file has explicit comments marking each as intentionally skipped for that reason. There is currently no manifest-registration test running against the module's own (merged-in) manifest — see "What's NOT automated" below. |
 
 When a unit test fails, that's the first thing to check before assuming the underlying behavior changed.
+
+### `:feature_findmyphone` module tests
+
+The on-demand module has its own test source set (`feature_findmyphone/src/test/java/com/hereliesaz/quicloc/lockdown/`), separate from the base app's. It includes at least
+[PinAttemptDecisionTest](../feature_findmyphone/src/test/java/com/hereliesaz/quicloc/lockdown/PinAttemptDecisionTest.kt),
+a plain-JUnit test of `PinAttemptDecision.evaluate()` — the pure function `TrackingLockActivity` delegates
+wrong-PIN/panic-escalation decisions to (see [LOCKDOWN.md](LOCKDOWN.md#wrong-pin-flow-panic-mode)) — that
+pins down the escalate-exactly-once-at-the-3rd-wrong-attempt contract (correct PIN always unlocks
+regardless of fail count, a removed/`null` PIN never matches, and every wrong attempt past the third is
+`AlreadyLocked` rather than a repeated `PanicTriggered`). Additional Robolectric-based coverage for
+`TrackingService` itself is also expected in this same test source set; check the directory for the
+current set of test classes rather than relying on this doc to enumerate them, since they're expected to
+grow independently of this file.
 
 Everything below has to be exercised on a real device or emulator.
 

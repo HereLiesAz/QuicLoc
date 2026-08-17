@@ -22,11 +22,19 @@ SmsReceiver.onReceive
         │  Telephony.Sms.Intents.getMessagesFromIntent(...)
         │  reassemble multipart by sender
         │
-        ├─ if body == "loc <passphrase>"
-        │     whitelist.clearPassphraseSync()           (commit, not apply)
+        ├─ if body == "loc <passphrase>"    (FindMyPhone.ENABLED gate first)
         │     FindMyPhone.trigger(sender, "SMS")
         │       (starts the :feature_findmyphone TrackingService by
-        │        ComponentName; no-op if the module isn't installed)
+        │        ComponentName; returns false — starts nothing — if
+        │        the module isn't installed)
+        │     ├─ true  → whitelist.clearPassphraseSync()  (commit, not apply —
+        │     │             only burned once tracking has actually started;
+        │     │             a trigger that never took effect leaves nothing to
+        │     │             guard against, so it isn't worth disarming for)
+        │     └─ false → FindMyPhone.requestInstall(context)  (kick off the
+        │                   module download; passphrase left ARMED so the
+        │                   same "loc <passphrase>" text can retry once it
+        │                   finishes)
         │     → see LOCKDOWN.md
         │
         ├─ if WhitelistManager.isWhitelisted(sender)
@@ -43,6 +51,7 @@ SmsReceiver.onReceive
 - **Multi-part reassembly.** A long SMS arrives as multiple `SmsMessage` parts. We concatenate `messageBody` per `displayOriginatingAddress` so the trigger word match works whether the user sent "loc" in 1 part or 30.
 - **Number normalization.** `WhitelistManager.cleanPhoneNumber` strips everything but digits and `+`. `PhoneNumberUtils.compare` handles country-code differences (so `+15551234` matches `15551234` matches `(555) 123-4`).
 - **No `goAsync()`.** The receiver returns in ms; the heavy lifting (GPS, SMS send) is in `LocationReplyService`. Calling `startForegroundService` from a broadcast receiver is exempt from the FGS background-start restrictions on Android 12+.
+- **Passphrase never logged or recorded raw.** A passphrase-trigger match logs `'[passphrase redacted]'` instead of the real body, and the same redacted string is what's written to the diagnostics log (not gated by the "capture all" diagnostics setting, unlike every other diagnostic row) — the diagnostics screen has a "Share" action that can export the log via any app, so the raw passphrase must never end up in it.
 
 ## Path 2: Chat-app notification
 
@@ -67,11 +76,22 @@ NotificationListener.onNotificationPosted(sbn)
         │  dedupeKey = "{sbn.key}|{sender}|{body}"
         │  skip if seen within last 60 s
         │
-        ├─ if body == "loc <passphrase>"
-        │     whitelist.clearPassphraseSync()
+        ├─ if body == "loc <passphrase>"    (FindMyPhone.ENABLED gate first)
+        │     sender.any { it.isDigit() }?
+        │       no  → log + record why, do nothing further (a chat-app
+        │               display name has no phone number to reply to —
+        │               starting tracking would lock the device and
+        │               "track" a reply that goes nowhere)
+        │       yes ↓
         │     FindMyPhone.trigger(sender, packageName)
         │       (starts the :feature_findmyphone TrackingService by
-        │        ComponentName; no-op if the module isn't installed)
+        │        ComponentName; returns false — starts nothing — if
+        │        the module isn't installed)
+        │     ├─ true  → whitelist.clearPassphraseSync()  (only once tracking
+        │     │             has actually started — see the SMS path's identical
+        │     │             reasoning)
+        │     └─ false → FindMyPhone.requestInstall(context)  (passphrase left
+        │                   ARMED so the same message can retry once installed)
         │
         ├─ if WhitelistManager.isWhitelistedByName(sender)
         │       (case-insensitive name match OR PhoneNumberUtils.compare)
@@ -91,6 +111,7 @@ NotificationListener.onNotificationPosted(sbn)
 - **Self-guard.** `if (sbn.packageName == packageName) return` prevents our own foreground-service notifications from being parsed.
 - **Inline reply.** We don't open the chat app. We call `Notification.Action.actionIntent.send(...)` with a `RemoteInput` Bundle holding `"QuicLoc: <maps link>"`. The chat app receives it as a normal "type and send" event.
 - **Hidden-content notifications never trigger.** Signal in private-notification mode shows "You have a new message" with no body. The trigger string is gone before we see it. We document this in the Trigger Word tutorial.
+- **Passphrase never logged or recorded raw.** Same redaction as the SMS path — `'[passphrase redacted]'` in both the log line and the diagnostics record for a passphrase match.
 
 ## Path 3: Widget tap
 
