@@ -387,7 +387,9 @@ class TrackingService : Service() {
     private fun sendMmsPhoto(targetSender: String, photoPath: String) {
         // Run on background thread to avoid ANR
         Thread {
-            Log.d(TAG, "Sending MMS photo to $targetSender from $photoPath")
+            // Never log the destination number itself -- logcat/bugreports
+            // shouldn't carry a phone number tied to a security event.
+            Log.d(TAG, "Sending MMS photo from $photoPath")
             try {
                 val settings = com.klinker.android.send_message.Settings().apply {
                     useSystemSending = true
