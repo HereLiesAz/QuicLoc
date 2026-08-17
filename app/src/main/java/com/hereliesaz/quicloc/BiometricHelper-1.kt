@@ -49,7 +49,6 @@ object BiometricHelper {
 
         val executor = ContextCompat.getMainExecutor(activity)
 
-        // codeql[java/android/insecure-local-authentication] Background SMS replies cannot use a biometric-locked KeyStore key.
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 onSuccess()
@@ -74,6 +73,17 @@ object BiometricHelper {
             .setAllowedAuthenticators(AUTHENTICATORS)
             .build()
 
+        // This is a UI gate on the settings screen, not a CryptoObject-backed
+        // unlock of a stored secret — deliberately. The whitelist/PIN data it
+        // protects also has to be readable by SmsReceiver/NotificationListener
+        // with no UI and no biometric session, to answer a trigger while the
+        // screen is off. Binding this prompt to a CryptoObject would make
+        // that background path (the app's actual purpose) impossible, in
+        // exchange for hardening a much smaller threat (someone with the
+        // unlocked phone in hand editing the whitelist) that the OS-level
+        // authenticate() result already stops for any non-instrumented
+        // attacker.
+        // codeql[java/android/insecure-local-authentication]
         prompt.authenticate(promptInfo)
     }
 }

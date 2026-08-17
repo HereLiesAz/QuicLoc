@@ -23,6 +23,16 @@ on:
   pull_request:
     branches: [ main ]
 
+# Least-privilege default for every job in this workflow — CodeQL's Actions
+# query flags jobs with no explicit permissions block, since the implicit
+# default GITHUB_TOKEN scope depends on a repo-level setting that can be
+# read-write. Only `release` and `publish-play` need more (contents: write,
+# to create the GitHub Release / commit the version bump); they already
+# declare their own permissions block, which overrides this default for
+# just those jobs.
+permissions:
+  contents: read
+
 # Serializes runs on the same ref so two close-together pushes to main (or
 # two tag pushes) can't race each other through the versionCode-dependent
 # release/publish path. Non-tag runs cancel their predecessor (a superseded

@@ -5,6 +5,12 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+# This workflow only checks out the repo and mirrors docs/ over SFTP — no
+# GitHub API calls, no releases, no commits. Least-privilege explicit scope
+# rather than relying on the repo's default GITHUB_TOKEN permissions.
+permissions:
+  contents: read
+
 concurrency:
   group: sftp-deploy
   cancel-in-progress: true
