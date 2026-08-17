@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    claude/permissions-declaration-form-mashva
-  Commit:    04db6d60f29ebc61a7f9663392e0527e70176370
-  Timestamp: 2026-08-17 16:17:59 UTC
+  Branch:    main
+  Commit:    340661ad4c1c9515a6a483074c393ac41ab615d6
+  Timestamp: 2026-08-17 19:46:04 UTC
 ======================================================
 
 
@@ -11016,14 +11016,15 @@ object ReminderNotification {
     private fun build(context: Context): Notification {
         val enabled = AppSettings.isEnabled(context)
 
-        // setPackage() pins these to our own app on top of the already-explicit
-        // target class -- CodeQL's implicit-PendingIntent check (and, more to
-        // the point, some OEM launchers/analysis tools) don't all credit
-        // Intent(context, Class) alone as unambiguously explicit, and an
-        // implicit PendingIntent handed to the system notification manager is
-        // interceptable by any app that can match it.
+        // Explicit setClass()/setPackage() calls, not just the Intent(context,
+        // Class) constructor -- static analysis (CodeQL's implicit-PendingIntent
+        // check) pattern-matches on the explicit-targeting method calls
+        // themselves rather than crediting the constructor overload, and a
+        // truly implicit PendingIntent handed to the system notification
+        // manager is interceptable by any app that can match it.
         val toggleIntent = Intent(context, ToggleReceiver::class.java).apply {
             action = ToggleReceiver.ACTION_TOGGLE
+            setClass(context, ToggleReceiver::class.java)
             setPackage(context.packageName)
         }
         val togglePending = PendingIntent.getBroadcast(
@@ -11035,6 +11036,7 @@ object ReminderNotification {
 
         val openIntent = Intent(context, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            setClass(context, MainActivity::class.java)
             setPackage(context.packageName)
         }
         val openPending = PendingIntent.getActivity(
@@ -16338,7 +16340,7 @@ class WhitelistManagerTest {
 VERSION_A=1
 VERSION_B=3
 VERSION_C=14
-VERSION_D=2013
+VERSION_D=2014
 
 
 ######################################################
@@ -20075,9 +20077,18 @@ class TrackingService : Service() {
         Log.d(TAG, "Lock attempt: realLockSucceeded=$realLockSucceeded")
     }
 
+    // Explicit setClass()/setPackage() calls, not just the Intent(context,
+    // Class) constructor -- static analysis (CodeQL's implicit-PendingIntent
+    // check) pattern-matches on the explicit-targeting method calls
+    // themselves rather than crediting the constructor overload, and a truly
+    // implicit PendingIntent handed to AlarmManager/the notification manager
+    // is interceptable by any app that can match it.
+
     private fun lockActivityPendingIntent(): PendingIntent {
         val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            setClass(this@TrackingService, TrackingLockActivity::class.java)
+            setPackage(packageName)
         }
         return PendingIntent.getActivity(
             this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -20085,7 +20096,10 @@ class TrackingService : Service() {
     }
 
     private fun tickPendingIntent(): PendingIntent {
-        val intent = Intent(this, TrackingAlarmReceiver::class.java)
+        val intent = Intent(this, TrackingAlarmReceiver::class.java).apply {
+            setClass(this@TrackingService, TrackingAlarmReceiver::class.java)
+            setPackage(packageName)
+        }
         return PendingIntent.getBroadcast(
             this, ALARM_REQUEST_CODE, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
