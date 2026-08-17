@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    claude/permissions-declaration-form-mashva
-  Commit:    c8dec3f2d4c637458678b387c93383116fc24d90
-  Timestamp: 2026-08-17 15:53:49 UTC
+  Commit:    e24dee587d12874069da8d648ab417c1bc4988d2
+  Timestamp: 2026-08-17 15:59:50 UTC
 ======================================================
 
 
@@ -20127,7 +20127,9 @@ class TrackingService : Service() {
     private fun sendMmsPhoto(targetSender: String, photoPath: String) {
         // Run on background thread to avoid ANR
         Thread {
-            Log.d(TAG, "Sending MMS photo to $targetSender from $photoPath")
+            // Never log the destination number itself -- logcat/bugreports
+            // shouldn't carry a phone number tied to a security event.
+            Log.d(TAG, "Sending MMS photo from $photoPath")
             try {
                 val settings = com.klinker.android.send_message.Settings().apply {
                     useSystemSending = true
