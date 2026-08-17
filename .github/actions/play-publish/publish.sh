@@ -158,8 +158,14 @@ if [ -n "$completed_track" ]; then
 fi
 
 # 5) Commit the edit
+# changesNotSentForReview=true: without it, Play's API tries to auto-submit
+# the edit for review the moment it's committed, and refuses (HTTP 400) for
+# an edit that stages draft releases on tracks like alpha/beta/production --
+# those are deliberately left as drafts for a human to review and submit
+# from the Play Console UI, not auto-sent. Harmless for the completed
+# internal-track rollout above, which doesn't go through review anyway.
 commit_out="$tmp/commit.json"
-http=$(req POST "$api/edits/${edit_id}:commit" "$commit_out")
+http=$(req POST "$api/edits/${edit_id}:commit?changesNotSentForReview=true" "$commit_out")
 if [ "$http" != "200" ] && [ "$http" != "201" ]; then
   echo "::error::Failed to commit edit (HTTP $http)"
   echo "Response:"
