@@ -363,6 +363,55 @@ class BackupVaultTest {
         )
     }
 
+    // ---- geofences ---------------------------------------------------------
+
+    @Test
+    fun `restore brings geofences back and re-syncs registration`() {
+        whitelist.setPin("123456")
+        whitelist.addContact("Mom", "+15551234567")
+        val store = GeofenceStore(context)
+        store.add(
+            GeofenceEntry(
+                id = "", name = "Home", latitude = 1.0, longitude = 2.0,
+                radiusMeters = 150f, notifyOnEnter = true, notifyOnExit = true,
+                contactTokens = setOf("Mom"),
+            )
+        )
+        BackupVault.flush(context)
+        val savedBytes = BackupVault.backupFile(context).readBytes()
+
+        context.deleteSharedPreferences("quicloc_secure_prefs")
+        context.deleteSharedPreferences("quicloc_secure_prefs_fallback")
+        context.deleteSharedPreferences("quicloc_locnotice_prefs")
+        context.deleteSharedPreferences("quicloc_locnotice_prefs_fallback")
+        BackupVault.backupFile(context).writeBytes(savedBytes)
+
+        val result = BackupVault.restoreFromInternal(context, "123456")
+        assertTrue("restore failed: ${result.exceptionOrNull()?.message}", result.isSuccess)
+        assertEquals(1, result.getOrNull()!!.geofenceCount)
+
+        val restoredEntries = GeofenceStore(context).getAll()
+        assertEquals(1, restoredEntries.size)
+        assertEquals("Home", restoredEntries.single().name)
+        assertEquals(setOf("Mom"), restoredEntries.single().contactTokens)
+    }
+
+    @Test
+    fun `restore with no geofences configured yields zero geofences, not a failure`() {
+        // A backup written before this field existed would have the
+        // "geofences" key absent entirely; applyJson reads it via
+        // optJSONArray (returns null, not a throw) with the same emptyList()
+        // fallback exercised here, so an old backup restores exactly like
+        // this rather than failing the whole restore.
+        whitelist.setPin("123456")
+        whitelist.addNumber("+15551234567")
+        BackupVault.flush(context)
+
+        val result = BackupVault.restoreFromInternal(context, "123456")
+        assertTrue("restore failed: ${result.exceptionOrNull()?.message}", result.isSuccess)
+        assertEquals(0, result.getOrNull()!!.geofenceCount)
+    }
+
     // ---- helpers ---------------------------------------------------------
 
     private fun assertCategory(

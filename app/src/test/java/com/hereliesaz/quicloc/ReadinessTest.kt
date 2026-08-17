@@ -36,7 +36,12 @@ class ReadinessTest {
         permissions: List<PermissionStatus> = allGranted(),
         pinSet: Boolean = true,
         dialableWhitelistCount: Int = whitelistCount,
-    ) = Readiness.steps(enabled, whitelistCount, myNumber, permissions, pinSet, dialableWhitelistCount)
+        locNoticeEnabled: Boolean = false,
+        locNoticeUsableCount: Int = 0,
+    ) = Readiness.steps(
+        enabled, whitelistCount, myNumber, permissions, pinSet, dialableWhitelistCount,
+        locNoticeEnabled, locNoticeUsableCount,
+    )
 
     @Test
     fun `fully configured app reports ready with nothing outstanding`() {
@@ -220,5 +225,31 @@ class ReadinessTest {
     fun `at least one dialable entry satisfies the whitelist step even with name-only entries too`() {
         val steps = steps(whitelistCount = 3, dialableWhitelistCount = 1)
         assertEquals(StepState.DONE, steps.first { it.id == "whitelist" }.state)
+    }
+
+    // ---- Loc Notice --------------------------------------------------------
+
+    @Test
+    fun `loc notice step is absent when the feature is off`() {
+        val steps = steps(locNoticeEnabled = false)
+        assertTrue(steps.none { it.id == "locnotice-setup" })
+        // Being off must never block readiness -- opt-in feature.
+        assertTrue(Readiness.isReady(steps))
+    }
+
+    @Test
+    fun `loc notice step appears and blocks readiness when on with no usable location`() {
+        val steps = steps(locNoticeEnabled = true, locNoticeUsableCount = 0)
+        val step = steps.first { it.id == "locnotice-setup" }
+        assertTrue(step.required)
+        assertEquals(StepState.TODO, step.state)
+        assertFalse(Readiness.isReady(steps))
+    }
+
+    @Test
+    fun `loc notice step is done once at least one location is usable`() {
+        val steps = steps(locNoticeEnabled = true, locNoticeUsableCount = 1)
+        assertEquals(StepState.DONE, steps.first { it.id == "locnotice-setup" }.state)
+        assertTrue(Readiness.isReady(steps))
     }
 }

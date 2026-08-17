@@ -80,6 +80,8 @@ sealed class MainView {
     data object Diagnostics : MainView()
     data object TutorialsHub : MainView()
     data class TutorialDetail(val tutorialId: String, val fromOnboarding: Boolean = false) : MainView()
+    data object LocNoticeList : MainView()
+    data class LocNoticeEdit(val entryId: String? = null) : MainView()
 }
 
 /**
@@ -107,6 +109,7 @@ sealed class MainView {
 class MainActivity : FragmentActivity() {   // FragmentActivity required by BiometricPrompt
 
     private lateinit var whitelistManager: WhitelistManager
+    private lateinit var geofenceStore: GeofenceStore
 
     // Tracks whether the user has passed biometric auth this session.
     // Set to false whenever the app is backgrounded, so re-auth is required on return.
@@ -381,6 +384,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     private var fullScreenIntentState = mutableStateOf(true)
     private var permissionStatusesState = mutableStateOf<List<PermissionStatus>>(emptyList())
     private var backupAvailableState = mutableStateOf(false)
+    private var locNoticeEnabledState = mutableStateOf(false)
+    // Refreshed after any Loc Notice mutation (LocNoticeListScreen/EditScreen
+    // own the actual GeofenceStore CRUD; this is just the Config screen's
+    // cached view of it for the section's status line and the Readiness
+    // checklist's usable-location count).
+    private var geofenceEntriesState = mutableStateOf<List<GeofenceEntry>>(emptyList())
 
     /**
      * True while the unlock screen should offer the QuicLoc PIN keypad rather
@@ -874,6 +883,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
         deviceAdminState.value = FindMyPhone.isAdminActive(this)
         backupAvailableState.value = BackupVault.isAvailable(this)
+        locNoticeEnabledState.value = AppSettings.isLocNoticeEnabled(this)
+        geofenceEntriesState.value = geofenceStore.getAll()
     }
 
     private val contactPickerLauncher = registerForActivityResult(
@@ -896,6 +907,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         enableEdgeToEdge()
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         whitelistManager = WhitelistManager(this)
+        geofenceStore = GeofenceStore(this)
         viewState.value = if (!whitelistManager.isOnboardingCompleted())
             MainView.TutorialDetail(Tutorials.MAIN_ID, fromOnboarding = true)
         else
@@ -910,6 +922,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         deviceAdminState.value = FindMyPhone.isAdminActive(this)
         fullScreenIntentState.value = canUseFullScreenIntent()
         backupAvailableState.value = BackupVault.isAvailable(this)
+        locNoticeEnabledState.value = AppSettings.isLocNoticeEnabled(this)
+        geofenceEntriesState.value = geofenceStore.getAll()
         refreshPermissionStatuses()
 
         // Show the launch-time restore prompt if the encrypted prefs are
@@ -1083,6 +1097,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 MainView.History -> "Request History" to { view = MainView.Config }
                                 MainView.Diagnostics -> "Diagnostics" to { view = MainView.Config }
                                 MainView.TutorialsHub -> "Tutorials" to { view = MainView.Config }
+                                MainView.LocNoticeList -> "Loc Notice" to { view = MainView.Config }
+                                is MainView.LocNoticeEdit -> (if (v.entryId == null) "Add location" else "Edit location") to { view = MainView.LocNoticeList }
                                 is MainView.TutorialDetail -> {
                                     val t = Tutorials.byId(v.tutorialId)
                                     val onBack: () -> Unit = {
@@ -1190,6 +1206,29 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     )
                                 }
                             }
+                            MainView.LocNoticeList -> LocNoticeListScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                store = geofenceStore,
+                                onEdit = { id -> view = MainView.LocNoticeEdit(id) },
+                                onAddNew = { view = MainView.LocNoticeEdit(null) },
+                                onEntriesChanged = {
+                                    geofenceEntriesState.value = geofenceStore.getAll()
+                                },
+                            )
+                            is MainView.LocNoticeEdit -> LocNoticeEditScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                store = geofenceStore,
+                                contacts = whitelistManager.getContacts(),
+                                entryId = v.entryId,
+                                onSaved = {
+                                    geofenceEntriesState.value = geofenceStore.getAll()
+                                    view = MainView.LocNoticeList
+                                },
+                                onDeleted = {
+                                    geofenceEntriesState.value = geofenceStore.getAll()
+                                    view = MainView.LocNoticeList
+                                },
+                            )
                             MainView.Config -> {
                             QuicLocScreen(
                                 modifier = Modifier.padding(innerPadding),
@@ -1222,6 +1261,14 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 autoDetectMyNumberOnFirstShow = !AppSettings.wasPhoneHintAutoPrompted(this@MainActivity),
                                 onRequestDeviceAdmin = { requestDeviceAdmin() },
                                 backupAvailable = backupAvailableState.value,
+                                locNoticeEnabled = locNoticeEnabledState.value,
+                                locNoticeEntries = geofenceEntriesState.value,
+                                onToggleLocNotice = { newState ->
+                                    AppSettings.setLocNoticeEnabled(this@MainActivity, newState)
+                                    locNoticeEnabledState.value = newState
+                                    GeofenceRegistrar.sync(this@MainActivity)
+                                },
+                                onOpenLocNotice = { view = MainView.LocNoticeList },
                                 onSetAppPin = { newPin ->
                                     whitelistManager.setPin(newPin)
                                     currentPin = newPin
@@ -1380,6 +1427,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         deviceAdminState.value = FindMyPhone.isAdminActive(this)
         fullScreenIntentState.value = canUseFullScreenIntent()
         backupAvailableState.value = BackupVault.isAvailable(this)
+        locNoticeEnabledState.value = AppSettings.isLocNoticeEnabled(this)
+        geofenceEntriesState.value = geofenceStore.getAll()
         refreshPermissionStatuses()
     }
 
@@ -1982,6 +2031,10 @@ fun QuicLocScreen(
     onPermissionAction: (key: String) -> Unit,
     autoDetectMyNumberOnFirstShow: Boolean,
     backupAvailable: Boolean,
+    locNoticeEnabled: Boolean = false,
+    locNoticeEntries: List<GeofenceEntry> = emptyList(),
+    onToggleLocNotice: (Boolean) -> Unit = {},
+    onOpenLocNotice: () -> Unit = {},
     onToggleEnabled: (Boolean) -> Unit,
     onToggleReminderNotification: (Boolean) -> Unit,
     onAutoDetectMyNumber: (auto: Boolean) -> Unit,
@@ -2013,9 +2066,14 @@ fun QuicLocScreen(
     // this existed, or not yet reflected in this snapshot.
     val sharingCount = numbersList.count { canRequestLocationByToken[it] != false }
 
+    // Enabled locations with at least one contact picked — anything else
+    // (off, or on with nobody to tell) doesn't count as "usable" for the
+    // checklist, same logic as an empty/name-only whitelist.
+    val locNoticeUsableCount = locNoticeEntries.count { it.enabled && it.contactTokens.isNotEmpty() }
+
     // Same source of truth as the All Permissions table — the checklist and the
     // table can never disagree.
-    val setupSteps = remember(enabled, numbersList.size, dialableCount, myNumber, permissionStatuses, pinSet) {
+    val setupSteps = remember(enabled, numbersList.size, dialableCount, myNumber, permissionStatuses, pinSet, locNoticeEnabled, locNoticeUsableCount) {
         Readiness.steps(
             enabled = enabled,
             whitelistCount = numbersList.size,
@@ -2023,6 +2081,8 @@ fun QuicLocScreen(
             myNumber = myNumber,
             permissions = permissionStatuses,
             pinSet = pinSet,
+            locNoticeEnabled = locNoticeEnabled,
+            locNoticeUsableCount = locNoticeUsableCount,
         )
     }
     val ready = Readiness.isReady(setupSteps)
@@ -2033,6 +2093,7 @@ fun QuicLocScreen(
         add("contacts")
         add("trigger")
         add("widget")
+        add("locnotice")
         if (FindMyPhone.ENABLED) add("findmyphone")
         add("pin")
         add("access")
@@ -2061,6 +2122,7 @@ fun QuicLocScreen(
                 pinExpandSignal++
                 scope.launch { scrollState.animateScrollTo(pinSectionY) }
             }
+            PermKeys.OPEN_LOC_NOTICE -> onOpenLocNotice()
             else -> onPermissionAction(key)
         }
     }
@@ -2472,6 +2534,41 @@ fun QuicLocScreen(
                         }
                     }
                 }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Loc Notice — passive arrival/departure alerts. A separate master
+        // switch from WhatQuicLocDoesCard's: that one gates on-demand
+        // request-reply, this one gates background geofence watching. A user
+        // may reasonably want one without the other.
+        // ------------------------------------------------------------------
+        SectionCard(
+            number = sectionNo("locnotice"),
+            title = "Loc Notice",
+            subtitle = "Passive alerts when you arrive or leave a place",
+            statusText = if (!locNoticeEnabled)
+                "Off"
+            else
+                "${locNoticeEntries.size} location${if (locNoticeEntries.size == 1) "" else "s"} configured",
+            statusOk = if (!locNoticeEnabled) null else locNoticeUsableCount > 0,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Turn on Loc Notice", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = "Separate from the master switch above — you can have one on " +
+                            "without the other. Needs \"Allow all the time\" location to work " +
+                            "with the app closed.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = locNoticeEnabled, onCheckedChange = onToggleLocNotice)
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(onClick = onOpenLocNotice, modifier = Modifier.fillMaxWidth()) {
+                Text("Manage locations")
             }
         }
 

@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    f3b54dd4a8c17f7bc65b1f1b45e966ffb05c9b76
-  Timestamp: 2026-08-16 08:15:55 UTC
+  Branch:    claude/permissions-declaration-form-mashva
+  Commit:    0bf3b2cfd1855c3f92141b8749b5db4bb02a973a
+  Timestamp: 2026-08-17 06:32:35 UTC
 ======================================================
 
 
@@ -1608,11 +1608,12 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 | **1 · Emergency contacts** | Who gets alerted, who's also allowed to ask, priority ★ stars, add by contact / number / name |
 | **2 · The trigger word** | What they send, which apps work, Notification Access |
 | **3 · Home screen widget** | Your own number, the tap patterns and what each one needs |
-| **4 · Your QuicLoc PIN** | Set / change / remove the PIN that unlocks the app and encrypts your backup |
-| **5 · App access & notifications** | How you get in (fingerprint / device PIN / QuicLoc PIN), the optional reminder notification |
-| **6 · Permissions** | Every permission with live status and a Grant/Manage button |
-| **7 · Backup & restore** | Export / import your setup |
-| **8 · Help & troubleshooting** | Tutorials, request history, diagnostics |
+| **4 · Loc Notice** | Passive arrival/departure alerts for saved places — its own on/off switch, independent of the master switch above |
+| **5 · Your QuicLoc PIN** | Set / change / remove the PIN that unlocks the app and encrypts your backup |
+| **6 · App access & notifications** | How you get in (fingerprint / device PIN / QuicLoc PIN), the optional reminder notification |
+| **7 · Permissions** | Every permission with live status and a Grant/Manage button |
+| **8 · Backup & restore** | Export / import your setup |
+| **9 · Help & troubleshooting** | Tutorials, request history, diagnostics |
 
 (Numbering shifts by one when the find-my-phone feature is enabled — see below.)
 
@@ -1625,6 +1626,7 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 - **Works across messaging apps** — SMS always; WhatsApp, Telegram, Signal, Google Messages, Messenger and any app with an inline notification reply once Notification Access is granted.
 - **Home screen widget** — tap it three times for a safety check to up to 3 starred contacts (`#SafetyCheck`), four times for an emergency alert to everyone on your list (`#Emergency`), or twice to just text your own location to yourself, e.g. to find a parked car (`#Parking`). One tap opens a help screen showing which of those are ready to use. Taps must land within about half a second of each other.
 - **Master on/off switch** — pauses every trigger without uninstalling. Optionally mirrored in a persistent notification with a one-tap toggle.
+- **Loc Notice** — passive, Life360-style place alerts: name a location, pick who gets told, and chosen contacts get a text the moment you arrive or leave — no request needed. A separate master switch from the one above, since passive background watching is a different privacy trade-off from answering when asked. Defining a place never touches a Maps/Places API or needs a billing account — you type an address, confirm it in the Maps app, and copy its coordinates back.
 - **Encrypted contact list** — emergency contacts, your own number and starred contacts are stored with AES-256-GCM keyed by the Android Keystore. The data never leaves your device.
 - **Locked settings, two ways in** — fingerprint, face or device PIN, *or* a 6-digit QuicLoc PIN of your own for when a fingerprint won't read or the phone has no lock screen at all. The same PIN encrypts your backup. Background answering is deliberately *not* gated, so it keeps working while the phone is locked.
 - **Every permission explains itself before it's asked** — what it's for, exactly what breaks if you skip it, what QuicLoc will never do with it, and what screen you're about to see. Skipping is always allowed; the checklist lets you come back.
@@ -1662,7 +1664,7 @@ Every permission maps to one feature, and the app shows its live status with a G
 | `SEND_SMS` | Send the location reply |
 | `ACCESS_FINE_LOCATION` | Obtain a precise GPS location |
 | `ACCESS_COARSE_LOCATION` | Fallback when GPS is unavailable |
-| `ACCESS_BACKGROUND_LOCATION` | Answer while the app is closed — the point of the app |
+| `ACCESS_BACKGROUND_LOCATION` | Answer while the app is closed — the point of the app. Also what Loc Notice uses to detect arrivals/departures. |
 | `POST_NOTIFICATIONS` | Show the foreground-service notification while a reply is in flight (Android 13+) |
 | `USE_BIOMETRIC` / `USE_FINGERPRINT` | Lock the settings screen (a QuicLoc PIN works as an alternative) |
 | `READ_PHONE_NUMBERS` | Only to auto-fill your own number for the parking widget — optional |
@@ -2213,6 +2215,17 @@ dependencies {
             android:theme="@style/Theme.QuicLoc.Transparent"
             android:exported="false" />
 
+        <!--
+            Fires on ACTION_GEOFENCE_EVENT when a Loc Notice location is
+            entered or exited (see GeofenceRegistrar). Not exported: the
+            PendingIntent Play Services invokes is built by this app with an
+            explicit component target, so it's delivered directly regardless
+            of export status.
+        -->
+        <receiver
+            android:name=".GeofenceBroadcastReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".QuicLocWidgetProvider"
             android:label="@string/widget_label"
@@ -2258,6 +2271,7 @@ object AppSettings {
     private const val KEY_FULL_SCREEN_PROMPTED = "full_screen_intent_prompted"
     private const val KEY_PHONE_HINT_PROMPTED = "phone_hint_prompted"
     private const val KEY_DIAG_CAPTURE_ALL = "diag_capture_all"
+    private const val KEY_LOCNOTICE_ENABLED = "locnotice_enabled"
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
@@ -2318,6 +2332,20 @@ object AppSettings {
     fun setDiagCaptureAll(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_DIAG_CAPTURE_ALL, enabled).apply()
     }
+
+    /**
+     * Master switch for Loc Notice (passive arrival/departure alerts),
+     * independent of [isEnabled] (the on-demand request-reply master
+     * switch) — a user may want one without the other. Default off: this is
+     * an opt-in, always-on background feature, unlike the reply feature
+     * which is on by default but only ever acts when asked.
+     */
+    fun isLocNoticeEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_LOCNOTICE_ENABLED, false)
+
+    fun setLocNoticeEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_LOCNOTICE_ENABLED, enabled).apply()
+    }
 }
 
 
@@ -2347,7 +2375,7 @@ import javax.crypto.spec.SecretKeySpec
 
 /**
  * PIN-encrypted backup of the user's sensitive settings (whitelist, starred,
- * my_number, passphrase, PIN, onboarding flag). The encrypted blob lives at
+ * my_number, passphrase, PIN, onboarding flag, Loc Notice locations). The encrypted blob lives at
  * files/quicloc_backup.qlb so Android Auto Backup ships it to Google Drive
  * automatically, AND it can be exported/imported manually via SAF.
  *
@@ -2478,6 +2506,7 @@ object BackupVault {
             put("passphrase", whitelist.getPassphrase() ?: JSONObject.NULL)
             put("pin", pin)
             put("onboarding_completed", whitelist.isOnboardingCompleted())
+            put("geofences", JSONArray(GeofenceStore(context).getAll().map { it.toJsonString() }))
         }
         val plaintext = json.toString().toByteArray(Charsets.UTF_8)
 
@@ -2703,12 +2732,22 @@ object BackupVault {
 
         whitelist.setOnboardingCompleted(json.optBoolean("onboarding_completed", false))
 
+        // Absent on a pre-Loc-Notice backup — optJSONArray returns null,
+        // geofences ends up empty, restore proceeds without a version branch
+        // (every field here is already read via opt*/defaults for the same
+        // forward-compatibility reason).
+        val geofences = json.optJSONArray("geofences")?.toStringSet()
+            ?.mapNotNull { GeofenceEntry.fromJsonString(it) } ?: emptyList()
+        GeofenceStore(context).replaceAll(geofences)
+        GeofenceRegistrar.sync(context)
+
         return RestoreSummary(
             whitelistCount = contacts.size,
             starredCount = starred.size,
             myNumberSet = whitelist.getMyNumber().isNotEmpty(),
             passphraseSet = passphrase != null,
             pinSet = pin != null,
+            geofenceCount = geofences.size,
         )
     }
 
@@ -2729,6 +2768,7 @@ object BackupVault {
         val myNumberSet: Boolean,
         val passphraseSet: Boolean,
         val pinSet: Boolean,
+        val geofenceCount: Int = 0,
     )
 
     /**
@@ -2865,7 +2905,10 @@ import android.content.Intent
  * QuicLoc's enabled/disabled state and toggle without opening the app.
  *
  * The notification channel and notification itself are re-created from
- * persisted [AppSettings] state.
+ * persisted [AppSettings] state. Also re-registers Loc Notice's geofences,
+ * since Android drops all `GeofencingClient` registrations on reboot —
+ * [GeofenceRegistrar.sync] is a cheap no-op if Loc Notice is off or has no
+ * locations, so no extra gating is needed here.
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -2874,6 +2917,33 @@ class BootReceiver : BroadcastReceiver() {
             action != "android.intent.action.QUICKBOOT_POWERON"
         ) return
         ReminderNotification.refresh(context)
+        GeofenceRegistrar.sync(context)
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/CoordinateParser.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+/**
+ * Parses the `"lat, lng"` decimal-pair text Google Maps' own "Copy
+ * coordinates" action puts on the clipboard (e.g. `"37.422131, -122.084801"`).
+ * Pure Kotlin, no `android.*` import — unit-testable without Robolectric,
+ * same as [PhoneNumbers].
+ */
+object CoordinateParser {
+    private val PATTERN = Regex("""^\s*(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$""")
+
+    /** @return the parsed (lat, lng) pair, or null if [text] isn't a valid coordinate pair. */
+    fun parse(text: String?): Pair<Double, Double>? {
+        val match = text?.let { PATTERN.matchEntire(it) } ?: return null
+        val lat = match.groupValues[1].toDoubleOrNull() ?: return null
+        val lng = match.groupValues[2].toDoubleOrNull() ?: return null
+        if (lat !in -90.0..90.0 || lng !in -180.0..180.0) return null
+        return lat to lng
     }
 }
 
@@ -2897,7 +2967,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 /** Which intake path observed the message. */
-enum class DiagChannel { SMS, NOTIFICATION, WIDGET }
+enum class DiagChannel { SMS, NOTIFICATION, WIDGET, GEOFENCE }
 
 /**
  * The exact decision QuicLoc made about an incoming message. Surfaced in the
@@ -2928,6 +2998,14 @@ enum class DiagOutcome {
     REPLY_SENT,
     REPLY_FAILED,
     NO_PENDING_ACTION,            // service couldn't find the reply action
+
+    // --- Loc Notice geofence transitions ---
+    LOCNOTICE_ENTRY_MISSING,      // geofence id fired but the location was deleted before the event arrived
+    LOCNOTICE_DIRECTION_OFF,      // fired but notifyOnEnter/notifyOnExit is off for this direction
+    LOCNOTICE_FLAP_SUPPRESSED,    // real crossing, but within the anti-flap cooldown — no text sent
+    LOCNOTICE_NO_CONTACTS,        // location has zero resolvable contacts (all tokens dangling, or none selected)
+    LOCNOTICE_SENT,               // arrival/departure texts sent (at least one succeeded)
+    LOCNOTICE_SEND_FAILED,        // every contact's send call failed
 }
 
 /**
@@ -3306,6 +3384,924 @@ object FindMyPhone {
 
 
 ######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/GeofenceBroadcastReceiver.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import com.google.android.gms.location.Geofence
+import com.google.android.gms.location.GeofencingEvent
+import java.util.UUID
+import java.util.concurrent.Executors
+
+/**
+ * Fires on `ACTION_GEOFENCE_EVENT`, delivered by Play Services when a
+ * monitored place is entered or exited (see [GeofenceRegistrar]).
+ *
+ * Uses [goAsync] rather than the foreground-service pattern
+ * [LocationReplyService] uses for on-demand requests: unlike that path, this
+ * one needs no fresh GPS fetch — [GeofencingEvent.triggeringLocation]
+ * already carries a location — so there's no 20-60s wait to cover, and
+ * `goAsync()`'s ~10s budget is comfortably enough for prefs reads + SMS
+ * sends.
+ */
+class GeofenceBroadcastReceiver : BroadcastReceiver() {
+
+    companion object {
+        private const val TAG = "QuicLoc.GeofenceRx"
+        const val ACTION_GEOFENCE_EVENT = "com.hereliesaz.quicloc.ACTION_GEOFENCE_EVENT"
+        private val executor = Executors.newSingleThreadExecutor()
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != ACTION_GEOFENCE_EVENT) return
+        val event = GeofencingEvent.fromIntent(intent) ?: return
+        val appContext = context.applicationContext
+        val pendingResult = goAsync()
+
+        executor.execute {
+            try {
+                handleEvent(appContext, event)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed handling geofence event", e)
+            } finally {
+                pendingResult.finish()
+            }
+        }
+    }
+
+    private fun handleEvent(context: Context, event: GeofencingEvent) {
+        if (event.hasError()) {
+            Log.e(TAG, "GeofencingEvent error code ${event.errorCode}")
+            return
+        }
+        val transition = event.geofenceTransition
+        if (transition != Geofence.GEOFENCE_TRANSITION_ENTER &&
+            transition != Geofence.GEOFENCE_TRANSITION_EXIT
+        ) return
+        val isEnter = transition == Geofence.GEOFENCE_TRANSITION_ENTER
+
+        val store = GeofenceStore(context)
+        val whitelist = WhitelistManager(context)
+        val history = RequestHistoryManager(context)
+        val diagnostics = DiagnosticLogManager(context)
+
+        for (geofence in event.triggeringGeofences.orEmpty()) {
+            val id = geofence.requestId
+            when (GeofenceStateStore.evaluate(context, id, transition)) {
+                GeofenceStateStore.Result.DUPLICATE -> continue
+                GeofenceStateStore.Result.FLAP_SUPPRESSED -> {
+                    diagnostics.record(diagEvent(id, isEnter, "(suppressed)", DiagOutcome.LOCNOTICE_FLAP_SUPPRESSED, "Repeated crossing within the cooldown window — no text sent."))
+                    continue
+                }
+                GeofenceStateStore.Result.PROCESS -> {
+                    processTransition(context, store, whitelist, history, diagnostics, id, isEnter)
+                }
+            }
+        }
+    }
+
+    private fun processTransition(
+        context: Context,
+        store: GeofenceStore,
+        whitelist: WhitelistManager,
+        history: RequestHistoryManager,
+        diagnostics: DiagnosticLogManager,
+        geofenceId: String,
+        isEnter: Boolean,
+    ) {
+        val entry = store.get(geofenceId)
+        if (entry == null || !entry.enabled) {
+            diagnostics.record(diagEvent(geofenceId, isEnter, "(deleted)", DiagOutcome.LOCNOTICE_ENTRY_MISSING, "Geofence fired but the location no longer exists or is disabled."))
+            return
+        }
+
+        val directionOn = if (isEnter) entry.notifyOnEnter else entry.notifyOnExit
+        if (!directionOn) {
+            diagnostics.record(diagEvent(geofenceId, isEnter, entry.name, DiagOutcome.LOCNOTICE_DIRECTION_OFF, "Notify on ${if (isEnter) "arrival" else "departure"} is off for this location."))
+            return
+        }
+
+        val contacts = whitelist.getContacts()
+            .filter { it.displayToken in entry.contactTokens }
+            .mapNotNull { it.number.takeIf(String::isNotEmpty) }
+
+        if (contacts.isEmpty()) {
+            diagnostics.record(diagEvent(geofenceId, isEnter, entry.name, DiagOutcome.LOCNOTICE_NO_CONTACTS, "No configured contact resolves to a dialable number."))
+            history.record(sender = entry.name, source = "Loc Notice (${if (isEnter) "arrived" else "left"})", succeeded = false)
+            return
+        }
+
+        val verb = if (isEnter) "arrived at" else "left"
+        val message = "QuicLoc Loc Notice: $verb \"${entry.name}\""
+        val allSent = contacts.map { SmsSender.send(context, it, message) }.all { it }
+
+        history.record(sender = entry.name, source = "Loc Notice (${if (isEnter) "arrived" else "left"})", succeeded = allSent)
+        diagnostics.record(diagEvent(
+            geofenceId, isEnter, entry.name,
+            if (allSent) DiagOutcome.LOCNOTICE_SENT else DiagOutcome.LOCNOTICE_SEND_FAILED,
+            "Notified ${contacts.size} contact(s)."
+        ))
+    }
+
+    private fun diagEvent(geofenceId: String, isEnter: Boolean, source: String, outcome: DiagOutcome, reason: String) =
+        DiagnosticEvent(
+            id = UUID.randomUUID().toString(),
+            timestamp = System.currentTimeMillis(),
+            channel = DiagChannel.GEOFENCE,
+            source = source,
+            rawSender = "geofence:$geofenceId",
+            rawBody = if (isEnter) "ENTER" else "EXIT",
+            triggerMatched = true,
+            whitelistMatched = null,
+            extractionPath = null,
+            outcome = outcome,
+            reason = reason,
+        )
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/GeofenceEntry.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import org.json.JSONArray
+import org.json.JSONObject
+
+/**
+ * A named place Loc Notice watches. When the device crosses its boundary,
+ * [GeofenceBroadcastReceiver] texts whichever of [contactTokens] apply to
+ * that direction.
+ *
+ * @property contactTokens [WhitelistManager.ContactEntry.displayToken] values
+ *   — not copied names/numbers — so a rename or removal on the whitelist is
+ *   reflected here automatically instead of silently going stale. A token
+ *   that no longer resolves to a whitelist entry at fire time is skipped,
+ *   not an error: contacts can be removed independently of Loc Notice.
+ */
+data class GeofenceEntry(
+    val id: String,
+    val name: String,
+    val latitude: Double,
+    val longitude: Double,
+    val radiusMeters: Float,
+    val notifyOnEnter: Boolean,
+    val notifyOnExit: Boolean,
+    val enabled: Boolean = true,
+    val contactTokens: Set<String> = emptySet(),
+) {
+    fun toJsonString(): String = JSONObject().apply {
+        put("id", id)
+        put("name", name)
+        put("lat", latitude)
+        put("lng", longitude)
+        put("radius", radiusMeters.toDouble())
+        put("notify_enter", notifyOnEnter)
+        put("notify_exit", notifyOnExit)
+        put("enabled", enabled)
+        put("contacts", JSONArray(contactTokens.toList()))
+    }.toString()
+
+    companion object {
+        /** Below this, GPS jitter near the boundary can produce false transitions. */
+        const val MIN_RADIUS_M = 100f
+        const val MAX_RADIUS_M = 2000f
+        const val DEFAULT_RADIUS_M = 150f
+
+        /** Android's platform-wide cap on active geofences per app. */
+        const val MAX_GEOFENCES = 100
+
+        fun fromJsonString(jsonStr: String): GeofenceEntry? {
+            if (jsonStr.isBlank()) return null
+            return try {
+                val json = JSONObject(jsonStr)
+                val contacts = json.optJSONArray("contacts")?.let { arr ->
+                    (0 until arr.length()).mapNotNull { i ->
+                        try { arr.getString(i) } catch (_: Exception) { null }
+                    }.toSet()
+                } ?: emptySet()
+                GeofenceEntry(
+                    id = json.getString("id"),
+                    name = json.optString("name", ""),
+                    latitude = json.getDouble("lat"),
+                    longitude = json.getDouble("lng"),
+                    radiusMeters = json.optDouble("radius", DEFAULT_RADIUS_M.toDouble()).toFloat(),
+                    notifyOnEnter = json.optBoolean("notify_enter", true),
+                    notifyOnExit = json.optBoolean("notify_exit", true),
+                    enabled = json.optBoolean("enabled", true),
+                    contactTokens = contacts,
+                )
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/GeofenceRegistrar.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.util.Log
+import androidx.core.content.ContextCompat
+import com.google.android.gms.location.Geofence
+import com.google.android.gms.location.GeofencingRequest
+import com.google.android.gms.location.LocationServices
+
+/**
+ * The only file that talks to `GeofencingClient`. [sync] fully reconciles
+ * the OS-level registration with [GeofenceStore]'s current desired state —
+ * remove everything, then re-add whatever should be active. At Loc Notice's
+ * expected scale (a handful of named places) a full remove-then-re-add is
+ * cheap, and it means every mutation call site is just "mutate the store,
+ * then sync" with no way for an OS-level registration to drift from the
+ * store (e.g. a deleted place that keeps firing).
+ */
+object GeofenceRegistrar {
+    private const val TAG = "QuicLoc.GeofenceReg"
+
+    fun sync(context: Context) {
+        val appContext = context.applicationContext
+        val client = LocationServices.getGeofencingClient(appContext)
+        val pi = pendingIntent(appContext)
+
+        client.removeGeofences(pi).addOnCompleteListener {
+            registerCurrentSet(appContext, client, pi)
+        }
+    }
+
+    private fun registerCurrentSet(
+        context: Context,
+        client: com.google.android.gms.location.GeofencingClient,
+        pi: PendingIntent,
+    ) {
+        if (!AppSettings.isLocNoticeEnabled(context)) return
+        if (!hasBackgroundLocation(context)) {
+            Log.w(TAG, "Loc Notice enabled but background location isn't granted — nothing registered")
+            return
+        }
+
+        val entries = GeofenceStore(context).getAll()
+            .filter { it.enabled }
+            .take(GeofenceEntry.MAX_GEOFENCES)
+        if (entries.isEmpty()) return
+
+        // Every enabled entry is registered for BOTH directions regardless of
+        // its own notifyOnEnter/notifyOnExit — GeofencingRequest's
+        // setInitialTrigger is a single bitmask for the whole batched
+        // request, not per-geofence, so per-entry direction filtering has to
+        // happen downstream in GeofenceBroadcastReceiver instead. This also
+        // means flipping a direction toggle later never needs a re-sync.
+        val request = GeofencingRequest.Builder()
+            // Deliberately suppress the synthetic "already inside" callback
+            // Play Services would otherwise fire immediately on registration.
+            // Without this, every reboot re-registration (see BootReceiver)
+            // would refire "arrived" for anyone already at a monitored place
+            // when their phone restarts — this is meant to alert on genuine
+            // crossings, not report current status.
+            .setInitialTrigger(0)
+            .addGeofences(entries.map { it.toGeofence() })
+            .build()
+
+        try {
+            client.addGeofences(request, pi)
+                .addOnFailureListener { e -> Log.e(TAG, "addGeofences failed", e) }
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Missing location permission for geofencing", e)
+        }
+    }
+
+    private fun hasBackgroundLocation(context: Context): Boolean {
+        val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            android.Manifest.permission.ACCESS_BACKGROUND_LOCATION
+        } else {
+            android.Manifest.permission.ACCESS_FINE_LOCATION
+        }
+        return ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun pendingIntent(context: Context): PendingIntent {
+        val intent = Intent(context, GeofenceBroadcastReceiver::class.java)
+            .setAction(GeofenceBroadcastReceiver.ACTION_GEOFENCE_EVENT)
+        // MUTABLE is required — Play Services fills in the GeofencingEvent
+        // extras itself when it delivers the broadcast. FLAG_IMMUTABLE would
+        // silently break delivery.
+        return PendingIntent.getBroadcast(
+            context, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        )
+    }
+
+    private fun GeofenceEntry.toGeofence(): Geofence = Geofence.Builder()
+        .setRequestId(id)
+        .setCircularRegion(latitude, longitude, radiusMeters)
+        .setExpirationDuration(Geofence.NEVER_EXPIRE)
+        .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER or Geofence.GEOFENCE_TRANSITION_EXIT)
+        .build()
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/GeofenceStateStore.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import android.content.SharedPreferences
+
+/**
+ * Ephemeral, per-geofence "what did we last do" bookkeeping used to dedupe
+ * [GeofenceBroadcastReceiver] callbacks. Plain (unencrypted) prefs, mirroring
+ * `quicloc_tracking_state.xml`'s existing precedent: mid-flight runtime state
+ * is meaningless on another device and carries no sensitive content beyond
+ * an opaque geofence id, so it's excluded from Android Auto Backup (see
+ * backup_rules.xml / data_extraction_rules.xml) rather than encrypted.
+ *
+ * Two distinct problems, two distinct responses:
+ *   - Android can redeliver the *same* transition for a geofence it already
+ *     reported (a documented `GeofencingEvent` behavior) — always silently
+ *     skipped, no diagnostic noise.
+ *   - Genuine rapid ENTER/EXIT flapping at a boundary (GPS jitter) — state is
+ *     still recorded accurately, but the SMS is suppressed within a cooldown
+ *     window per (geofence, direction) so a recipient doesn't get several
+ *     texts in quick succession for one real crossing.
+ */
+object GeofenceStateStore {
+    private const val PREFS_FILE = "quicloc_geofence_state"
+    private const val MIN_FLAP_INTERVAL_MS = 60_000L
+
+    enum class Result { PROCESS, DUPLICATE, FLAP_SUPPRESSED }
+
+    /** Call once per (geofenceId, transitionType) pulled out of a GeofencingEvent. */
+    fun evaluate(context: Context, geofenceId: String, transition: Int): Result {
+        val prefs = prefs(context)
+        val lastType = prefs.getInt(typeKey(geofenceId), -1)
+        val lastAt = prefs.getLong(atKey(geofenceId), 0L)
+        val now = System.currentTimeMillis()
+
+        return when {
+            lastType == transition -> Result.DUPLICATE
+            lastAt != 0L && now - lastAt < MIN_FLAP_INTERVAL_MS -> {
+                record(prefs, geofenceId, transition, now)
+                Result.FLAP_SUPPRESSED
+            }
+            else -> {
+                record(prefs, geofenceId, transition, now)
+                Result.PROCESS
+            }
+        }
+    }
+
+    /** Drop bookkeeping for a geofence that's been deleted, so a stale entry can't confuse a future one reusing the same id (never happens with UUIDs, but keeps the store from growing unboundedly). */
+    fun clear(context: Context, geofenceId: String) {
+        prefs(context).edit()
+            .remove(typeKey(geofenceId))
+            .remove(atKey(geofenceId))
+            .apply()
+    }
+
+    private fun record(prefs: SharedPreferences, geofenceId: String, transition: Int, at: Long) {
+        prefs.edit()
+            .putInt(typeKey(geofenceId), transition)
+            .putLong(atKey(geofenceId), at)
+            .apply()
+    }
+
+    private fun typeKey(id: String) = "type_$id"
+    private fun atKey(id: String) = "at_$id"
+
+    private fun prefs(context: Context): SharedPreferences =
+        context.applicationContext.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/GeofenceStore.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import java.util.UUID
+
+/**
+ * Owner of the Loc Notice place definitions: name, coordinates, radius,
+ * enter/exit flags, and which whitelist contacts get told. Sensitive in the
+ * same way the whitelist is (named places + who's alerted there), so it gets
+ * the same `EncryptedSharedPreferences` + plaintext-fallback-recovery
+ * treatment as [WhitelistManager] — see that class for the pattern this
+ * copies.
+ *
+ * Deliberately has zero dependency on Play Services / `GeofencingClient` —
+ * that's [GeofenceRegistrar]'s job. Keeping storage pure means this class
+ * stays Robolectric-testable the same way `WhitelistManagerTest` is, with no
+ * risk of a test depending on GMS shadowing behavior. Every mutator here
+ * updates the store and the [BackupVault] snapshot only; callers are
+ * responsible for calling [GeofenceRegistrar.sync] afterward to reflect the
+ * change at the OS level.
+ */
+class GeofenceStore(context: Context) {
+
+    companion object {
+        private const val TAG = "QuicLoc.GeofenceStore"
+        private const val PREFS_FILE = "quicloc_locnotice_prefs"
+        private const val KEY_ENTRIES = "entries"
+    }
+
+    private val appContext: Context = context.applicationContext
+    private val prefs: SharedPreferences = createEncryptedPrefs(context)
+
+    fun getAll(): List<GeofenceEntry> {
+        val strings = prefs.getStringSet(KEY_ENTRIES, emptySet()) ?: emptySet()
+        return strings.mapNotNull { GeofenceEntry.fromJsonString(it) }
+    }
+
+    fun get(id: String): GeofenceEntry? = getAll().firstOrNull { it.id == id }
+
+    /** Assigns a fresh id if [entry] doesn't have one, and returns the saved entry. */
+    fun add(entry: GeofenceEntry): GeofenceEntry {
+        val saved = if (entry.id.isBlank()) entry.copy(id = UUID.randomUUID().toString()) else entry
+        val current = prefs.getStringSet(KEY_ENTRIES, emptySet()) ?: emptySet()
+        saveAll(current + saved.toJsonString())
+        BackupVault.snapshotAsync(appContext)
+        return saved
+    }
+
+    fun update(entry: GeofenceEntry) {
+        val current = getAll()
+        val newSet = current.filterNot { it.id == entry.id }.map { it.toJsonString() }.toSet()
+        saveAll(newSet + entry.toJsonString())
+        BackupVault.snapshotAsync(appContext)
+    }
+
+    fun remove(id: String) {
+        val newSet = getAll().filterNot { it.id == id }.map { it.toJsonString() }.toSet()
+        saveAll(newSet)
+        BackupVault.snapshotAsync(appContext)
+    }
+
+    fun setEnabled(id: String, enabled: Boolean) {
+        val entry = get(id) ?: return
+        update(entry.copy(enabled = enabled))
+    }
+
+    /** Used by [BackupVault] restore. */
+    fun replaceAll(entries: List<GeofenceEntry>) {
+        saveAll(entries.map { it.toJsonString() }.toSet())
+        BackupVault.snapshotAsync(appContext)
+    }
+
+    private fun saveAll(entries: Set<String>) {
+        prefs.edit().putStringSet(KEY_ENTRIES, entries).apply()
+    }
+
+    private fun createEncryptedPrefs(context: Context): SharedPreferences {
+        return try {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            val prefs = EncryptedSharedPreferences.create(
+                context,
+                PREFS_FILE,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+            migratePlaintextFallback(context, "${PREFS_FILE}_fallback", prefs)
+            prefs
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create EncryptedSharedPreferences, falling back to plaintext", e)
+            context.getSharedPreferences("${PREFS_FILE}_fallback", Context.MODE_PRIVATE)
+        }
+    }
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/LocNoticeScreens.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
+
+/**
+ * List of saved Loc Notice locations. Deletion and the per-row enabled
+ * switch mutate [store] directly and re-sync [GeofenceRegistrar] — this
+ * screen owns those mutations the same way [LocNoticeEditScreen] owns save,
+ * rather than routing them through `MainActivity`'s activity-level state
+ * (matching [HistoryScreen]/`DiagnosticsScreen`'s manager-owns-its-screen
+ * pattern, not `QuicLocScreen`'s heavier prop-drilled one — this is a
+ * separate full-screen navigation, not an inline section).
+ *
+ * @param onEntriesChanged Called after any mutation so the caller can
+ *   refresh the count shown on the Config screen's Loc Notice section.
+ */
+@Composable
+fun LocNoticeListScreen(
+    modifier: Modifier = Modifier,
+    store: GeofenceStore,
+    onEdit: (String) -> Unit,
+    onAddNew: () -> Unit,
+    onEntriesChanged: () -> Unit = {},
+) {
+    val context = LocalContext.current
+    var entries by remember { mutableStateOf(store.getAll()) }
+
+    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Loc Notice",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                Text(
+                    text = "Places QuicLoc watches in the background. Chosen contacts get a text " +
+                        "the moment you arrive or leave — no request needed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+        }
+
+        Button(onClick = onAddNew, modifier = Modifier.fillMaxWidth()) {
+            Text("+ Add location")
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (entries.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "No locations yet. Add one to get a text when you arrive or leave.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
+            if (entries.size >= GeofenceEntry.MAX_GEOFENCES - 10) {
+                Text(
+                    text = "Approaching the ${GeofenceEntry.MAX_GEOFENCES}-location limit — older locations may need to be removed.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                items(entries, key = { it.id }) { entry ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = entry.name, style = MaterialTheme.typography.bodyLarge)
+                                Text(
+                                    text = "${entry.radiusMeters.roundToInt()}m · " +
+                                        (if (entry.notifyOnEnter) "arrive " else "") +
+                                        (if (entry.notifyOnExit) "leave " else "") +
+                                        "· ${entry.contactTokens.size} contact${if (entry.contactTokens.size == 1) "" else "s"}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            TextButton(onClick = { onEdit(entry.id) }) { Text("Edit") }
+                            Switch(
+                                checked = entry.enabled,
+                                onCheckedChange = { newState ->
+                                    store.setEnabled(entry.id, newState)
+                                    GeofenceRegistrar.sync(context)
+                                    entries = store.getAll()
+                                    onEntriesChanged()
+                                }
+                            )
+                            IconButton(onClick = {
+                                store.remove(entry.id)
+                                GeofenceStateStore.clear(context, entry.id)
+                                GeofenceRegistrar.sync(context)
+                                entries = store.getAll()
+                                onEntriesChanged()
+                            }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete ${entry.name}")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Add/edit a Loc Notice location. The address→Maps and Maps→coordinates
+ * handoff (see [MapsHandoff]) means this screen never calls a Maps/Places
+ * API itself — it only writes/reads the clipboard and launches an intent.
+ */
+@Composable
+fun LocNoticeEditScreen(
+    modifier: Modifier = Modifier,
+    store: GeofenceStore,
+    contacts: List<WhitelistManager.ContactEntry>,
+    entryId: String?,
+    onSaved: () -> Unit,
+    onDeleted: () -> Unit,
+) {
+    val context = LocalContext.current
+    val existing = remember(entryId) { entryId?.let { store.get(it) } }
+
+    var name by remember { mutableStateOf(existing?.name ?: "") }
+    var address by remember { mutableStateOf("") }
+    var pinned by remember {
+        mutableStateOf(existing?.let { it.latitude to it.longitude })
+    }
+    var pasteError by remember { mutableStateOf<String?>(null) }
+    var radius by remember { mutableStateOf(existing?.radiusMeters ?: GeofenceEntry.DEFAULT_RADIUS_M) }
+    var notifyEnter by remember { mutableStateOf(existing?.notifyOnEnter ?: true) }
+    var notifyExit by remember { mutableStateOf(existing?.notifyOnExit ?: true) }
+    var selectedTokens by remember { mutableStateOf(existing?.contactTokens ?: emptySet()) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var validationError by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            label = { Text("Name (e.g. \"Home\")") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text(
+            text = "Pinpoint the location",
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Text(
+            text = "Type the address, open it in Maps to confirm the spot, then copy its " +
+                "coordinates in Maps and paste them back here. QuicLoc never talks to a maps " +
+                "service directly — this is just a clipboard handoff to the Maps app.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+        )
+        OutlinedTextField(
+            value = address,
+            onValueChange = { address = it },
+            label = { Text("Address") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row {
+            Button(
+                onClick = { MapsHandoff.openInMaps(context, address) },
+                enabled = address.isNotBlank(),
+            ) { Text("Open in Maps") }
+            Spacer(modifier = Modifier.width(8.dp))
+            TextButton(onClick = {
+                val result = MapsHandoff.pasteFromClipboard(context)
+                if (result == null) {
+                    pasteError = "That doesn't look like coordinates — expected something like " +
+                        "37.4221, -122.0848. In Maps, long-press the pin, then tap the " +
+                        "coordinates to copy them, then come back and try again."
+                    pinned = null
+                } else {
+                    pasteError = null
+                    pinned = result
+                }
+            }) { Text("Paste location") }
+        }
+        pinned?.let { (lat, lng) ->
+            Text(
+                text = "Pinned: ${"%.4f".format(lat)}, ${"%.4f".format(lng)}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        pasteError?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(text = "Radius: ${radius.roundToInt()}m", style = MaterialTheme.typography.titleSmall)
+        Text(
+            text = "Smaller radii can misfire from GPS drift — ${GeofenceEntry.MIN_RADIUS_M.roundToInt()}m minimum.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Slider(
+            value = radius,
+            onValueChange = { radius = it },
+            valueRange = GeofenceEntry.MIN_RADIUS_M..GeofenceEntry.MAX_RADIUS_M,
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Notify when I arrive", modifier = Modifier.weight(1f))
+            Switch(checked = notifyEnter, onCheckedChange = { notifyEnter = it })
+        }
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Notify when I leave", modifier = Modifier.weight(1f))
+            Switch(checked = notifyExit, onCheckedChange = { notifyExit = it })
+        }
+        if (!notifyEnter && !notifyExit) {
+            Text(
+                text = "Turn on at least one, or this location won't do anything.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(text = "Who gets told", style = MaterialTheme.typography.titleSmall)
+        if (contacts.isEmpty()) {
+            Text(
+                text = "No trusted contacts yet — add one in Emergency contacts first.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            for (contact in contacts) {
+                val token = contact.displayToken
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = token in selectedTokens,
+                        onCheckedChange = { checked ->
+                            selectedTokens = if (checked) selectedTokens + token else selectedTokens - token
+                        }
+                    )
+                    Column {
+                        Text(text = token, style = MaterialTheme.typography.bodyMedium)
+                        if (contact.number.isNotEmpty() && contact.number != token) {
+                            Text(
+                                text = contact.number,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+        validationError?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+        }
+        Button(
+            onClick = {
+                val coords = pinned
+                validationError = when {
+                    name.isBlank() -> "Give this location a name."
+                    coords == null -> "Pin a location first — paste coordinates copied from Maps."
+                    !notifyEnter && !notifyExit -> "Turn on at least one of arrive/leave."
+                    selectedTokens.isEmpty() -> "Pick at least one contact to notify."
+                    else -> null
+                }
+                if (validationError != null) return@Button
+
+                val entry = GeofenceEntry(
+                    id = existing?.id ?: "",
+                    name = name.trim(),
+                    latitude = coords!!.first,
+                    longitude = coords.second,
+                    radiusMeters = radius,
+                    notifyOnEnter = notifyEnter,
+                    notifyOnExit = notifyExit,
+                    enabled = existing?.enabled ?: true,
+                    contactTokens = selectedTokens,
+                )
+                if (existing == null) store.add(entry) else store.update(entry.copy(id = existing.id))
+                GeofenceRegistrar.sync(context)
+                onSaved()
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Save")
+        }
+
+        if (existing != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(
+                onClick = { showDeleteConfirm = true },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Delete this location", color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+
+    if (showDeleteConfirm && existing != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Delete \"${existing.name}\"?") },
+            text = { Text("This location will no longer notify anyone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        store.remove(existing.id)
+                        GeofenceStateStore.clear(context, existing.id)
+                        GeofenceRegistrar.sync(context)
+                        showDeleteConfirm = false
+                        onDeleted()
+                    },
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+
+######################################################
 # FILE: app/src/main/java/com/hereliesaz/quicloc/LocationHelper.kt
 ######################################################
 
@@ -3320,7 +4316,6 @@ import android.location.Location
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.telephony.SmsManager
 import android.util.Log
 import com.google.android.gms.location.*
 import com.google.android.gms.tasks.CancellationTokenSource
@@ -3356,7 +4351,7 @@ import com.google.android.gms.tasks.CancellationTokenSource
  *
  * Three send modes:
  *
- *   - [getCurrentLocationAndReply] — SMS send via [SmsManager].
+ *   - [getCurrentLocationAndReply] — SMS send via [SmsSender].
  *   - [getCurrentLocationAndReplyViaNotification] — chat-app inline reply
  *     via the original notification's [Notification.Action] `RemoteInput`.
  *   - [handleWidgetTaps] — SMS fan-out to multiple destinations based on
@@ -3394,11 +4389,11 @@ object LocationHelper {
         fetchLocation(context,
             onSuccess = { location ->
                 val mapsLink = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
-                val sent = sendSms(context, phoneNumber, "QuicLoc Location:\n$mapsLink${locationQualityNote(location)}")
+                val sent = SmsSender.send(context, phoneNumber, "QuicLoc Location:\n$mapsLink${locationQualityNote(location)}")
                 onResult?.invoke(sent)
             },
             onFailure = { msg ->
-                sendSms(context, phoneNumber, "QuicLoc Error: $msg")
+                SmsSender.send(context, phoneNumber, "QuicLoc Error: $msg")
                 onResult?.invoke(false)
             }
         )
@@ -3469,13 +4464,13 @@ object LocationHelper {
                 // Report success only if every destination's send call actually
                 // went through -- History/Diagnostics should never claim an
                 // emergency alert succeeded when it silently didn't.
-                val allSent = destinations.map { sendSms(context, it, message) }.all { it }
+                val allSent = destinations.map { SmsSender.send(context, it, message) }.all { it }
                 onResult?.invoke(allSent)
             },
             onFailure = { msg ->
                 val message = "QuicLoc Error: $msg$suffix"
                 for (dest in destinations) {
-                    sendSms(context, dest, message)
+                    SmsSender.send(context, dest, message)
                 }
                 onResult?.invoke(false)
             }
@@ -3676,46 +4671,6 @@ object LocationHelper {
             notes.add("approximate — accurate to ~${location.accuracy.toInt()}m")
         }
         return if (notes.isEmpty()) "" else " (${notes.joinToString("; ")})"
-    }
-
-    // -------------------------------------------------------------------------
-    // SMS sending
-    // -------------------------------------------------------------------------
-
-    /**
-     * @return Whether the send call was actually issued to the radio without
-     *   throwing. `sentIntent` is intentionally null (no PendingIntent-based
-     *   delivery-report wiring exists), so this does NOT confirm carrier-level
-     *   delivery — only that we didn't fail synchronously (SmsManager missing,
-     *   a malformed destination address, SEND_SMS revoked, etc). That's still
-     *   a real improvement over the previous unconditional "true": those
-     *   synchronous failures are exactly what happens when, e.g., a
-     *   destination address is malformed.
-     */
-    private fun sendSms(context: Context, phoneNumber: String, message: String): Boolean {
-        return try {
-            val smsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                context.getSystemService(SmsManager::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                SmsManager.getDefault()
-            }
-            if (smsManager != null) {
-                val parts = smsManager.divideMessage(message)
-                if (parts.size > 1) {
-                    smsManager.sendMultipartTextMessage(phoneNumber, null, parts, null, null)
-                } else {
-                    smsManager.sendTextMessage(phoneNumber, null, message, null, null)
-                }
-                true
-            } else {
-                Log.e(TAG, "Failed to get SmsManager")
-                false
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to send SMS to $phoneNumber", e)
-            false
-        }
     }
 
     // -------------------------------------------------------------------------
@@ -4212,6 +5167,8 @@ sealed class MainView {
     data object Diagnostics : MainView()
     data object TutorialsHub : MainView()
     data class TutorialDetail(val tutorialId: String, val fromOnboarding: Boolean = false) : MainView()
+    data object LocNoticeList : MainView()
+    data class LocNoticeEdit(val entryId: String? = null) : MainView()
 }
 
 /**
@@ -4239,6 +5196,7 @@ sealed class MainView {
 class MainActivity : FragmentActivity() {   // FragmentActivity required by BiometricPrompt
 
     private lateinit var whitelistManager: WhitelistManager
+    private lateinit var geofenceStore: GeofenceStore
 
     // Tracks whether the user has passed biometric auth this session.
     // Set to false whenever the app is backgrounded, so re-auth is required on return.
@@ -4513,6 +5471,12 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     private var fullScreenIntentState = mutableStateOf(true)
     private var permissionStatusesState = mutableStateOf<List<PermissionStatus>>(emptyList())
     private var backupAvailableState = mutableStateOf(false)
+    private var locNoticeEnabledState = mutableStateOf(false)
+    // Refreshed after any Loc Notice mutation (LocNoticeListScreen/EditScreen
+    // own the actual GeofenceStore CRUD; this is just the Config screen's
+    // cached view of it for the section's status line and the Readiness
+    // checklist's usable-location count).
+    private var geofenceEntriesState = mutableStateOf<List<GeofenceEntry>>(emptyList())
 
     /**
      * True while the unlock screen should offer the QuicLoc PIN keypad rather
@@ -5006,6 +5970,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         reminderNotifState.value = AppSettings.isReminderNotificationEnabled(this)
         deviceAdminState.value = FindMyPhone.isAdminActive(this)
         backupAvailableState.value = BackupVault.isAvailable(this)
+        locNoticeEnabledState.value = AppSettings.isLocNoticeEnabled(this)
+        geofenceEntriesState.value = geofenceStore.getAll()
     }
 
     private val contactPickerLauncher = registerForActivityResult(
@@ -5028,6 +5994,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         enableEdgeToEdge()
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         whitelistManager = WhitelistManager(this)
+        geofenceStore = GeofenceStore(this)
         viewState.value = if (!whitelistManager.isOnboardingCompleted())
             MainView.TutorialDetail(Tutorials.MAIN_ID, fromOnboarding = true)
         else
@@ -5042,6 +6009,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         deviceAdminState.value = FindMyPhone.isAdminActive(this)
         fullScreenIntentState.value = canUseFullScreenIntent()
         backupAvailableState.value = BackupVault.isAvailable(this)
+        locNoticeEnabledState.value = AppSettings.isLocNoticeEnabled(this)
+        geofenceEntriesState.value = geofenceStore.getAll()
         refreshPermissionStatuses()
 
         // Show the launch-time restore prompt if the encrypted prefs are
@@ -5215,6 +6184,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 MainView.History -> "Request History" to { view = MainView.Config }
                                 MainView.Diagnostics -> "Diagnostics" to { view = MainView.Config }
                                 MainView.TutorialsHub -> "Tutorials" to { view = MainView.Config }
+                                MainView.LocNoticeList -> "Loc Notice" to { view = MainView.Config }
+                                is MainView.LocNoticeEdit -> (if (v.entryId == null) "Add location" else "Edit location") to { view = MainView.LocNoticeList }
                                 is MainView.TutorialDetail -> {
                                     val t = Tutorials.byId(v.tutorialId)
                                     val onBack: () -> Unit = {
@@ -5322,6 +6293,29 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     )
                                 }
                             }
+                            MainView.LocNoticeList -> LocNoticeListScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                store = geofenceStore,
+                                onEdit = { id -> view = MainView.LocNoticeEdit(id) },
+                                onAddNew = { view = MainView.LocNoticeEdit(null) },
+                                onEntriesChanged = {
+                                    geofenceEntriesState.value = geofenceStore.getAll()
+                                },
+                            )
+                            is MainView.LocNoticeEdit -> LocNoticeEditScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                store = geofenceStore,
+                                contacts = whitelistManager.getContacts(),
+                                entryId = v.entryId,
+                                onSaved = {
+                                    geofenceEntriesState.value = geofenceStore.getAll()
+                                    view = MainView.LocNoticeList
+                                },
+                                onDeleted = {
+                                    geofenceEntriesState.value = geofenceStore.getAll()
+                                    view = MainView.LocNoticeList
+                                },
+                            )
                             MainView.Config -> {
                             QuicLocScreen(
                                 modifier = Modifier.padding(innerPadding),
@@ -5354,6 +6348,14 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 autoDetectMyNumberOnFirstShow = !AppSettings.wasPhoneHintAutoPrompted(this@MainActivity),
                                 onRequestDeviceAdmin = { requestDeviceAdmin() },
                                 backupAvailable = backupAvailableState.value,
+                                locNoticeEnabled = locNoticeEnabledState.value,
+                                locNoticeEntries = geofenceEntriesState.value,
+                                onToggleLocNotice = { newState ->
+                                    AppSettings.setLocNoticeEnabled(this@MainActivity, newState)
+                                    locNoticeEnabledState.value = newState
+                                    GeofenceRegistrar.sync(this@MainActivity)
+                                },
+                                onOpenLocNotice = { view = MainView.LocNoticeList },
                                 onSetAppPin = { newPin ->
                                     whitelistManager.setPin(newPin)
                                     currentPin = newPin
@@ -5512,6 +6514,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         deviceAdminState.value = FindMyPhone.isAdminActive(this)
         fullScreenIntentState.value = canUseFullScreenIntent()
         backupAvailableState.value = BackupVault.isAvailable(this)
+        locNoticeEnabledState.value = AppSettings.isLocNoticeEnabled(this)
+        geofenceEntriesState.value = geofenceStore.getAll()
         refreshPermissionStatuses()
     }
 
@@ -6114,6 +7118,10 @@ fun QuicLocScreen(
     onPermissionAction: (key: String) -> Unit,
     autoDetectMyNumberOnFirstShow: Boolean,
     backupAvailable: Boolean,
+    locNoticeEnabled: Boolean = false,
+    locNoticeEntries: List<GeofenceEntry> = emptyList(),
+    onToggleLocNotice: (Boolean) -> Unit = {},
+    onOpenLocNotice: () -> Unit = {},
     onToggleEnabled: (Boolean) -> Unit,
     onToggleReminderNotification: (Boolean) -> Unit,
     onAutoDetectMyNumber: (auto: Boolean) -> Unit,
@@ -6145,9 +7153,14 @@ fun QuicLocScreen(
     // this existed, or not yet reflected in this snapshot.
     val sharingCount = numbersList.count { canRequestLocationByToken[it] != false }
 
+    // Enabled locations with at least one contact picked — anything else
+    // (off, or on with nobody to tell) doesn't count as "usable" for the
+    // checklist, same logic as an empty/name-only whitelist.
+    val locNoticeUsableCount = locNoticeEntries.count { it.enabled && it.contactTokens.isNotEmpty() }
+
     // Same source of truth as the All Permissions table — the checklist and the
     // table can never disagree.
-    val setupSteps = remember(enabled, numbersList.size, dialableCount, myNumber, permissionStatuses, pinSet) {
+    val setupSteps = remember(enabled, numbersList.size, dialableCount, myNumber, permissionStatuses, pinSet, locNoticeEnabled, locNoticeUsableCount) {
         Readiness.steps(
             enabled = enabled,
             whitelistCount = numbersList.size,
@@ -6155,6 +7168,8 @@ fun QuicLocScreen(
             myNumber = myNumber,
             permissions = permissionStatuses,
             pinSet = pinSet,
+            locNoticeEnabled = locNoticeEnabled,
+            locNoticeUsableCount = locNoticeUsableCount,
         )
     }
     val ready = Readiness.isReady(setupSteps)
@@ -6165,6 +7180,7 @@ fun QuicLocScreen(
         add("contacts")
         add("trigger")
         add("widget")
+        add("locnotice")
         if (FindMyPhone.ENABLED) add("findmyphone")
         add("pin")
         add("access")
@@ -6193,6 +7209,7 @@ fun QuicLocScreen(
                 pinExpandSignal++
                 scope.launch { scrollState.animateScrollTo(pinSectionY) }
             }
+            PermKeys.OPEN_LOC_NOTICE -> onOpenLocNotice()
             else -> onPermissionAction(key)
         }
     }
@@ -6604,6 +7621,41 @@ fun QuicLocScreen(
                         }
                     }
                 }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Loc Notice — passive arrival/departure alerts. A separate master
+        // switch from WhatQuicLocDoesCard's: that one gates on-demand
+        // request-reply, this one gates background geofence watching. A user
+        // may reasonably want one without the other.
+        // ------------------------------------------------------------------
+        SectionCard(
+            number = sectionNo("locnotice"),
+            title = "Loc Notice",
+            subtitle = "Passive alerts when you arrive or leave a place",
+            statusText = if (!locNoticeEnabled)
+                "Off"
+            else
+                "${locNoticeEntries.size} location${if (locNoticeEntries.size == 1) "" else "s"} configured",
+            statusOk = if (!locNoticeEnabled) null else locNoticeUsableCount > 0,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Turn on Loc Notice", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = "Separate from the master switch above — you can have one on " +
+                            "without the other. Needs \"Allow all the time\" location to work " +
+                            "with the app closed.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = locNoticeEnabled, onCheckedChange = onToggleLocNotice)
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(onClick = onOpenLocNotice, modifier = Modifier.fillMaxWidth()) {
+                Text("Manage locations")
             }
         }
 
@@ -8243,6 +9295,68 @@ fun HistoryScreen(
 
 
 ######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/MapsHandoff.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+
+/**
+ * The two-way handoff Loc Notice uses to let a user define a place without
+ * QuicLoc ever calling a Maps/Places/Geocoding API — no API key, no billing.
+ *
+ * Forward: the user types a free-text address in-app; [openInMaps] copies it
+ * to the clipboard and opens Google Maps (or the system chooser if no maps
+ * app is resolvable) pre-searched for it, so the user can visually confirm
+ * or refine the pin themselves.
+ *
+ * Backward: the user locates/drops a pin in Maps, uses Maps' own "copy
+ * coordinates" share action, switches back to QuicLoc, and taps "Paste
+ * location" — [pasteFromClipboard] reads the clipboard and hands the text to
+ * [CoordinateParser].
+ *
+ * The backward step is a manual button tap, not an automatic read-on-resume:
+ * since Android 10, only the foreground app can read the clipboard, and
+ * QuicLoc *is* foreground again once the user switches back — so a manual
+ * tap works reliably. An auto-detect alternative can't distinguish "just
+ * copied from Maps" from unrelated clipboard content anyway, so it would
+ * need the same parse-and-gate logic regardless — the explicit button is
+ * simpler and no less capable, not a tradeoff.
+ */
+object MapsHandoff {
+
+    fun openInMaps(context: Context, address: String) {
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(ClipData.newPlainText("QuicLoc address", address))
+
+        val uri = Uri.parse("geo:0,0?q=${Uri.encode(address)}")
+        val intent = Intent(Intent.ACTION_VIEW, uri)
+        if (intent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(intent)
+        } else {
+            context.startActivity(Intent.createChooser(intent, "Open address in a maps app"))
+        }
+    }
+
+    /** @return the parsed (lat, lng) pair from the clipboard, or null if it doesn't look like one. */
+    fun pasteFromClipboard(context: Context): Pair<Double, Double>? {
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+        val text = clipboard?.primaryClip
+            ?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)
+            ?.coerceToText(context)
+            ?.toString()
+        return CoordinateParser.parse(text)
+    }
+}
+
+
+######################################################
 # FILE: app/src/main/java/com/hereliesaz/quicloc/NotificationListener.kt
 ######################################################
 
@@ -8885,6 +9999,8 @@ object PermKeys {
     const val MY_NUMBER = "setup.my_number"
     /** Open the QuicLoc PIN section and scroll to it. */
     const val SET_PIN = "setup.set_pin"
+    /** Open the Loc Notice screen so the user can add a usable location. */
+    const val OPEN_LOC_NOTICE = "setup.open_locnotice"
 }
 
 /** Whether a setup step is satisfied, still needs the user, or can't be checked. */
@@ -8942,6 +10058,13 @@ object Readiness {
      *   a whitelist made up entirely of name-only entries can never satisfy
      *   an SMS trigger (SmsReceiver only number-matches) or the widget's SMS
      *   fan-out, so it should not be reported as "done".
+     * @param locNoticeEnabled Whether the separate Loc Notice master toggle
+     *   is on. Loc Notice gets no "turn it on" row of its own — like
+     *   find-my-phone, it's an opt-in feature that isn't penalized for being
+     *   off — but once enabled, it needs at least one usable location or
+     *   it's on and doing nothing.
+     * @param locNoticeUsableCount Enabled Loc Notice locations that have at
+     *   least one resolvable contact selected.
      */
     fun steps(
         enabled: Boolean,
@@ -8950,6 +10073,8 @@ object Readiness {
         permissions: List<PermissionStatus>,
         pinSet: Boolean = false,
         dialableWhitelistCount: Int = whitelistCount,
+        locNoticeEnabled: Boolean = false,
+        locNoticeUsableCount: Int = 0,
     ): List<SetupStep> {
         val byKey = permissions.associateBy { it.key }
         fun state(key: String): PermStatus? = byKey[key]?.state
@@ -9001,7 +10126,8 @@ object Readiness {
                 id = "background-location",
                 title = "Set location to \"Allow all the time\"",
                 detail = "This is the one people miss. Without it QuicLoc only answers while you " +
-                    "happen to have the app open on screen — which defeats the point.",
+                    "happen to have the app open on screen — which defeats the point." +
+                    if (locNoticeEnabled) " Loc Notice also can't detect arrivals or departures without it." else "",
                 state = if (granted(PERM_BACKGROUND_LOCATION)) StepState.DONE else StepState.TODO,
                 required = true,
                 actionKey = PERM_BACKGROUND_LOCATION,
@@ -9056,6 +10182,23 @@ object Readiness {
             actionKey = PermKeys.BATTERY,
             actionLabel = "Allow",
         )
+
+        // Loc Notice gets no "turn it on" row — like find-my-phone, it's an
+        // opt-in feature not penalized for being off. But once the user has
+        // turned it on, an empty or contact-less Loc Notice does nothing, the
+        // same logic as an empty whitelist, so this is required while shown.
+        if (locNoticeEnabled) {
+            steps += SetupStep(
+                id = "locnotice-setup",
+                title = "Add at least one working Loc Notice location",
+                detail = "Loc Notice is on but has nothing to alert on. Add a location, turn on " +
+                    "arrival or departure, and pick who gets told.",
+                state = if (locNoticeUsableCount > 0) StepState.DONE else StepState.TODO,
+                required = true,
+                actionKey = PermKeys.OPEN_LOC_NOTICE,
+                actionLabel = "Add",
+            )
+        }
 
         // ---- Recommended, not required -------------------------------------
 
@@ -9529,6 +10672,60 @@ class SmsReceiver : BroadcastReceiver() {
         outcome = outcome,
         reason = reason,
     )
+}
+
+
+######################################################
+# FILE: app/src/main/java/com/hereliesaz/quicloc/SmsSender.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.os.Build
+import android.telephony.SmsManager
+import android.util.Log
+
+/**
+ * The one place QuicLoc calls [SmsManager]. Extracted from [LocationHelper]
+ * so [GeofenceBroadcastReceiver]'s automatic arrival/departure texts reuse
+ * the exact same send path (multipart handling, API-level lookup,
+ * synchronous-failure handling) instead of reimplementing it.
+ */
+object SmsSender {
+    private const val TAG = "QuicLoc.SmsSender"
+
+    /**
+     * @return Whether the send call was actually issued to the radio without
+     *   throwing. `sentIntent` is intentionally null (no PendingIntent-based
+     *   delivery-report wiring exists), so this does NOT confirm carrier-level
+     *   delivery — only that we didn't fail synchronously (SmsManager missing,
+     *   a malformed destination address, SEND_SMS revoked, etc).
+     */
+    fun send(context: android.content.Context, phoneNumber: String, message: String): Boolean {
+        return try {
+            val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                context.getSystemService(SmsManager::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
+            }
+            if (smsManager != null) {
+                val parts = smsManager.divideMessage(message)
+                if (parts.size > 1) {
+                    smsManager.sendMultipartTextMessage(phoneNumber, null, parts, null, null)
+                } else {
+                    smsManager.sendTextMessage(phoneNumber, null, message, null, null)
+                }
+                true
+            } else {
+                Log.e(TAG, "Failed to get SmsManager")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send SMS to $phoneNumber", e)
+            false
+        }
+    }
 }
 
 
@@ -11386,6 +12583,9 @@ private fun TapExplanation(
     <exclude domain="sharedpref" path="quicloc_diagnostics.xml" />
     <exclude domain="sharedpref" path="quicloc_diagnostics_fallback.xml" />
     <exclude domain="sharedpref" path="quicloc_tracking_state.xml" />
+    <exclude domain="sharedpref" path="quicloc_locnotice_prefs.xml" />
+    <exclude domain="sharedpref" path="quicloc_locnotice_prefs_fallback.xml" />
+    <exclude domain="sharedpref" path="quicloc_geofence_state.xml" />
     <exclude domain="external" path="." />
 </full-backup-content>
 
@@ -11414,6 +12614,9 @@ private fun TapExplanation(
         <exclude domain="sharedpref" path="quicloc_diagnostics.xml" />
         <exclude domain="sharedpref" path="quicloc_diagnostics_fallback.xml" />
         <exclude domain="sharedpref" path="quicloc_tracking_state.xml" />
+        <exclude domain="sharedpref" path="quicloc_locnotice_prefs.xml" />
+        <exclude domain="sharedpref" path="quicloc_locnotice_prefs_fallback.xml" />
+        <exclude domain="sharedpref" path="quicloc_geofence_state.xml" />
         <exclude domain="external" path="." />
     </cloud-backup>
     <device-transfer>
@@ -11424,6 +12627,9 @@ private fun TapExplanation(
         <exclude domain="sharedpref" path="quicloc_diagnostics.xml" />
         <exclude domain="sharedpref" path="quicloc_diagnostics_fallback.xml" />
         <exclude domain="sharedpref" path="quicloc_tracking_state.xml" />
+        <exclude domain="sharedpref" path="quicloc_locnotice_prefs.xml" />
+        <exclude domain="sharedpref" path="quicloc_locnotice_prefs_fallback.xml" />
+        <exclude domain="sharedpref" path="quicloc_geofence_state.xml" />
         <exclude domain="external" path="." />
     </device-transfer>
 </data-extraction-rules>
@@ -11925,6 +13131,55 @@ class BackupVaultTest {
         )
     }
 
+    // ---- geofences ---------------------------------------------------------
+
+    @Test
+    fun `restore brings geofences back and re-syncs registration`() {
+        whitelist.setPin("123456")
+        whitelist.addContact("Mom", "+15551234567")
+        val store = GeofenceStore(context)
+        store.add(
+            GeofenceEntry(
+                id = "", name = "Home", latitude = 1.0, longitude = 2.0,
+                radiusMeters = 150f, notifyOnEnter = true, notifyOnExit = true,
+                contactTokens = setOf("Mom"),
+            )
+        )
+        BackupVault.flush(context)
+        val savedBytes = BackupVault.backupFile(context).readBytes()
+
+        context.deleteSharedPreferences("quicloc_secure_prefs")
+        context.deleteSharedPreferences("quicloc_secure_prefs_fallback")
+        context.deleteSharedPreferences("quicloc_locnotice_prefs")
+        context.deleteSharedPreferences("quicloc_locnotice_prefs_fallback")
+        BackupVault.backupFile(context).writeBytes(savedBytes)
+
+        val result = BackupVault.restoreFromInternal(context, "123456")
+        assertTrue("restore failed: ${result.exceptionOrNull()?.message}", result.isSuccess)
+        assertEquals(1, result.getOrNull()!!.geofenceCount)
+
+        val restoredEntries = GeofenceStore(context).getAll()
+        assertEquals(1, restoredEntries.size)
+        assertEquals("Home", restoredEntries.single().name)
+        assertEquals(setOf("Mom"), restoredEntries.single().contactTokens)
+    }
+
+    @Test
+    fun `restore with no geofences configured yields zero geofences, not a failure`() {
+        // A backup written before this field existed would have the
+        // "geofences" key absent entirely; applyJson reads it via
+        // optJSONArray (returns null, not a throw) with the same emptyList()
+        // fallback exercised here, so an old backup restores exactly like
+        // this rather than failing the whole restore.
+        whitelist.setPin("123456")
+        whitelist.addNumber("+15551234567")
+        BackupVault.flush(context)
+
+        val result = BackupVault.restoreFromInternal(context, "123456")
+        assertTrue("restore failed: ${result.exceptionOrNull()?.message}", result.isSuccess)
+        assertEquals(0, result.getOrNull()!!.geofenceCount)
+    }
+
     // ---- helpers ---------------------------------------------------------
 
     private fun assertCategory(
@@ -11938,6 +13193,75 @@ class BackupVaultTest {
             ex is BackupVault.RestoreException
         )
         assertEquals(expected, (ex as BackupVault.RestoreException).category)
+    }
+}
+
+
+######################################################
+# FILE: app/src/test/java/com/hereliesaz/quicloc/CoordinateParserTest.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+/** Pure Kotlin — no Robolectric needed, same as [PhoneNumbersTest]. */
+class CoordinateParserTest {
+
+    @Test
+    fun `parses a typical Google Maps copy-coordinates string`() {
+        val result = CoordinateParser.parse("37.422131, -122.084801")
+        assertEquals(37.422131 to -122.084801, result)
+    }
+
+    @Test
+    fun `tolerates missing space after the comma`() {
+        assertEquals(37.0 to -122.0, CoordinateParser.parse("37.0,-122.0"))
+    }
+
+    @Test
+    fun `tolerates surrounding whitespace`() {
+        assertEquals(37.0 to -122.0, CoordinateParser.parse("  37.0, -122.0  "))
+    }
+
+    @Test
+    fun `handles positive longitude and integer-looking values`() {
+        assertEquals(1.0 to 2.0, CoordinateParser.parse("1, 2"))
+    }
+
+    @Test
+    fun `returns null for out-of-range latitude`() {
+        assertNull(CoordinateParser.parse("91.0, 0.0"))
+        assertNull(CoordinateParser.parse("-91.0, 0.0"))
+    }
+
+    @Test
+    fun `returns null for out-of-range longitude`() {
+        assertNull(CoordinateParser.parse("0.0, 181.0"))
+        assertNull(CoordinateParser.parse("0.0, -181.0"))
+    }
+
+    @Test
+    fun `returns null for missing comma`() {
+        assertNull(CoordinateParser.parse("37.0 -122.0"))
+    }
+
+    @Test
+    fun `returns null for non-numeric text`() {
+        assertNull(CoordinateParser.parse("Home Sweet Home"))
+    }
+
+    @Test
+    fun `returns null for blank or null input`() {
+        assertNull(CoordinateParser.parse(""))
+        assertNull(CoordinateParser.parse(null))
+    }
+
+    @Test
+    fun `returns null for a single number with no pair`() {
+        assertNull(CoordinateParser.parse("37.422131"))
     }
 }
 
@@ -12042,6 +13366,254 @@ class DiagnosticLogManagerTest {
 
 
 ######################################################
+# FILE: app/src/test/java/com/hereliesaz/quicloc/GeofenceEntryTest.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+// org.json's real implementation isn't on the plain-JVM unit test classpath
+// (it's stubbed to throw) -- Robolectric provides a working one, matching
+// how WhitelistManagerTest covers ContactEntry's identical JSON round-trip.
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class GeofenceEntryTest {
+
+    private fun sample() = GeofenceEntry(
+        id = "abc-123",
+        name = "Home",
+        latitude = 37.422131,
+        longitude = -122.084801,
+        radiusMeters = 150f,
+        notifyOnEnter = true,
+        notifyOnExit = false,
+        enabled = true,
+        contactTokens = setOf("Mom", "+15551234567"),
+    )
+
+    @Test
+    fun `round-trips through toJsonString and fromJsonString`() {
+        val entry = sample()
+        val restored = GeofenceEntry.fromJsonString(entry.toJsonString())
+        assertEquals(entry, restored)
+    }
+
+    @Test
+    fun `fromJsonString returns null for blank input`() {
+        assertNull(GeofenceEntry.fromJsonString(""))
+    }
+
+    @Test
+    fun `fromJsonString returns null for garbage input`() {
+        assertNull(GeofenceEntry.fromJsonString("not json"))
+    }
+
+    @Test
+    fun `fromJsonString defaults missing optional fields`() {
+        val minimal = """{"id":"x","lat":1.0,"lng":2.0}"""
+        val restored = GeofenceEntry.fromJsonString(minimal)
+        assertEquals("x", restored?.id)
+        assertEquals(true, restored?.notifyOnEnter)
+        assertEquals(true, restored?.notifyOnExit)
+        assertEquals(true, restored?.enabled)
+        assertEquals(emptySet<String>(), restored?.contactTokens)
+        assertEquals(GeofenceEntry.DEFAULT_RADIUS_M, restored?.radiusMeters)
+    }
+}
+
+
+######################################################
+# FILE: app/src/test/java/com/hereliesaz/quicloc/GeofenceStateStoreTest.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import com.google.android.gms.location.Geofence
+import org.junit.Assert.assertEquals
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class GeofenceStateStoreTest {
+
+    private lateinit var context: Context
+
+    private val enter = Geofence.GEOFENCE_TRANSITION_ENTER
+    private val exit = Geofence.GEOFENCE_TRANSITION_EXIT
+
+    @Before
+    fun setup() {
+        context = ApplicationProvider.getApplicationContext()
+        context.getSharedPreferences("quicloc_geofence_state", Context.MODE_PRIVATE)
+            .edit().clear().commit()
+    }
+
+    @Test
+    fun `first transition for a geofence is processed`() {
+        assertEquals(GeofenceStateStore.Result.PROCESS, GeofenceStateStore.evaluate(context, "home", enter))
+    }
+
+    @Test
+    fun `an exact repeat of the same transition is a duplicate`() {
+        GeofenceStateStore.evaluate(context, "home", enter)
+        assertEquals(GeofenceStateStore.Result.DUPLICATE, GeofenceStateStore.evaluate(context, "home", enter))
+    }
+
+    @Test
+    fun `a genuine direction change right after is flap-suppressed, not processed`() {
+        GeofenceStateStore.evaluate(context, "home", enter)
+        assertEquals(GeofenceStateStore.Result.FLAP_SUPPRESSED, GeofenceStateStore.evaluate(context, "home", exit))
+    }
+
+    @Test
+    fun `different geofences are tracked independently`() {
+        GeofenceStateStore.evaluate(context, "home", enter)
+        // "work" has never fired before -- must not be affected by "home"'s state.
+        assertEquals(GeofenceStateStore.Result.PROCESS, GeofenceStateStore.evaluate(context, "work", enter))
+    }
+
+    @Test
+    fun `clear resets bookkeeping for a geofence`() {
+        GeofenceStateStore.evaluate(context, "home", enter)
+        GeofenceStateStore.clear(context, "home")
+        assertEquals(GeofenceStateStore.Result.PROCESS, GeofenceStateStore.evaluate(context, "home", enter))
+    }
+}
+
+
+######################################################
+# FILE: app/src/test/java/com/hereliesaz/quicloc/GeofenceStoreTest.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.robolectric.annotation.Config
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class GeofenceStoreTest {
+
+    private lateinit var context: Context
+    private lateinit var store: GeofenceStore
+
+    @Before
+    fun setup() {
+        context = ApplicationProvider.getApplicationContext()
+        context.deleteSharedPreferences("quicloc_locnotice_prefs")
+        context.deleteSharedPreferences("quicloc_locnotice_prefs_fallback")
+        BackupVault.backupFile(context).delete()
+        store = GeofenceStore(context)
+    }
+
+    @After
+    fun cleanup() {
+        BackupVault.backupFile(context).delete()
+    }
+
+    private fun entry(name: String = "Home", id: String = "") = GeofenceEntry(
+        id = id,
+        name = name,
+        latitude = 1.0,
+        longitude = 2.0,
+        radiusMeters = 150f,
+        notifyOnEnter = true,
+        notifyOnExit = true,
+        contactTokens = setOf("Mom"),
+    )
+
+    @Test
+    fun `starts empty`() {
+        assertTrue(store.getAll().isEmpty())
+    }
+
+    @Test
+    fun `add assigns an id when none is given`() {
+        val saved = store.add(entry(id = ""))
+        assertTrue(saved.id.isNotBlank())
+        assertEquals(saved, store.get(saved.id))
+    }
+
+    @Test
+    fun `add preserves a caller-supplied id`() {
+        val saved = store.add(entry(id = "custom-id"))
+        assertEquals("custom-id", saved.id)
+    }
+
+    @Test
+    fun `update replaces the entry with the same id`() {
+        val saved = store.add(entry(name = "Home"))
+        store.update(saved.copy(name = "House"))
+        assertEquals("House", store.get(saved.id)?.name)
+        assertEquals(1, store.getAll().size)
+    }
+
+    @Test
+    fun `remove deletes by id`() {
+        val saved = store.add(entry())
+        store.remove(saved.id)
+        assertNull(store.get(saved.id))
+        assertTrue(store.getAll().isEmpty())
+    }
+
+    @Test
+    fun `setEnabled flips only the enabled flag`() {
+        val saved = store.add(entry())
+        store.setEnabled(saved.id, false)
+        val updated = store.get(saved.id)
+        assertEquals(false, updated?.enabled)
+        assertEquals(saved.name, updated?.name)
+    }
+
+    @Test
+    fun `replaceAll wipes and resets`() {
+        store.add(entry("Home"))
+        store.add(entry("Work"))
+        val replacement = entry("Gym", id = "gym-id")
+        store.replaceAll(listOf(replacement))
+        assertEquals(listOf(replacement), store.getAll())
+    }
+
+    @Test
+    fun `data persists across new GeofenceStore instances`() {
+        val saved = store.add(entry("Home"))
+        val fresh = GeofenceStore(context)
+        assertEquals(saved, fresh.get(saved.id))
+    }
+
+    @Test
+    fun `multiple entries coexist independently`() {
+        val a = store.add(entry("Home"))
+        val b = store.add(entry("Work"))
+        assertEquals(2, store.getAll().size)
+        store.remove(a.id)
+        assertEquals(listOf(b), store.getAll())
+    }
+}
+
+
+######################################################
 # FILE: app/src/test/java/com/hereliesaz/quicloc/ManifestRegistrationTest.kt
 ######################################################
 
@@ -12141,6 +13713,18 @@ class ManifestRegistrationTest {
             "BootReceiver must be exported to receive BOOT_COMPLETED",
             info.exported
         )
+    }
+
+    @Test
+    fun `GeofenceBroadcastReceiver is registered and NOT exported`() {
+        val info = pm.getReceiverInfo(
+            ComponentName(context, GeofenceBroadcastReceiver::class.java),
+            0
+        )
+        assertNotNull(info)
+        // Play Services invokes it via an explicit PendingIntent this app
+        // built itself -- no need for other apps to reach it.
+        assertTrue("GeofenceBroadcastReceiver must NOT be exported", !info.exported)
     }
 
     @Test
@@ -12406,7 +13990,12 @@ class ReadinessTest {
         permissions: List<PermissionStatus> = allGranted(),
         pinSet: Boolean = true,
         dialableWhitelistCount: Int = whitelistCount,
-    ) = Readiness.steps(enabled, whitelistCount, myNumber, permissions, pinSet, dialableWhitelistCount)
+        locNoticeEnabled: Boolean = false,
+        locNoticeUsableCount: Int = 0,
+    ) = Readiness.steps(
+        enabled, whitelistCount, myNumber, permissions, pinSet, dialableWhitelistCount,
+        locNoticeEnabled, locNoticeUsableCount,
+    )
 
     @Test
     fun `fully configured app reports ready with nothing outstanding`() {
@@ -12590,6 +14179,32 @@ class ReadinessTest {
     fun `at least one dialable entry satisfies the whitelist step even with name-only entries too`() {
         val steps = steps(whitelistCount = 3, dialableWhitelistCount = 1)
         assertEquals(StepState.DONE, steps.first { it.id == "whitelist" }.state)
+    }
+
+    // ---- Loc Notice --------------------------------------------------------
+
+    @Test
+    fun `loc notice step is absent when the feature is off`() {
+        val steps = steps(locNoticeEnabled = false)
+        assertTrue(steps.none { it.id == "locnotice-setup" })
+        // Being off must never block readiness -- opt-in feature.
+        assertTrue(Readiness.isReady(steps))
+    }
+
+    @Test
+    fun `loc notice step appears and blocks readiness when on with no usable location`() {
+        val steps = steps(locNoticeEnabled = true, locNoticeUsableCount = 0)
+        val step = steps.first { it.id == "locnotice-setup" }
+        assertTrue(step.required)
+        assertEquals(StepState.TODO, step.state)
+        assertFalse(Readiness.isReady(steps))
+    }
+
+    @Test
+    fun `loc notice step is done once at least one location is usable`() {
+        val steps = steps(locNoticeEnabled = true, locNoticeUsableCount = 1)
+        assertEquals(StepState.DONE, steps.first { it.id == "locnotice-setup" }.state)
+        assertTrue(Readiness.isReady(steps))
     }
 }
 
@@ -13393,7 +15008,8 @@ plugins {
 | `NotificationListener` | [NotificationListener.kt](../app/src/main/java/com/hereliesaz/quicloc/NotificationListener.kt) | `NotificationListenerService` for chat apps. Uses `Notification.MessagingStyle` to pull per-message sender + body. Has a 60 s dedupe window because messaging apps re-post notifications constantly. |
 | `QuicLocWidgetProvider` | [QuicLocWidgetProvider.kt](../app/src/main/java/com/hereliesaz/quicloc/QuicLocWidgetProvider.kt) | Home-screen widget. Each tap fires `LocationReplyService.ACTION_WIDGET_TAP`; the service counts taps within 400 ms. |
 | `ToggleReceiver` | [ToggleReceiver.kt](../app/src/main/java/com/hereliesaz/quicloc/ToggleReceiver.kt) | The "Enable/Disable" action button on the reminder notification. |
-| `BootReceiver` | [BootReceiver.kt](../app/src/main/java/com/hereliesaz/quicloc/BootReceiver.kt) | Re-posts the reminder notification after reboot. |
+| `BootReceiver` | [BootReceiver.kt](../app/src/main/java/com/hereliesaz/quicloc/BootReceiver.kt) | Re-posts the reminder notification after reboot, and re-registers Loc Notice's geofences (they don't survive reboot). |
+| `GeofenceBroadcastReceiver` | [GeofenceBroadcastReceiver.kt](../app/src/main/java/com/hereliesaz/quicloc/GeofenceBroadcastReceiver.kt) | Fires on `ACTION_GEOFENCE_EVENT` when a Loc Notice location is entered/exited. Not request-driven — see [LOC-NOTICE-FLOW.md](LOC-NOTICE-FLOW.md). |
 
 ### Foreground services
 
@@ -13406,7 +15022,7 @@ plugins {
 
 | Activity | File | Role |
 |---|---|---|
-| `MainActivity` | [MainActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt) | Single-activity Compose app. Navigation is a `sealed class MainView` (Config / History / Diagnostics / TutorialsHub / TutorialDetail). Unlock gate on resume: biometric / device credential, or the QuicLoc PIN. The Config screen is a purpose card, then the [Readiness](../app/src/main/java/com/hereliesaz/quicloc/Readiness.kt) setup checklist, then one collapsible `SectionCard` per app function. |
+| `MainActivity` | [MainActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/MainActivity.kt) | Single-activity Compose app. Navigation is a `sealed class MainView` (Config / History / Diagnostics / TutorialsHub / TutorialDetail / LocNoticeList / LocNoticeEdit). Unlock gate on resume: biometric / device credential, or the QuicLoc PIN. The Config screen is a purpose card, then the [Readiness](../app/src/main/java/com/hereliesaz/quicloc/Readiness.kt) setup checklist, then one collapsible `SectionCard` per app function (including Loc Notice's own master switch). |
 | `TrackingLockActivity` | [TrackingLockActivity.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/TrackingLockActivity.kt) | In the on-demand `:feature_findmyphone` module. Fallback cover-screen when Device Admin isn't granted. After 3 wrong PINs, captures an intruder photo via the module-internal [IntruderCamera](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/IntruderCamera.kt) (no photo if CAMERA wasn't granted); otherwise locks without a photo. |
 | `WidgetHelpActivity` | [WidgetHelpActivity.kt](../app/src/main/java/com/hereliesaz/quicloc/WidgetHelpActivity.kt) | Transparent activity that pops up when the widget is tapped exactly once. Lists all four tap counts with a live ✓/✗ for whether each one has somewhere to send to. |
 
@@ -13418,6 +15034,8 @@ plugins {
 | `AppSettings` | [AppSettings.kt](../app/src/main/java/com/hereliesaz/quicloc/AppSettings.kt) | Plain `SharedPreferences` (`quicloc_app_settings`). Holds non-sensitive toggles + "already prompted" flags. Auto-backs-up via Android Auto Backup. |
 | `RequestHistoryManager` | [RequestHistoryManager.kt](../app/src/main/java/com/hereliesaz/quicloc/RequestHistoryManager.kt) | `EncryptedSharedPreferences` (`quicloc_history`). JSON-serialized list of recent location-request events. |
 | `BackupVault` | [BackupVault.kt](../app/src/main/java/com/hereliesaz/quicloc/BackupVault.kt) | PIN-encrypted blob at `files/quicloc_backup.qlb`. Auto-backs-up via Android Auto Backup (the file is inside the app's `files/` dir). |
+| `GeofenceStore` | [GeofenceStore.kt](../app/src/main/java/com/hereliesaz/quicloc/GeofenceStore.kt) | `EncryptedSharedPreferences` (`quicloc_locnotice_prefs`). Loc Notice place definitions (name, coordinates, radius, enter/exit flags, contact tokens). Mutations trigger `BackupVault.snapshotAsync`; has zero Play Services dependency — that's `GeofenceRegistrar`'s job. |
+| `GeofenceStateStore` | [GeofenceStateStore.kt](../app/src/main/java/com/hereliesaz/quicloc/GeofenceStateStore.kt) | Plain `SharedPreferences` (`quicloc_geofence_state`). Ephemeral last-transition bookkeeping per geofence, for redelivery/flap dedupe. Excluded from Android Auto Backup, same reasoning as `quicloc_tracking_state`. |
 
 ### Cross-cutting helpers
 
@@ -13440,6 +15058,8 @@ See [TRIGGER-FLOW.md](TRIGGER-FLOW.md) for the step-by-step. Quick summary:
 2. **Notification trigger.** `NotificationListener` → `WhitelistManager.isWhitelistedByName(senderName)` → `LocationReplyService.startForNotification(action)` → `LocationHelper.getCurrentLocationAndReplyViaNotification` → `Notification.Action.actionIntent.send(...)`.
 3. **Passphrase trigger** (any number). `SmsReceiver` or `NotificationListener` → `WhitelistManager.clearPassphraseSync()` → `FindMyPhone.trigger(...)` (starts the `TrackingService` in the on-demand `:feature_findmyphone` module by `ComponentName`; no-op if the module was never installed) → `LockdownController.lockNow()` (DevicePolicyManager.lockNow if admin else cover-screen Activity + full-screen-intent notification) → 5-min interval location updates until the user enters PIN.
 
+Loc Notice is not request-driven and runs separately from all three paths above — see [LOC-NOTICE-FLOW.md](LOC-NOTICE-FLOW.md): `GeofenceRegistrar` registers named places with `GeofencingClient`; `GeofenceBroadcastReceiver` fires on a crossing and texts the configured contacts directly, with no incoming message involved.
+
 ## Key architectural choices
 
 - **No backend.** Everything happens on-device. The only outbound traffic is the location reply itself, sent directly to the requesting contact via SMS/inline-reply/MMS. This is explicit in the privacy policy and Play Store declarations.
@@ -13448,6 +15068,7 @@ See [TRIGGER-FLOW.md](TRIGGER-FLOW.md) for the step-by-step. Quick summary:
 - **MessagingStyle-aware notification parsing.** Chat apps (WhatsApp, Telegram, Signal, etc.) post messages as `Notification.MessagingStyle`. Naive parsing of `EXTRA_TEXT` fails for group chats and multi-message bundles. We parse `MessagingStyle.messages` and take the latest, with the sender from `Person.name`.
 - **`MainView` sealed-class navigation.** No Navigation library — the project is small enough that a 4-branch `when` is clearer than a nav graph.
 - **Snapshot debouncing.** Every encrypted-prefs mutation calls `BackupVault.snapshotAsync`. The debounce window (250 ms) collapses the 6+ mutations during a restore into a single encrypt-write.
+- **Loc Notice needs no new API key or billing.** Defining a place is a two-way clipboard handoff into the system Maps app (see [LOC-NOTICE-FLOW.md](LOC-NOTICE-FLOW.md)) rather than a Places/Geocoding API call — consistent with "no backend" above. `GeofencingClient` itself comes from `play-services-location`, already a dependency for `LocationHelper`.
 
 
 ######################################################
@@ -13931,6 +15552,95 @@ The app will receive a rating of **Everyone**.
 If Google Play reviewers contact you for additional clarification, use this response template:
 
 > QuicLoc is a single-purpose personal safety tool built around a home-screen widget: the user taps it to send a safety-check or emergency alert, with their GPS location, to their chosen emergency contacts — no incoming message of any kind is required for this to work. SMS and notification access extend that same mechanism by additionally letting the user's pre-approved trusted contacts request the location themselves by sending a keyword, which the app answers automatically with a Google Maps link. All sensitive permissions (SMS, notification access, background location) are used exclusively for this single function. No data is collected, stored server-side, or shared with any third party including the developer. The list of emergency contacts is encrypted on-device using Android Keystore-backed AES-256 encryption and is protected by biometric authentication. The app has no network connectivity of its own — it uses only Android system APIs and Google Play Services for GPS.
+
+
+######################################################
+# FILE: docs/LOC-NOTICE-FLOW.md
+######################################################
+
+# Loc Notice flow
+
+How a saved place turns into an automatic "arrived"/"left" text — no request needed. Unlike the [request-reply paths](TRIGGER-FLOW.md), this one runs entirely in the background, driven by Play Services' `GeofencingClient` rather than an incoming message.
+
+## Master gates
+
+Two independent switches, both must be satisfied:
+
+- `AppSettings.isLocNoticeEnabled(context)` — Loc Notice's own master switch, separate from `AppSettings.isEnabled` (the request-reply master switch). A user can have one on without the other.
+- Each `GeofenceEntry.enabled` — a location can be individually paused without deleting it.
+
+`GeofenceRegistrar.sync(context)` is the single place both are checked before anything is registered with Play Services.
+
+## Registration side: saving a location
+
+```
+User saves a location (LocNoticeEditScreen)
+        │
+        ▼
+GeofenceStore.add / .update
+        │  EncryptedSharedPreferences("quicloc_locnotice_prefs")
+        │  BackupVault.snapshotAsync (portable copy — see below)
+        │
+        ▼
+GeofenceRegistrar.sync(context)
+        │  removeGeofences(pendingIntent)         ← full reconciliation,
+        │  ↓                                        not incremental diffing
+        │  isLocNoticeEnabled? and background location granted?
+        │  entries = GeofenceStore.getAll().filter { enabled }.take(100)
+        │  addGeofences(GeofencingRequest{
+        │      setInitialTrigger(0)                ← suppress "already inside"
+        │      each entry → ENTER | EXIT            (both directions always;
+        │  }, pendingIntent)                          see Notable details)
+```
+
+`sync()` also runs from: `BootReceiver` (geofences don't survive reboot), `BackupVault.applyJson` (a restore takes effect immediately), and whenever the master toggle or a per-location enabled switch flips.
+
+## Firing side: a crossing happens
+
+```
+Play Services detects a crossing
+        │
+        ▼
+GeofenceBroadcastReceiver.onReceive (ACTION_GEOFENCE_EVENT)
+        │  goAsync() — see Notable details for why this is safe here
+        │  GeofencingEvent.fromIntent(intent)
+        │
+        │  for each triggeringGeofence:
+        │      GeofenceStateStore.evaluate(id, transition)
+        ├─ DUPLICATE          → silently skip (Play Services redelivery)
+        ├─ FLAP_SUPPRESSED    → log LOCNOTICE_FLAP_SUPPRESSED, no text sent
+        └─ PROCESS
+              │  GeofenceStore.get(id) → missing/disabled? log + skip
+              │  direction (enter/exit) off for this entry? log + skip
+              │  resolve entry.contactTokens against WhitelistManager.getContacts()
+              │      (dialable numbers only — dangling/name-only tokens skipped)
+              │  no resolvable contacts? log LOCNOTICE_NO_CONTACTS, record history(false)
+              │  else:
+              │      SmsSender.send to each contact:
+              │        "QuicLoc Loc Notice: arrived at \"<name>\"" / "left \"<name>\""
+              │      RequestHistoryManager.record(name, "Loc Notice (arrived/left)", succeeded)
+              │      DiagnosticLogManager.record(LOCNOTICE_SENT / LOCNOTICE_SEND_FAILED)
+```
+
+## Defining a location: the clipboard handoff
+
+Loc Notice never calls a Maps/Places/Geocoding API — no API key, no billing account. Both directions go through `MapsHandoff`:
+
+- **Forward (address → Maps).** The user types an address; `MapsHandoff.openInMaps` copies it to the clipboard and launches `ACTION_VIEW` on a `geo:0,0?q=<address>` URI, landing in Maps pre-searched (or the system chooser if no maps app resolves) so the user can visually confirm/refine the pin themselves.
+- **Backward (Maps pin → coordinates).** The user locates/drops a pin in Maps and uses Maps' own "copy coordinates" action, then taps "Paste location" back in QuicLoc — `MapsHandoff.pasteFromClipboard` reads the clipboard and hands it to `CoordinateParser`, a pure-Kotlin `"lat, lng"` parser.
+
+The paste step is a manual button tap, not an automatic read-on-resume: Android 10+ restricts clipboard reads to the foreground app, and QuicLoc *is* foreground again once the user switches back — so the manual tap works reliably, and an auto-detect alternative couldn't distinguish "just copied from Maps" from unrelated clipboard content anyway.
+
+## Notable details
+
+- **`setInitialTrigger(0)`.** Without this, Play Services fires a synthetic "already inside" callback the moment a geofence is registered. Since registration re-runs on every reboot (via `BootReceiver`), an unsuppressed initial trigger would refire "arrived home" for anyone already at a monitored place when their phone restarts. Suppressing it means this alerts on genuine crossings only, matching a Life360-style place-alert model rather than a "tell me my current status" one.
+- **Both directions always registered.** `GeofencingRequest.setInitialTrigger`/transition types are a single bitmask for the whole batched `addGeofences` call, not per-geofence — so a location's own `notifyOnEnter`/`notifyOnExit` preference is filtered downstream in `GeofenceBroadcastReceiver`, not at registration. This also means flipping a direction toggle never needs a re-sync.
+- **`PendingIntent.FLAG_MUTABLE` is required.** Play Services fills in the `GeofencingEvent` extras itself when it delivers the broadcast; `FLAG_IMMUTABLE` would silently break delivery.
+- **`goAsync()`, not a foreground service.** `LocationReplyService` needs an FGS because a fresh GPS fix can take 20-60s. A geofence transition doesn't need a fresh fetch — Play Services has already determined the crossing — so `GeofenceBroadcastReceiver`'s `goAsync()` budget (~10s) is comfortably enough for prefs reads and SMS sends.
+- **Full remove-then-re-add reconciliation.** `GeofenceRegistrar.sync` doesn't diff adds/removes — it removes everything under its `PendingIntent`, then re-adds the current desired set. At Loc Notice's scale (a handful of named places) this is cheap, and it means every mutation site is just "mutate the store, then sync," with no way for an OS-level registration to drift from the store (e.g. a deleted place that keeps firing).
+- **60s anti-flap cooldown.** GPS jitter right at a boundary can cause rapid ENTER/EXIT flapping. `GeofenceStateStore` still records the true state on a flap, but suppresses the text within a 60s window per (geofence, direction) so a contact doesn't get several texts for one real crossing.
+- **100-geofence cap.** Android limits `GeofencingClient` to 100 active geofences per app. `GeofenceRegistrar.sync` defensively truncates rather than letting `addGeofences` throw; the location list UI warns as the count approaches the limit.
+- **Backup.** Location definitions (name, coordinates, radius, contacts, flags) round-trip through `BackupVault`'s PIN-encrypted blob, same as the whitelist. The live `quicloc_locnotice_prefs` `EncryptedSharedPreferences` file and the ephemeral `quicloc_geofence_state` transition bookkeeping are both excluded from Android Auto Backup — the former because its Keystore key doesn't survive restore (the vault is the real portable copy), the latter because mid-flight state is meaningless on another device.
 
 
 ######################################################

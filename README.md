@@ -53,11 +53,12 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 | **1 · Emergency contacts** | Who gets alerted, who's also allowed to ask, priority ★ stars, add by contact / number / name |
 | **2 · The trigger word** | What they send, which apps work, Notification Access |
 | **3 · Home screen widget** | Your own number, the tap patterns and what each one needs |
-| **4 · Your QuicLoc PIN** | Set / change / remove the PIN that unlocks the app and encrypts your backup |
-| **5 · App access & notifications** | How you get in (fingerprint / device PIN / QuicLoc PIN), the optional reminder notification |
-| **6 · Permissions** | Every permission with live status and a Grant/Manage button |
-| **7 · Backup & restore** | Export / import your setup |
-| **8 · Help & troubleshooting** | Tutorials, request history, diagnostics |
+| **4 · Loc Notice** | Passive arrival/departure alerts for saved places — its own on/off switch, independent of the master switch above |
+| **5 · Your QuicLoc PIN** | Set / change / remove the PIN that unlocks the app and encrypts your backup |
+| **6 · App access & notifications** | How you get in (fingerprint / device PIN / QuicLoc PIN), the optional reminder notification |
+| **7 · Permissions** | Every permission with live status and a Grant/Manage button |
+| **8 · Backup & restore** | Export / import your setup |
+| **9 · Help & troubleshooting** | Tutorials, request history, diagnostics |
 
 (Numbering shifts by one when the find-my-phone feature is enabled — see below.)
 
@@ -70,6 +71,7 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 - **Works across messaging apps** — SMS always; WhatsApp, Telegram, Signal, Google Messages, Messenger and any app with an inline notification reply once Notification Access is granted.
 - **Home screen widget** — tap it three times for a safety check to up to 3 starred contacts (`#SafetyCheck`), four times for an emergency alert to everyone on your list (`#Emergency`), or twice to just text your own location to yourself, e.g. to find a parked car (`#Parking`). One tap opens a help screen showing which of those are ready to use. Taps must land within about half a second of each other.
 - **Master on/off switch** — pauses every trigger without uninstalling. Optionally mirrored in a persistent notification with a one-tap toggle.
+- **Loc Notice** — passive, Life360-style place alerts: name a location, pick who gets told, and chosen contacts get a text the moment you arrive or leave — no request needed. A separate master switch from the one above, since passive background watching is a different privacy trade-off from answering when asked. Defining a place never touches a Maps/Places API or needs a billing account — you type an address, confirm it in the Maps app, and copy its coordinates back.
 - **Encrypted contact list** — emergency contacts, your own number and starred contacts are stored with AES-256-GCM keyed by the Android Keystore. The data never leaves your device.
 - **Locked settings, two ways in** — fingerprint, face or device PIN, *or* a 6-digit QuicLoc PIN of your own for when a fingerprint won't read or the phone has no lock screen at all. The same PIN encrypts your backup. Background answering is deliberately *not* gated, so it keeps working while the phone is locked.
 - **Every permission explains itself before it's asked** — what it's for, exactly what breaks if you skip it, what QuicLoc will never do with it, and what screen you're about to see. Skipping is always allowed; the checklist lets you come back.
@@ -107,7 +109,7 @@ Every permission maps to one feature, and the app shows its live status with a G
 | `SEND_SMS` | Send the location reply |
 | `ACCESS_FINE_LOCATION` | Obtain a precise GPS location |
 | `ACCESS_COARSE_LOCATION` | Fallback when GPS is unavailable |
-| `ACCESS_BACKGROUND_LOCATION` | Answer while the app is closed — the point of the app |
+| `ACCESS_BACKGROUND_LOCATION` | Answer while the app is closed — the point of the app. Also what Loc Notice uses to detect arrivals/departures. |
 | `POST_NOTIFICATIONS` | Show the foreground-service notification while a reply is in flight (Android 13+) |
 | `USE_BIOMETRIC` / `USE_FINGERPRINT` | Lock the settings screen (a QuicLoc PIN works as an alternative) |
 | `READ_PHONE_NUMBERS` | Only to auto-fill your own number for the parking widget — optional |

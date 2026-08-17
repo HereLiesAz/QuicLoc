@@ -13,7 +13,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 /** Which intake path observed the message. */
-enum class DiagChannel { SMS, NOTIFICATION, WIDGET }
+enum class DiagChannel { SMS, NOTIFICATION, WIDGET, GEOFENCE }
 
 /**
  * The exact decision QuicLoc made about an incoming message. Surfaced in the
@@ -44,6 +44,14 @@ enum class DiagOutcome {
     REPLY_SENT,
     REPLY_FAILED,
     NO_PENDING_ACTION,            // service couldn't find the reply action
+
+    // --- Loc Notice geofence transitions ---
+    LOCNOTICE_ENTRY_MISSING,      // geofence id fired but the location was deleted before the event arrived
+    LOCNOTICE_DIRECTION_OFF,      // fired but notifyOnEnter/notifyOnExit is off for this direction
+    LOCNOTICE_FLAP_SUPPRESSED,    // real crossing, but within the anti-flap cooldown — no text sent
+    LOCNOTICE_NO_CONTACTS,        // location has zero resolvable contacts (all tokens dangling, or none selected)
+    LOCNOTICE_SENT,               // arrival/departure texts sent (at least one succeeded)
+    LOCNOTICE_SEND_FAILED,        // every contact's send call failed
 }
 
 /**
