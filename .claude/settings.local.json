@@ -15,7 +15,8 @@
       "Bash(git pull *)",
       "Bash(./gradlew :app:compileDebugKotlin)",
       "Bash(sh /run/media/az/0722-7C65/QuicLoc/gradlew -p /run/media/az/0722-7C65/QuicLoc :app:compileDebugKotlin)",
-      "Bash(./gradlew testDebugUnitTest:*)"
+      "Bash(./gradlew testDebugUnitTest:*)",
+      "mcp__Claude_Code_Remote__delete_trigger"
     ]
   }
 }
