@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    18b32f52f8958e19b6b652c87a42ecd1ff900298
-  Timestamp: 2026-08-17 10:52:29 UTC
+  Branch:    claude/permissions-declaration-form-mashva
+  Commit:    15979517f514ee34fb74fd985a97e429469e382b
+  Timestamp: 2026-08-17 15:44:15 UTC
 ======================================================
 
 
@@ -288,6 +288,119 @@ runs:
 
         rm -f "$work/cert.err"
         echo "Keystore ready ($store_type), alias '$KEY_ALIAS' verified."
+
+
+######################################################
+# FILE: .github/actions/build-universal-apk/action.yml
+######################################################
+
+name: Build a fused universal APK from an AAB
+description: >
+  Turn a signed .aab into a single installable .apk that carries every
+  dist:fusing-marked dynamic feature module, via bundletool's universal mode.
+
+# Why this exists: `./gradlew assembleRelease` on the base app module ONLY
+# builds the base module's own code — Android Gradle Plugin does not fold
+# dynamic-feature modules into it, regardless of `dist:fusing` in the
+# feature's manifest. That attribute is read by bundletool, not by
+# `assembleRelease`. So the plain base APK that used to be attached straight
+# to GitHub Releases silently shipped with zero find-my-phone/lockdown code
+# for every sideload user, even while the feature was fully wired up and
+# `FindMyPhone.ENABLED` was true. This action is the fix: build the AAB
+# (which DOES contain every module — `bundleRelease` already worked
+# correctly), then ask bundletool for a "universal" split — one APK with
+# every dist:fusing module folded in — and sign it with the same release key
+# Gradle would have used.
+
+inputs:
+  aab-path:
+    description: Path to the signed .aab produced by `bundleRelease`.
+    required: true
+  keystore-path:
+    description: Path to the release keystore (same one Gradle signed the AAB with).
+    required: true
+  keystore-password:
+    description: Keystore (store) password.
+    required: true
+  key-alias:
+    description: Alias of the signing key inside the keystore.
+    required: true
+  key-password:
+    description: Key password. Defaults to the store password when empty.
+    required: false
+    default: ''
+  bundletool-version:
+    description: Pinned bundletool release version to download.
+    required: false
+    default: '1.18.1'
+  output-path:
+    description: Where to write the resulting universal .apk.
+    required: true
+
+outputs:
+  apk-path:
+    description: Path to the fused, signed universal .apk (same as output-path).
+    value: ${{ steps.build.outputs.apk-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: build
+      shell: bash
+      env:
+        AAB_PATH: ${{ inputs.aab-path }}
+        KEYSTORE_PATH: ${{ inputs.keystore-path }}
+        KEYSTORE_PASSWORD: ${{ inputs.keystore-password }}
+        KEY_ALIAS: ${{ inputs.key-alias }}
+        KEY_PASSWORD: ${{ inputs.key-password }}
+        BUNDLETOOL_VERSION: ${{ inputs.bundletool-version }}
+        OUTPUT_PATH: ${{ inputs.output-path }}
+      run: |
+        set -euo pipefail
+
+        if [ ! -f "$AAB_PATH" ]; then
+          echo "::error::No .aab found at $AAB_PATH — run bundleRelease first."
+          exit 1
+        fi
+        if [ -z "${KEY_PASSWORD:-}" ]; then
+          KEY_PASSWORD="$KEYSTORE_PASSWORD"
+        fi
+
+        work="$RUNNER_TEMP/bundletool"
+        mkdir -p "$work"
+
+        jar="$work/bundletool.jar"
+        url="https://github.com/google/bundletool/releases/download/${BUNDLETOOL_VERSION}/bundletool-all-${BUNDLETOOL_VERSION}.jar"
+        echo "Downloading bundletool ${BUNDLETOOL_VERSION}..."
+        curl -sSL -o "$jar" "$url"
+        if [ ! -s "$jar" ]; then
+          echo "::error::Failed to download bundletool from $url"
+          exit 1
+        fi
+
+        apks="$work/app.apks"
+        rm -f "$apks"
+        java -jar "$jar" build-apks \
+          --bundle="$AAB_PATH" \
+          --output="$apks" \
+          --mode=universal \
+          --ks="$KEYSTORE_PATH" \
+          --ks-pass="pass:$KEYSTORE_PASSWORD" \
+          --ks-key-alias="$KEY_ALIAS" \
+          --key-pass="pass:$KEY_PASSWORD"
+
+        mkdir -p "$(dirname "$OUTPUT_PATH")"
+        # `build-apks --mode=universal` writes a .apks zip containing exactly
+        # one entry, universal.apk, at its root — already signed with the
+        # keystore we just passed it, no separate apksigner step needed.
+        unzip -p "$apks" universal.apk > "$OUTPUT_PATH"
+        if [ ! -s "$OUTPUT_PATH" ]; then
+          echo "::error::bundletool produced no universal.apk inside $apks"
+          exit 1
+        fi
+
+        echo "apk-path=$OUTPUT_PATH" >> "$GITHUB_OUTPUT"
+        echo "Universal APK written to $OUTPUT_PATH ($(du -h "$OUTPUT_PATH" | cut -f1))"
 
 
 ######################################################
@@ -784,7 +897,13 @@ jobs:
           expected-sha1: ${{ secrets.KEYSTORE_SHA1 }}
           expected-owner: ${{ secrets.KEYSTORE_OWNER }}
 
-      - name: Build signed Release APK
+      # Only the AAB, not assembleRelease's plain base-module APK: AGP does
+      # not fold dynamic-feature modules (:feature_findmyphone) into
+      # assembleRelease's output, only bundletool (reading dist:fusing) does
+      # — see .github/actions/build-universal-apk's header comment. Building
+      # assembleRelease here used to silently ship the GitHub-Release APK
+      # with zero find-my-phone code.
+      - name: Build signed Release Bundle
         if: github.event_name == 'workflow_dispatch'
         env:
           QUICLOC_KEYSTORE_FILE: ${{ steps.keystore.outputs.keystore-path }}
@@ -792,9 +911,9 @@ jobs:
           QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           QUICLOC_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           QUICLOC_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          # Fail the build rather than emit app-release-unsigned.apk.
+          # Fail the build rather than emit app-release-unsigned.aab.
           QUICLOC_REQUIRE_SIGNING: 'true'
-        run: ./gradlew assembleRelease
+        run: ./gradlew bundleRelease
 
       # ---- CI path (push / pull_request): DEBUG APK artifact only ----------
       - name: Build Debug APK
@@ -806,26 +925,39 @@ jobs:
       - name: Get App Version
         run: echo "VERSION_NAME=$(./gradlew -q :app:printVersionName)" >> "$GITHUB_ENV"
 
+      # Fuse :feature_findmyphone into a single installable APK via
+      # bundletool's universal mode, so sideload users get the same feature
+      # set a Play install would download on demand.
+      - name: Build fused universal APK
+        if: github.event_name == 'workflow_dispatch'
+        id: universal-apk
+        uses: ./.github/actions/build-universal-apk
+        with:
+          aab-path: app/build/outputs/bundle/release/app-release.aab
+          keystore-path: ${{ steps.keystore.outputs.keystore-path }}
+          keystore-password: ${{ secrets.KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.KEY_ALIAS }}
+          key-password: ${{ secrets.KEY_PASSWORD }}
+          output-path: app/build/outputs/QuicLoc-v${{ env.VERSION_NAME }}.apk
+
       - name: Locate & rename APK
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Signing is mandatory on this path, so an *-unsigned.apk here means
-            # something went wrong upstream — refuse it rather than ship it.
-            SRC=$(find app/build/outputs/apk/release -name "*.apk" ! -name "*-unsigned.apk" | head -n1)
-            if [ -z "$SRC" ]; then
-              echo "::error::No signed release APK was produced. Only these exist:"
-              find app/build/outputs/apk/release -name "*.apk" || true
+            SRC="${{ steps.universal-apk.outputs.apk-path }}"
+            if [ -z "$SRC" ] || [ ! -f "$SRC" ]; then
+              echo "::error::No fused universal APK was produced at '$SRC'."
               exit 1
             fi
+            echo "APK_PATH=$SRC" >> "$GITHUB_ENV"
           else
             SRC=app/build/outputs/apk/debug/app-debug.apk
+            if [ ! -f "$SRC" ]; then
+              echo "::error::No APK found to publish ($SRC)"; exit 1
+            fi
+            OUT="app/build/outputs/QuicLoc-v${VERSION_NAME}.apk"
+            mv "$SRC" "$OUT"
+            echo "APK_PATH=$OUT" >> "$GITHUB_ENV"
           fi
-          if [ -z "$SRC" ] || [ ! -f "$SRC" ]; then
-            echo "::error::No APK found to publish ($SRC)"; exit 1
-          fi
-          OUT="app/build/outputs/QuicLoc-v${VERSION_NAME}.apk"
-          mv "$SRC" "$OUT"
-          echo "APK_PATH=$OUT" >> "$GITHUB_ENV"
 
       - name: Verify the APK is signed by the expected key
         if: github.event_name == 'workflow_dispatch'
@@ -974,7 +1106,7 @@ jobs:
           expected-sha1: ${{ secrets.KEYSTORE_SHA1 }}
           expected-owner: ${{ secrets.KEYSTORE_OWNER }}
 
-      - name: Build signed Release APK + Bundle
+      - name: Build signed Release Bundle
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         env:
           QUICLOC_KEYSTORE_FILE: ${{ steps.keystore.outputs.keystore-path }}
@@ -983,31 +1115,50 @@ jobs:
           QUICLOC_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           QUICLOC_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           QUICLOC_REQUIRE_SIGNING: 'true'
-        run: ./gradlew assembleRelease bundleRelease
+        # Only the AAB, not assembleRelease's plain base-module APK: that APK
+        # never contained :feature_findmyphone (AGP doesn't fold dynamic
+        # feature modules into `assembleRelease`, only bundletool reads
+        # dist:fusing — see the build-universal-apk action below), so it was
+        # the wrong artifact to publish as the sideload download.
+        run: ./gradlew bundleRelease
 
-      - name: Collect signed artifacts
+      - name: Collect signed AAB
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        id: collect-aab
         run: |
           set -euo pipefail
           mkdir -p signed
-          apk=$(find app/build/outputs/apk/release -name "*.apk" ! -name "*-unsigned.apk" | head -n1)
           aab=$(find app/build/outputs/bundle/release -name "*.aab" | head -n1)
-          if [ -z "$apk" ] || [ -z "$aab" ]; then
-            echo "::error::Expected a signed APK and an AAB. Found apk='$apk' aab='$aab'."
-            find app/build/outputs -name "*.apk" -o -name "*.aab" || true
+          if [ -z "$aab" ]; then
+            echo "::error::Expected a signed AAB. Found none."
+            find app/build/outputs -name "*.aab" || true
             exit 1
           fi
           version=$(./gradlew -q :app:printVersionName)
-          cp "$apk" "signed/QuicLoc-v${version}.apk"
           cp "$aab" "signed/QuicLoc-v${version}.aab"
-          echo "SIGNED_APK=signed/QuicLoc-v${version}.apk" >> "$GITHUB_ENV"
           echo "SIGNED_AAB=signed/QuicLoc-v${version}.aab" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$version" >> "$GITHUB_ENV"
+
+      # The sideload APK attached to the GitHub Release must actually contain
+      # find-my-phone (fused via dist:fusing), which assembleRelease alone
+      # cannot produce — see the action's own header comment.
+      - name: Build fused universal APK (sideload download)
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        id: universal-apk
+        uses: ./.github/actions/build-universal-apk
+        with:
+          aab-path: ${{ env.SIGNED_AAB }}
+          keystore-path: ${{ steps.keystore.outputs.keystore-path }}
+          keystore-password: ${{ secrets.KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.KEY_ALIAS }}
+          key-password: ${{ secrets.KEY_PASSWORD }}
+          output-path: signed/QuicLoc-v${{ env.VERSION_NAME }}.apk
 
       - name: Verify APK signature
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: ./.github/actions/verify-android-signature
         with:
-          artifact: ${{ env.SIGNED_APK }}
+          artifact: ${{ steps.universal-apk.outputs.apk-path }}
           expected-sha256: ${{ steps.keystore.outputs.sha256 }}
 
       - name: Verify bundle signature
@@ -1989,15 +2140,8 @@ android {
 
     // The ENTIRE find-my-phone / lockdown feature (tracking service, lock
     // screen, Device Admin receiver, intruder camera) lives in the
-    // :feature_findmyphone dynamic feature module. It is currently DISABLED:
-    // the module is kept in the repo but excluded from the build (here and in
-    // settings.gradle.kts) so its manifest — and the CAMERA,
-    // USE_FULL_SCREEN_INTENT, and BIND_DEVICE_ADMIN permissions it declares —
-    // is NOT merged into the shipped app and those permissions need not be
-    // declared to Google Play. To re-enable: uncomment the line below, re-add
-    // include(":feature_findmyphone") in settings.gradle.kts, and flip
-    // FindMyPhone.ENABLED to true.
-    // dynamicFeatures += setOf(":feature_findmyphone")
+    // :feature_findmyphone dynamic feature module — see docs/LOCKDOWN.md.
+    dynamicFeatures += setOf(":feature_findmyphone")
 
     signingConfigs {
         if (hasReleaseSigning) {
@@ -2082,6 +2226,24 @@ dependencies {
     // not the base.
     implementation(libs.play.feature.delivery)
 
+    // Pinned to match :feature_findmyphone's CameraX-driven transitive
+    // version. Without this, the base resolves an older androidx.tracing
+    // (pulled in transitively at a lower version) than the module does, and
+    // R8 sees two different-version copies of androidx/tracing/R at
+    // :app:minifyReleaseWithR8 ("Type ... is defined multiple times") because
+    // AGP only dedupes a feature module's copy of a library against the
+    // base's when both resolve to the identical version.
+    implementation(libs.androidx.tracing)
+
+    // Forces the same empty-shim resolution :feature_findmyphone gets for
+    // free from its full `guava` dependency (CameraX's ListenableFuture
+    // support). Without this, the base transitively resolves the real,
+    // class-carrying `com.google.guava:listenablefuture:1.0` artifact while
+    // the module resolves the empty "9999.0-empty-to-avoid-conflict"
+    // artifact real Guava supersedes it with — two different-content
+    // ListenableFuture.class copies, another R8 "defined multiple times".
+    implementation(libs.guava.listenablefuture)
+
     // Material Icons
     implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.compose.material.icons.extended)
@@ -2116,11 +2278,12 @@ dependencies {
 # FILE: app/proguard-rules.pro
 ######################################################
 
-# The lockdown/klinker keep rules for :feature_findmyphone were removed here
-# because that module is currently excluded from the build (see the comment
-# in settings.gradle.kts). Restore them alongside re-enabling the module:
-#   -keep class com.hereliesaz.quicloc.lockdown.** { *; }
-#   -keep class com.klinker.android.send_message.** { *; }
+# :feature_findmyphone's components are addressed by ComponentName string
+# from the base (FindMyPhone.kt), not a compile-time class reference, so R8
+# has no call site to infer keep rules from — same reasoning for klinker's
+# android-smsmms, which drives MMS sending via reflection internally.
+-keep class com.hereliesaz.quicloc.lockdown.** { *; }
+-keep class com.klinker.android.send_message.** { *; }
 -keep class com.google.crypto.tink.** { *; }
 -keep class com.hereliesaz.quicloc.** extends android.content.BroadcastReceiver { *; }
 -keep class com.hereliesaz.quicloc.** extends android.app.Service { *; }
@@ -2955,7 +3118,9 @@ import android.content.Intent
  * persisted [AppSettings] state. Also re-registers Loc Notice's geofences,
  * since Android drops all `GeofencingClient` registrations on reboot —
  * [GeofenceRegistrar.sync] is a cheap no-op if Loc Notice is off or has no
- * locations, so no extra gating is needed here.
+ * locations, so no extra gating is needed here. Also resumes an in-progress
+ * find-my-phone tracking session — see [FindMyPhone.resumeTrackingAfterBoot]
+ * for why that needs its own explicit boot-time recovery.
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -2965,6 +3130,7 @@ class BootReceiver : BroadcastReceiver() {
         ) return
         ReminderNotification.refresh(context)
         GeofenceRegistrar.sync(context)
+        FindMyPhone.resumeTrackingAfterBoot(context)
     }
 }
 
@@ -3324,9 +3490,49 @@ object FindMyPhone {
     const val EXTRA_SENDER = "sender"
     const val EXTRA_SOURCE = "source"
 
-    /** Whether the find-my-phone split is installed and its code is available. */
+    /**
+     * Action TrackingService treats as "resume an already-persisted tracking
+     * session" — used by both the module's own TrackingAlarmReceiver (each
+     * periodic tick) and [resumeTrackingAfterBoot] here in the base. Defined
+     * here for the same reason as [EXTRA_SENDER]/[EXTRA_SOURCE].
+     */
+    const val ACTION_TICK = "com.hereliesaz.quicloc.TICK_TRACKING"
+
+    private const val TRACKING_STATE_PREFS = "quicloc_tracking_state"
+
+    /**
+     * Whether the find-my-phone module's code is actually present and
+     * loadable right now.
+     *
+     * Resolves [SERVICE_CLASS] through [android.content.pm.PackageManager]
+     * rather than asking `SplitInstallManager.installedModules` alone:
+     * `installedModules` is Play Feature Delivery bookkeeping keyed by split
+     * name, and a sideload build has no splits at all — the module is fused
+     * into one monolithic APK by `dist:fusing` (see
+     * `.github/actions/build-universal-apk`). On a fused install
+     * `installedModules` would report the module absent even though its
+     * classes and manifest entries are right there, which used to make this
+     * whole feature permanently unreachable for every sideload user. Package
+     * Manager reports the real, current merged-manifest truth for both
+     * shapes of install (fused sideload APK and Play on-demand split), which
+     * is exactly the "can I actually start `TrackingService` right now?"
+     * question every caller here is really asking.
+     */
     fun isInstalled(context: Context): Boolean {
         if (!ENABLED) return false
+        val resolvable = try {
+            context.packageManager.getServiceInfo(ComponentName(PKG, SERVICE_CLASS), 0)
+            true
+        } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
+            false
+        } catch (t: Throwable) {
+            false
+        }
+        if (resolvable) return true
+        // Fallback for the Play on-demand path: covers the narrow window
+        // right after a SplitInstall download completes, in case the merged
+        // manifest PackageManager just queried hasn't caught up to it yet on
+        // this exact frame.
         return try {
             SplitInstallManagerFactory.create(context.applicationContext)
                 .installedModules.contains(MODULE)
@@ -3394,12 +3600,14 @@ object FindMyPhone {
      */
     fun requestInstall(context: Context, onInstalled: () -> Unit = {}) {
         if (!ENABLED) return
+        if (isInstalled(context)) {
+            // Covers the fused sideload build (no Play Feature Delivery
+            // involved at all) as well as an already-downloaded Play split.
+            onInstalled()
+            return
+        }
         try {
             val manager = SplitInstallManagerFactory.create(context.applicationContext)
-            if (manager.installedModules.contains(MODULE)) {
-                onInstalled()
-                return
-            }
             val listener = object : SplitInstallStateUpdatedListener {
                 override fun onStateUpdate(state: SplitInstallSessionState) {
                     when (state.status()) {
@@ -3425,6 +3633,61 @@ object FindMyPhone {
             }
         } catch (e: Throwable) {
             Log.w(TAG, "Could not request find-my-phone module install", e)
+        }
+    }
+
+    /**
+     * Whether `TrackingService` believed it was actively tracking the last
+     * time its state was persisted. Reads `quicloc_tracking_state` directly
+     * — the same plain-`SharedPreferences` file/key `TrackingService` itself
+     * writes — rather than through a module class reference, for the same
+     * reason every other entry point here addresses the module by name (see
+     * the class doc). Used by [resumeTrackingAfterBoot].
+     *
+     * `internal` rather than `private` only so it's directly unit-testable
+     * from this module's own test source set — Robolectric currently can't
+     * bootstrap `:feature_findmyphone`'s own test environment (its
+     * dynamic-feature resource package ID hits an unrelated Robolectric
+     * limitation), so this bridge logic's coverage lives here in the base
+     * instead. `:feature_findmyphone` has no reason to call this directly
+     * and shouldn't.
+     */
+    internal fun wasTrackingActive(context: Context): Boolean {
+        if (!ENABLED) return false
+        return context.getSharedPreferences(TRACKING_STATE_PREFS, Context.MODE_PRIVATE)
+            .getString("sender", null) != null
+    }
+
+    /**
+     * Resumes tracking after a reboot, if [wasTrackingActive]; no-op
+     * otherwise. `TrackingService` is `START_STICKY`, which the OS uses to
+     * restart a *killed process* — it does nothing across an actual reboot,
+     * so without this call a thief power-cycling a tracked device (the
+     * single most obvious thing to try) would end protection permanently,
+     * with no way to re-arm since the passphrase that started this session
+     * was already consumed as single-use.
+     *
+     * Reads plain `SharedPreferences`, which live in credential-encrypted
+     * storage: this can only resume tracking once the device has been
+     * unlocked at least once since the reboot (i.e. from [BootReceiver]'s
+     * normal `BOOT_COMPLETED`, not before). That is not full Direct Boot
+     * support — genuinely resuming *before* any post-reboot unlock would
+     * additionally require `WhitelistManager`'s PIN/passphrase (Keystore-backed
+     * `EncryptedSharedPreferences`) to be readable pre-unlock too, which
+     * they are not, and re-architecting that trades away real security
+     * elsewhere for a narrower theft window. Documented here rather than
+     * silently assumed.
+     */
+    fun resumeTrackingAfterBoot(context: Context) {
+        if (!ENABLED || !isInstalled(context) || !wasTrackingActive(context)) return
+        try {
+            val intent = Intent().apply {
+                component = ComponentName(PKG, SERVICE_CLASS)
+                action = ACTION_TICK
+            }
+            context.startForegroundService(intent)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Could not resume tracking after boot", t)
         }
     }
 }
@@ -6693,12 +6956,29 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     ).show()
                                 },
                                 onClearAppPin = {
+                                    // The find-my-phone passphrase trigger can only ever
+                                    // be stopped by this same PIN (TrackingLockActivity
+                                    // checks it, not a separate one). Removing the PIN
+                                    // while a passphrase is still armed would leave a
+                                    // trigger that locks the device and starts panic-mode
+                                    // photography with literally no PIN that can ever
+                                    // match — the owner locks themselves out of their own
+                                    // safety feature. Disarm it in the same action instead
+                                    // of leaving that trap live.
+                                    val wasArmed = currentPassphrase.isNotBlank()
                                     whitelistManager.setPin(null)
                                     currentPin = ""
+                                    if (wasArmed) {
+                                        whitelistManager.setPassphrase(null)
+                                        currentPassphrase = ""
+                                    }
                                     refreshBackupSnapshot()
                                     Toast.makeText(
                                         this@MainActivity,
-                                        "PIN removed. The encrypted backup has been deleted.",
+                                        if (wasArmed)
+                                            "PIN removed. The encrypted backup has been deleted, and find-my-phone has been turned off (it had no other way to stop tracking)."
+                                        else
+                                            "PIN removed. The encrypted backup has been deleted.",
                                         Toast.LENGTH_LONG
                                     ).show()
                                 },
@@ -8055,8 +8335,12 @@ fun QuicLocScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
-                    onClick = { onSavePassphrase(passphraseInput, pinInput) },
-                    enabled = passphraseInput.length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
+                    // Validate (and save) the trimmed form — WhitelistManager
+                    // trims on store too, but checking the untrimmed length
+                    // here would let this button read "enabled" for a value
+                    // that actually saves as too-short or empty.
+                    onClick = { onSavePassphrase(passphraseInput.trim(), pinInput) },
+                    enabled = passphraseInput.trim().length in 10..150 && pinInput.length == 6 && pinInput.all { it.isDigit() },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Save passphrase & PIN")
@@ -8249,6 +8533,7 @@ fun QuicLocScreen(
                     pinSet = pinSet,
                     onSetAppPin = onSetAppPin,
                     onClearAppPin = onClearAppPin,
+                    findMyPhoneArmed = FindMyPhone.ENABLED && currentPassphrase.isNotBlank(),
                 )
             }
         }
@@ -8861,6 +9146,7 @@ private fun AppPinCard(
     pinSet: Boolean,
     onSetAppPin: (String) -> Unit,
     onClearAppPin: () -> Unit,
+    findMyPhoneArmed: Boolean = false,
 ) {
     var editing by remember(pinSet) { mutableStateOf(!pinSet) }
     var pin by remember { mutableStateOf("") }
@@ -8964,7 +9250,13 @@ private fun AppPinCard(
                 Text(
                     text = "You'll no longer be able to unlock QuicLoc with a PIN, and your " +
                         "encrypted backup is deleted — the PIN is its only key. Your trusted " +
-                        "contacts and settings on this phone are untouched.",
+                        "contacts and settings on this phone are untouched." +
+                        (if (findMyPhoneArmed)
+                            "\n\nFind my phone is currently armed, and this PIN is the only " +
+                                "thing that can stop it once triggered — removing it here also " +
+                                "turns find-my-phone off, so it can never lock the device with " +
+                                "no PIN able to stop it."
+                        else ""),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
@@ -9837,8 +10129,6 @@ class NotificationListener : NotificationListenerService() {
             recentlyProcessed.entries.removeAll { now - it.value > DEDUPE_WINDOW_MS }
         }
 
-        Log.d(TAG, "msg from $sender via $pkg: '$body'")
-
         // The entire find-my-phone feature (and thus the passphrase) lives in
         // the on-demand :feature_findmyphone module, which isn't shipped while
         // FindMyPhone.ENABLED is false — skip this check entirely rather than
@@ -9849,17 +10139,45 @@ class NotificationListener : NotificationListenerService() {
             (body == "$TRIGGER_PLAIN ${passphrase.lowercase()}" ||
              body == "$TRIGGER_PREFIXED ${passphrase.lowercase()}")
 
+        // Never log the raw body of a passphrase match — it's the secret
+        // itself, and Log.d output ends up in logcat/bugreports.
+        Log.d(TAG, if (isPassphraseTrigger) "msg from $sender via $pkg: '[passphrase redacted]'" else "msg from $sender via $pkg: '$body'")
+
         if (isPassphraseTrigger) {
-            Log.d(TAG, "Passphrase trigger from '$sender' via $pkg")
-            recordDiag(pkg, sender, body, DiagOutcome.PASSPHRASE_TRIGGER,
-                "Find-my-phone passphrase matched — starting tracking",
-                triggerMatched = true, extractionPath = extraction.path)
-            // Clear even if the module isn't installed — the passphrase was
-            // already exposed in transit.
-            whitelist.clearPassphraseSync()
+            // TrackingService replies over SMS, so it needs an actual phone
+            // number — a notification's "sender" is often just a chat-app
+            // display name (no digits) with no number this app can resolve.
+            // Starting tracking anyway would lock the device and burn the
+            // passphrase for a reply that silently goes nowhere.
+            if (!sender.any { it.isDigit() }) {
+                Log.w(TAG, "Passphrase trigger from '$sender' via $pkg — sender has no resolvable phone number, ignoring")
+                recordDiag(pkg, sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
+                    "Find-my-phone passphrase matched, but the sender \"$sender\" is a name with no " +
+                        "phone number this app can reply to — not starting tracking. Trigger from " +
+                        "SMS instead, or from an app that surfaces the sender's number.",
+                    triggerMatched = true, extractionPath = extraction.path)
+                return
+            }
             // Tracking lives in the on-demand :feature_findmyphone module;
-            // no-op (returns false) if it was never downloaded.
-            FindMyPhone.trigger(applicationContext, sender = sender, source = pkg)
+            // returns false if it was never downloaded (or the download is
+            // still pending). Only burn the single-use passphrase once
+            // tracking has actually started — see SmsReceiver's identical
+            // reasoning for why burning it on a no-op trigger is a pure loss.
+            val started = FindMyPhone.trigger(applicationContext, sender = sender, source = pkg)
+            if (started) {
+                Log.d(TAG, "Passphrase trigger from '$sender' via $pkg")
+                recordDiag(pkg, sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
+                    "Find-my-phone passphrase matched — starting tracking",
+                    triggerMatched = true, extractionPath = extraction.path)
+                whitelist.clearPassphraseSync()
+            } else {
+                Log.w(TAG, "Passphrase trigger from '$sender' via $pkg — module not installed yet, requesting install")
+                recordDiag(pkg, sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
+                    "Find-my-phone passphrase matched, but the feature module isn't installed yet — " +
+                        "requesting install now. Passphrase left armed so the same message can retry.",
+                    triggerMatched = true, extractionPath = extraction.path)
+                FindMyPhone.requestInstall(applicationContext)
+            }
             return
         }
 
@@ -10952,25 +11270,51 @@ class SmsReceiver : BroadcastReceiver() {
 
         for ((sender, bodyBuilder) in messagesBySender) {
             val body = bodyBuilder.toString().trim().lowercase()
-            Log.d(TAG, "SMS from $sender: '$body'")
             val looksLikeTrigger = body.contains("loc")
 
-            val passphrase = whitelistManager.getPassphrase()
-            val isPassphraseTrigger = passphrase != null && passphrase.isNotEmpty() &&
+            // The entire find-my-phone feature (and thus the passphrase)
+            // lives in the on-demand :feature_findmyphone module — skip this
+            // check entirely rather than decrypting/consuming a passphrase
+            // for a feature that isn't shipped in this build (matches
+            // NotificationListener's identical guard).
+            val passphrase = if (FindMyPhone.ENABLED) whitelistManager.getPassphrase() else null
+            val isPassphraseTrigger = !passphrase.isNullOrEmpty() &&
                 (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
 
+            // Never log the raw body of a passphrase match — it's the secret
+            // itself, and Log.d output ends up in logcat/bugreports. Every
+            // other body (trigger or not) is fine to log as before.
+            Log.d(TAG, if (isPassphraseTrigger) "SMS from $sender: '[passphrase redacted]'" else "SMS from $sender: '$body'")
+
             if (isPassphraseTrigger) {
-                Log.d(TAG, "Passphrase trigger from $sender — starting find-my-phone")
-                diag.record(buildEvent(sender, body, DiagOutcome.PASSPHRASE_TRIGGER,
-                    "Find-my-phone passphrase matched — starting tracking", triggerMatched = true))
-                // Commit synchronously so a crash between now and the next boot
-                // can't leave the single-use passphrase usable a second time.
-                // Clear even if the module isn't installed — the passphrase was
-                // already exposed in transit.
-                whitelistManager.clearPassphraseSync()
-                // Tracking lives in the on-demand :feature_findmyphone module;
-                // no-op (returns false) if it was never downloaded.
-                FindMyPhone.trigger(context, sender, "SMS")
+                // Tracking lives in the on-demand :feature_findmyphone
+                // module; returns false if it was never downloaded (or the
+                // download is still pending). Only burn the single-use
+                // passphrase once tracking has actually started — a phone
+                // that hasn't finished setup, or where the module install
+                // failed, would otherwise permanently disarm itself for no
+                // protection gained: nothing was intercepted-and-replayed to
+                // guard against if the trigger never took effect.
+                val started = FindMyPhone.trigger(context, sender, "SMS")
+                if (started) {
+                    Log.d(TAG, "Passphrase trigger from $sender — starting find-my-phone")
+                    diag.record(buildEvent(sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
+                        "Find-my-phone passphrase matched — starting tracking", triggerMatched = true))
+                    // Commit synchronously so a crash between now and the next
+                    // boot can't leave the single-use passphrase usable a
+                    // second time now that tracking has genuinely begun.
+                    whitelistManager.clearPassphraseSync()
+                } else {
+                    Log.w(TAG, "Passphrase trigger from $sender — module not installed yet, requesting install")
+                    diag.record(buildEvent(sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
+                        "Find-my-phone passphrase matched, but the feature module isn't installed yet — " +
+                            "requesting install now. Passphrase left armed so the same text can retry.",
+                        triggerMatched = true))
+                    // Best-effort: get the module downloaded so a retry (or a
+                    // resend of the same "loc <passphrase>" text) can succeed
+                    // without the user having to redo setup from a stolen phone.
+                    FindMyPhone.requestInstall(context)
+                }
                 continue
             }
 
@@ -12040,8 +12384,19 @@ class WhitelistManager(context: Context) {
         return prefs.getString(KEY_PASSPHRASE, null)
     }
 
+    /**
+     * Trims before storing. The multi-line entry field this feeds makes a
+     * trailing/leading space or newline easy to add invisibly; every
+     * comparison against an incoming trigger message trims the message body
+     * (see [SmsReceiver]/[NotificationListener]) but never touches the
+     * stored passphrase, so an untrimmed value here would silently never
+     * match again — "armed" in the UI, permanently inert in practice. A
+     * whitespace-only passphrase is stored as unset rather than as an
+     * unmatchable non-null value.
+     */
     fun setPassphrase(passphrase: String?) {
-        prefs.edit().putString(KEY_PASSPHRASE, passphrase).apply()
+        val normalized = passphrase?.trim()?.takeIf { it.isNotEmpty() }
+        prefs.edit().putString(KEY_PASSPHRASE, normalized).apply()
         BackupVault.snapshotAsync(appContext)
     }
 
@@ -13759,6 +14114,77 @@ class DiagnosticLogManagerTest {
 
 
 ######################################################
+# FILE: app/src/test/java/com/hereliesaz/quicloc/FindMyPhoneTest.kt
+######################################################
+
+package com.hereliesaz.quicloc
+
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertFalse
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class FindMyPhoneTest {
+
+    private lateinit var context: Context
+
+    @Before
+    fun setup() {
+        context = ApplicationProvider.getApplicationContext()
+        context.getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
+            .edit().clear().commit()
+    }
+
+    // These pin FindMyPhone.ENABLED's current shipped value (false): every
+    // entry point must degrade to a safe no-op/false, never throw, and never
+    // touch the module it can't reference. When ENABLED flips to true this
+    // test starts asserting the opposite half of the contract and needs a
+    // matching update (see TutorialsTest for the established both-branches
+    // pattern this codebase uses for that flag).
+    @Test
+    fun `every entry point is a safe no-op while the feature is disabled`() {
+        assertFalse(FindMyPhone.isInstalled(context))
+        assertFalse(FindMyPhone.isAdminActive(context))
+        assertFalse(FindMyPhone.trigger(context, "+15551234567", "SMS"))
+        assertFalse(FindMyPhone.wasTrackingActive(context))
+        // No exception, no crash, nothing started.
+        FindMyPhone.requestInstall(context)
+        FindMyPhone.resumeTrackingAfterBoot(context)
+    }
+
+    @Test
+    fun `wasTrackingActive stays false even with a persisted session, while disabled`() {
+        // A persisted "sender" in quicloc_tracking_state would mean a real
+        // tracking session while enabled, but the ENABLED gate must still
+        // win here -- a disabled build must never act on state a previous
+        // enabled build (or a restored backup) might have left behind.
+        context.getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
+            .edit()
+            .putString("sender", "+15551234567")
+            .commit()
+
+        assertFalse(FindMyPhone.wasTrackingActive(context))
+    }
+
+    @Test
+    fun `resumeTrackingAfterBoot does not start anything without a persisted session`() {
+        // isInstalled() also returns false while disabled, so this is
+        // already covered by the ENABLED gate, but pin the intermediate
+        // wasTrackingActive() contract too: an empty/absent tracking-state
+        // file must never be read as "was tracking".
+        assertFalse(FindMyPhone.wasTrackingActive(context))
+        FindMyPhone.resumeTrackingAfterBoot(context)
+    }
+}
+
+
+######################################################
 # FILE: app/src/test/java/com/hereliesaz/quicloc/GeofenceEntryTest.kt
 ######################################################
 
@@ -15392,6 +15818,24 @@ class TutorialsTest {
                 "should not mention Full-Screen Intent while find-my-phone is off",
                 !body.contains("Full-Screen Intent:")
             )
+        } else {
+            // The other half of the same contract: once the feature ships,
+            // these sections must actually be there, not just absent while
+            // it's off. Without this branch the assertions above are
+            // unreachable in a build with the feature enabled and this test
+            // would pass even if the whole conditional block went missing.
+            assertTrue(
+                "should mention Camera permission while find-my-phone is on",
+                body.contains("Camera:")
+            )
+            assertTrue(
+                "should mention Device Admin while find-my-phone is on",
+                body.contains("Bind Device Admin")
+            )
+            assertTrue(
+                "should mention Full-Screen Intent while find-my-phone is on",
+                body.contains("Full-Screen Intent:")
+            )
         }
         // Regardless of the flag, this permission is genuinely unused.
         assertTrue(
@@ -15933,15 +16377,16 @@ plugins {
 | `NotificationListener` | [NotificationListener.kt](../app/src/main/java/com/hereliesaz/quicloc/NotificationListener.kt) | `NotificationListenerService` for chat apps. Uses `Notification.MessagingStyle` to pull per-message sender + body. Has a 60 s dedupe window because messaging apps re-post notifications constantly. |
 | `QuicLocWidgetProvider` | [QuicLocWidgetProvider.kt](../app/src/main/java/com/hereliesaz/quicloc/QuicLocWidgetProvider.kt) | Home-screen widget. Each tap fires `LocationReplyService.ACTION_WIDGET_TAP`; the service counts taps within 400 ms. |
 | `ToggleReceiver` | [ToggleReceiver.kt](../app/src/main/java/com/hereliesaz/quicloc/ToggleReceiver.kt) | The "Enable/Disable" action button on the reminder notification. |
-| `BootReceiver` | [BootReceiver.kt](../app/src/main/java/com/hereliesaz/quicloc/BootReceiver.kt) | Re-posts the reminder notification after reboot, and re-registers Loc Notice's geofences (they don't survive reboot). |
+| `BootReceiver` | [BootReceiver.kt](../app/src/main/java/com/hereliesaz/quicloc/BootReceiver.kt) | Re-posts the reminder notification after reboot, re-registers Loc Notice's geofences (they don't survive reboot), and calls `FindMyPhone.resumeTrackingAfterBoot` to resume an in-progress find-my-phone tracking session (neither `START_STICKY` nor the `TrackingAlarmReceiver` alarm survives an actual reboot — see [LOCKDOWN.md](LOCKDOWN.md#service-persistence)). |
 | `GeofenceBroadcastReceiver` | [GeofenceBroadcastReceiver.kt](../app/src/main/java/com/hereliesaz/quicloc/GeofenceBroadcastReceiver.kt) | Fires on `ACTION_GEOFENCE_EVENT` when a Loc Notice location is entered/exited. Not request-driven — see [LOC-NOTICE-FLOW.md](LOC-NOTICE-FLOW.md). |
+| `TrackingAlarmReceiver` | [TrackingAlarmReceiver.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/TrackingAlarmReceiver.kt) | In the on-demand `:feature_findmyphone` module, `exported=false`. Fired by an `AlarmManager` wakeup alarm to drive each `TrackingService` tick (see below) — including while the device is asleep, which `Handler.postDelayed` cannot do. Also the recovery path when `TrackingService`'s *process* (not just the service instance) is killed: the next alarm still fires and restarts it. |
 
 ### Foreground services
 
 | Service | File | Type | When started |
 |---|---|---|---|
 | `LocationReplyService` | [LocationReplyService.kt](../app/src/main/java/com/hereliesaz/quicloc/LocationReplyService.kt) | `location` | Whitelisted contact sent the trigger word, or the user tapped the widget. One-shot: fetch → reply → `stopSelf`. |
-| `TrackingService` | [TrackingService.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/TrackingService.kt) | `location` | Passphrase fired. Lives in the on-demand `:feature_findmyphone` module; started from the base via `FindMyPhone.trigger` (`ComponentName`). Persistent: posts location every 5 min (1 min in panic mode), survives restart via `quicloc_tracking_state` prefs. |
+| `TrackingService` | [TrackingService.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/TrackingService.kt) | `location` | Passphrase fired. Lives in the on-demand `:feature_findmyphone` module; started from the base via `FindMyPhone.trigger` (`ComponentName`). Persistent: posts location every 5 min (1 min in panic mode), ticks driven by `AlarmManager` wakeup alarms via `TrackingAlarmReceiver` (not a `Handler`, which can't fire during CPU suspend), survives restart via `quicloc_tracking_state` prefs. `onStartCommand` splits the old combined "notify + lock" step into `claimForeground()` (idempotent, safe on every tick) and `engageLockdown()` (one-shot per session — launches `TrackingLockActivity` + `LockdownController.lockNow()`, never on a routine tick). |
 
 ### UI
 
@@ -15969,11 +16414,12 @@ plugins {
 | `Readiness` | [Readiness.kt](../app/src/main/java/com/hereliesaz/quicloc/Readiness.kt) | Pure Kotlin (no `android.*`): turns the live permission snapshot plus whitelist/own-number state into the ordered setup checklist. Shares its `PermissionStatus` input with the All Permissions table, so the two views can't disagree. Unit-tested without Robolectric. |
 | `LocationHelper` | [LocationHelper.kt](../app/src/main/java/com/hereliesaz/quicloc/LocationHelper.kt) | Four-stage location fetch (current GPS → cached → forced GPS, racing a network/cell fallback once GPS is slow) with a single 60 s deadline. Also has the SMS-send and notification-reply primitives. |
 | `BiometricHelper` | [BiometricHelper-1.kt](../app/src/main/java/com/hereliesaz/quicloc/BiometricHelper-1.kt) | Wraps `BiometricPrompt`. Falls back to device credential if no biometric is enrolled. When the device has no lock screen at all, `MainActivity` gates on the QuicLoc PIN instead (and only lets the user straight through when neither exists). |
-| `FindMyPhone` | [FindMyPhone.kt](../app/src/main/java/com/hereliesaz/quicloc/FindMyPhone.kt) | The base→module bridge for `:feature_findmyphone`. Addresses the module by `ComponentName` string: `requestInstall` (SplitInstall download), `trigger` (start `TrackingService`), `isAdminActive`/`adminComponent` (Device Admin status without referencing the receiver class). Degrades gracefully when the split isn't installed. |
+| `FindMyPhone` | [FindMyPhone.kt](../app/src/main/java/com/hereliesaz/quicloc/FindMyPhone.kt) | The base→module bridge for `:feature_findmyphone`. Addresses the module by `ComponentName` string: `requestInstall` (SplitInstall download), `trigger` (start `TrackingService`), `isAdminActive`/`adminComponent` (Device Admin status without referencing the receiver class), `wasTrackingActive`/`resumeTrackingAfterBoot` (read `quicloc_tracking_state` directly and, if a session was active, restart `TrackingService` after a reboot — called from `BootReceiver`; not full Direct Boot support, see [LOCKDOWN.md](LOCKDOWN.md#service-persistence)). `isInstalled` resolves via `PackageManager.getServiceInfo` against the merged manifest — not solely `SplitInstallManager.installedModules`, which reports nothing for a fused/sideload install — so it correctly detects both a fused sideload APK and a Play on-demand split. Degrades gracefully when the module isn't installed. |
 | `LockdownController` | [LockdownController.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/LockdownController.kt) | In `:feature_findmyphone`. Single decision point: `DevicePolicyManager.lockNow()` if Device Admin is granted, otherwise let the caller fall back to `TrackingLockActivity`. |
 | `QuicLocDeviceAdmin` | [QuicLocDeviceAdmin.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/QuicLocDeviceAdmin.kt) | In `:feature_findmyphone`. `DeviceAdminReceiver` registered with `force-lock` policy only. |
+| `PinAttemptDecision` | [PinAttemptDecision.kt](../feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/PinAttemptDecision.kt) | In `:feature_findmyphone`. Pure function `TrackingLockActivity.onPinEntered` delegates to, in the same spirit as `Readiness` and `GeofenceStateStore.evaluate` above — no Android/Compose dependency, so the escalate-exactly-once-at-the-3rd-wrong-attempt rule is directly unit-testable. |
 | `ReminderNotification` | [ReminderNotification.kt](../app/src/main/java/com/hereliesaz/quicloc/ReminderNotification.kt) | Opt-in persistent notification with a one-tap toggle action. |
-| `Tutorials` | [Tutorial.kt](../app/src/main/java/com/hereliesaz/quicloc/Tutorial.kt) | Static list of 9 in-app tutorials. The "Why QuicLoc?" tutorial auto-shows on first launch. |
+| `Tutorials` | [Tutorial.kt](../app/src/main/java/com/hereliesaz/quicloc/Tutorial.kt) | Static list of 12 in-app tutorials (2 of them, find-my-phone and real-lockdown, only listed while `FindMyPhone.ENABLED`). The "Why QuicLoc?" tutorial auto-shows on first launch. |
 
 ## Data flow: the three trigger paths
 
@@ -16303,7 +16749,7 @@ Select: **No — SMS access is needed but it is not a messaging app**
 
 **Describe why your app needs SMS permissions:**
 
-> QuicLoc is a physical-safety / emergency-alert app. Its core mechanism is the home-screen widget: the user taps it to send a safety-check or emergency alert with their GPS location to their chosen emergency contacts — this requires no SMS access at all. RECEIVE_SMS and SEND_SMS extend that same safety mechanism by letting a subset of those emergency contacts (the ones the user has explicitly marked as allowed to ask, not merely added to the emergency list) also request the location themselves by texting a trigger word, which the app answers with the same GPS-coordinate reply the widget sends. The SMS Retriever API cannot be used because it requires messages to contain an 11-character app hash, which is impossible for natural texts sent by human contacts. Intents cannot be used as the device may be unattended. No data is stored.
+> QuicLoc is a physical-safety / emergency-alert app. Its core mechanism is the home-screen widget: the user taps it to send a safety-check or emergency alert with their GPS location to their chosen emergency contacts — this requires no SMS access at all. RECEIVE_SMS and SEND_SMS extend that same safety mechanism in two ways. First, they let a subset of those emergency contacts (the ones the user has explicitly marked as allowed to ask, not merely added to the emergency list) request the location themselves by texting a trigger word, which the app answers with the same GPS-coordinate reply the widget sends. Second, they power a separate opt-in anti-theft feature: the user sets a private passphrase in the app, and if an incoming text's body is exactly `loc <passphrase>` or `quicloc <passphrase>`, QuicLoc locks the device and begins texting its location back to whoever sent that message every few minutes. This second check is deliberately not limited to the emergency-contact list — the phone's owner may be locked out and texting from a stranger's borrowed phone, so the passphrase itself, not the sender's number, is the credential. The SMS Retriever API cannot be used because it requires messages to contain an 11-character app hash, which is impossible for natural texts sent by human contacts. Intents cannot be used as the device may be unattended. No data is stored.
 
 **Video instructions:**
 > **CRITICAL:** You MUST provide a video link here, even though the form says it's optional. Google Play will automatically reject the declaration without one.
@@ -16328,7 +16774,7 @@ Select: **Yes**
 
 **Describe what your app does with notification access and why it is necessary:**
 
-> QuicLoc uses NotificationListenerService to extend its location-sharing trigger detection to messaging apps beyond SMS (such as WhatsApp, Telegram, and Signal). The service reads only the notification title and body text to check whether they contain the trigger word "loc" or "quicloc" from a pre-approved contact. If the trigger is detected from an approved contact, the app replies via the notification's built-in inline reply action with the device's GPS location as a Google Maps link. No notification content is stored, logged, uploaded, or transmitted anywhere. The service does not read, record, or process notification content from any app or contact not on the user's encrypted whitelist.
+> QuicLoc uses NotificationListenerService for two purposes, both triggered only by an exact keyword match against a notification's title/body text. First, it extends the same location-sharing trigger detection SMS provides to messaging apps beyond SMS (such as WhatsApp, Telegram, and Signal): if the trigger word "loc" or "quicloc" is detected from a pre-approved contact, the app replies via the notification's built-in inline-reply action with the device's GPS location as a Google Maps link. Second, it powers the same opt-in anti-theft feature described in the SMS declaration: if the notification body is exactly `loc <passphrase>` or `quicloc <passphrase>` against the user's own configured passphrase, QuicLoc locks the device and starts sending its location back to whoever sent that message. Like the SMS path, this passphrase check is deliberately not limited to the whitelist — a locked-out owner may be texting from an app or contact QuicLoc has never seen before. (If the notification's sender can't be resolved to an actual phone number QuicLoc can reply to — some chat apps post only a display name — this second path does not fire; it logs why and does nothing further.) No notification content is stored, logged, uploaded, or transmitted anywhere except the location reply sent directly to whoever the app is responding to. Passphrase text itself is never written to logs or the in-app diagnostic history — it's redacted before either. The service does not otherwise read, record, or process notification content from any app or contact not on the user's encrypted whitelist.
 
 ---
 
@@ -16342,12 +16788,13 @@ Select: **Yes**
 
 **Describe why your app needs background location access:**
 
-> QuicLoc uses background location for two distinct, both user-visible and user-controlled, safety functions:
+> QuicLoc uses background location for three distinct, user-visible and user-controlled, safety functions:
 >
 > 1. **Request-reply (always available).** When a trigger message is received from a whitelisted contact, including when the screen is off and the app is not in the foreground, QuicLoc obtains the device's current GPS coordinates to send a location reply. Location is read only at the moment of replying to a request, never on a schedule.
 > 2. **Loc Notice (opt-in, off by default, separate switch from the rest of the app).** The user names a place, picks contacts, and chooses to be alerted on arrival and/or departure. While this feature is on, Android's Geofencing API (Google Play services) continuously monitors location in the background to detect boundary crossings for the user's saved places, and QuicLoc automatically texts the chosen contacts when one occurs. This is genuine ongoing background location use — the feature cannot work otherwise — and is fully disclosed to the user in-app before they turn it on, with its own on/off switch independent of every other function in the app.
+> 3. **Find-my-phone / anti-theft tracking (opt-in — inert until the user sets a passphrase in the app).** When a text or chat-app notification arrives whose body matches `loc <passphrase>` or `quicloc <passphrase>` against the user's own configured passphrase, QuicLoc locks the device and starts fetching its current GPS location every 5 minutes (every 1 minute after 3 incorrect PIN attempts on the lock screen, alongside a one-time photo sent to the same recipient — see the Camera declaration), texting each fix back to whoever sent the triggering message. **This check runs against every incoming trigger-shaped message, not just whitelisted contacts** — the design assumption is that the phone was stolen and its owner is texting from a number or app QuicLoc has never seen before, so the passphrase itself, not the sender's identity, is what QuicLoc trusts. Tracking continues — surviving the app being killed, and a device reboot once the device has been unlocked at least once afterward — until the correct QuicLoc PIN is entered on the device itself.
 >
-> In both cases, location is used only to (1) generate the Google Maps link or arrival/departure text sent to the relevant contact(s), and (2) evaluate geofence boundaries on-device via the Android platform's Geofencing API. It is never obtained for any other purpose, never stored beyond what's needed for the feature to function (Loc Notice's place definitions — name, coordinates, radius — are stored locally, encrypted, so the app knows what to monitor; no location *fix* itself is ever logged or stored), and never transmitted to QuicLoc's developer or any server QuicLoc operates — QuicLoc has none.
+> In all cases, location is used only to (1) generate the Google Maps link, arrival/departure text, or find-my-phone location update sent to the relevant recipient, and (2) evaluate geofence boundaries on-device via the Android platform's Geofencing API. It is never obtained for any other purpose, never stored beyond what's needed for the feature to function (Loc Notice's place definitions — name, coordinates, radius — are stored locally, encrypted, so the app knows what to monitor; no location *fix* itself is ever logged or stored), and never transmitted to QuicLoc's developer or any server QuicLoc operates — QuicLoc has none.
 
 **Provide a video demonstrating the background location use:**
 > Record a short screen recording showing, in this order:
@@ -16358,10 +16805,9 @@ Select: **Yes**
 > 5. The automatic GPS reply arriving on the sending device.
 > 6. Turning on Loc Notice, adding a place (walking through the address → Maps → paste-coordinates flow), picking a contact, and turning on "notify when I arrive."
 > 7. Leaving and re-entering that place's radius (or using a location-simulation tool) and showing the automatic arrival text arrive on the contact's device, with no request sent and the app not open.
+> 8. Setting a find-my-phone passphrase and PIN in the app, then sending `loc <passphrase>` from a phone number that is **not** on the whitelist, and showing the device lock and the location reply arriving on that same, non-whitelisted number.
 >
-> Upload this to YouTube (unlisted) and paste the link in the Play Console form. Steps 6-7 are not optional padding — a reviewer who only sees the request-reply demo has no way to verify the *other* declared use of background location, and a mismatch between the written declaration and the demo video is a documented rejection reason.
-
----
+> Upload this to YouTube (unlisted) and paste the link in the Play Console form. Steps 6-8 are not optional padding — a reviewer who only sees the request-reply demo has no way to verify the *other* declared uses of background location, and a mismatch between the written declaration and the demo video is a documented rejection reason.
 
 ---
 
@@ -16372,16 +16818,11 @@ Select: **Yes**
 
 **Describe why your app needs camera access:**
 
-> QuicLoc uses the device's front-facing camera solely for its Panic Mode security feature. If an unauthorized user attempts to bypass the device lock screen by entering an incorrect PIN 3 times, QuicLoc silently captures a photo of the intruder and sends it to the trusted contact who initiated the location request via MMS. The photo is captured locally, transmitted directly to the trusted contact's phone number, and is never uploaded, stored on external servers, or shared with the developer or third parties.
+> QuicLoc uses the device's front-facing camera solely for its find-my-phone Panic Mode security feature. If an unauthorized user attempts to bypass the device's lock screen by entering an incorrect QuicLoc PIN 3 times, the app captures one photo of whoever is holding the phone and sends it once, via MMS, to whoever sent the passphrase message that started tracking (see the Background Location declaration — this is not necessarily an existing contact, since a stolen phone's owner may be texting from an unfamiliar number). The camera is opened only at the moment of that single capture, not for the rest of the locked session, so the OS's camera-in-use indicator only appears right as the photo is taken. CAMERA is never requested from the lock screen itself — it is requested once, during find-my-phone setup, before the device is ever locked — so no camera-permission dialog is ever shown to whoever is holding a stolen phone; if it was never granted, panic mode still locks the device, just without a photo. The photo is captured locally, transmitted directly to the triggering phone number, and deleted from the device immediately once that MMS send succeeds (kept only if the send fails, so a failed attempt doesn't lose the only copy). It is never uploaded to a server, and never shared with the developer or any third party.
 
 ---
 
 ## 5. Full-Screen Intent Permission Declaration
-
-> **Currently N/A — the find-my-phone feature is disabled.** `USE_FULL_SCREEN_INTENT` ships only in
-> the `:feature_findmyphone` module, which is excluded from the build (`FindMyPhone.ENABLED == false`),
-> so the permission is not in the app and this declaration is **not required** for now. The text below
-> applies if/when the feature is re-enabled.
 
 **Location in Play Console:**
 > App content → Sensitive app permissions → Full-screen intent permission
@@ -16391,18 +16832,13 @@ Select: **Yes**
 
 **Describe why your app needs full-screen intent:**
 
-> QuicLoc declares USE_FULL_SCREEN_INTENT solely for its find-my-phone (single-use passphrase) safety feature. When the user has set a passphrase and a trigger message containing that passphrase is received, QuicLoc launches `TrackingLockActivity` as a full-screen intent so the lock screen is covered immediately, regardless of whether the device is asleep, in a call, or showing another full-screen activity. This is the only path that fires the full-screen intent, and it is gated on user setup (no passphrase = no full-screen intent ever). The activity displays a PIN prompt and, after 3 failed attempts, transitions the device into panic mode. No advertising, notification spam, or non-safety use case relies on this permission. Device Admin (`lockNow()`) is the preferred lockdown path; the full-screen intent is the fallback when Device Admin is not granted.
+> QuicLoc declares USE_FULL_SCREEN_INTENT solely for its find-my-phone (passphrase-triggered) safety feature. When the user has set a passphrase and PIN and a trigger message containing that passphrase is received, QuicLoc attempts to launch `TrackingLockActivity` directly, and separately sets a full-screen intent on the tracking-status notification pointing at the same activity. The full-screen intent is what reliably brings the PIN-gate lock screen up over the keyguard on Android versions where a background-started service is blocked from launching an Activity directly — it is wired into every tracking session's notification regardless of whether the device's real lock (`DevicePolicyManager.lockNow()`, via Device Admin, when granted) also succeeds, since the PIN-gate activity is what the owner ultimately stops tracking through either way. This is the only path that fires the full-screen intent, and it is entirely gated on user setup — no passphrase configured, no full-screen intent, ever. The activity displays a PIN prompt and, after 3 failed attempts, triggers panic mode (a single photo capture sent once via MMS, plus a shortened location-update interval). No advertising, notification spam, or non-safety use case relies on this permission.
 
 > **Module placement (maintainer note):** the `USE_FULL_SCREEN_INTENT` permission and `TrackingLockActivity` are declared in the on-demand `:feature_findmyphone` dynamic feature module, not the base. They are merged into the App Bundle's manifest (Play's restricted-permission review sees the full bundle including feature modules), and only reach the *base install's* effective manifest once the user sets up find-my-phone and the module is delivered (or via the fused sideload APK).
 
 ---
 
 ## 6. Device Admin Permission Declaration
-
-> **Currently N/A — the find-my-phone feature is disabled.** The `QuicLocDeviceAdmin` receiver and
-> `BIND_DEVICE_ADMIN` ship only in the `:feature_findmyphone` module, which is excluded from the build
-> (`FindMyPhone.ENABLED == false`), so the app uses no Device Admin API and this declaration is **not
-> required** for now. The text below applies if/when the feature is re-enabled.
 
 **Location in Play Console:**
 > App content → Restricted permissions → Device Administration API
@@ -16442,15 +16878,15 @@ Select: **Yes**
 Fill in the Data safety form as follows:
 
 ### Does your app collect or share any of the required user data types?
-**Yes — Location is shared (not collected).** Location is sent directly, device-to-device, to one or more of the user's own emergency contacts, in three ways: the user tapped the home-screen widget to send a safety-check or emergency alert; a contact the user has specifically allowed to ask requested it by texting the trigger word; or (if the user has turned on the opt-in Loc Notice feature) the user crossed the boundary of a place they configured, and QuicLoc automatically texted the contacts they chose for that place. This is the explicit function of the app. It is never collected, stored, or transmitted to the developer, an analytics service, or any other third party. See [`PLAY_PUBLISHING.md`](PLAY_PUBLISHING.md#data-safety--privacy).
+**Yes — Location (and, for find-my-phone's Panic Mode, a photo) is shared, not collected.** Location is sent directly, device-to-device, in four ways, all of them explicit app functions the user sets up: the user tapped the home-screen widget to send a safety-check or emergency alert to their own emergency contacts; a contact the user has specifically allowed to ask requested it by texting the trigger word; the user turned on the opt-in Loc Notice feature and crossed the boundary of a place they configured, so QuicLoc automatically texted the contacts they chose for that place; or the user set up the opt-in find-my-phone feature and a message matching their own configured passphrase arrived, so QuicLoc began texting the device's location back to whoever sent that message (see [`DECLARATIONS.md` §3](#3-background-location-declaration-location-permissions) — deliberately not restricted to existing contacts, since a stolen phone's owner may be texting from an unfamiliar number). Find-my-phone's Panic Mode additionally captures and MMS-sends one front-camera photo to that same recipient after 3 wrong unlock-PIN attempts. None of this is ever collected, stored, or transmitted to the developer, an analytics service, or any other third party. See [`PLAY_PUBLISHING.md`](PLAY_PUBLISHING.md#data-safety--privacy).
 
 ### Data types to declare:
-- **Location — Shared.** Purpose: App functionality. Required (it's the app's core function). For request-reply, obtained on demand, held in memory only long enough to send the reply, then discarded — never written to disk or a server. For the opt-in Loc Notice feature, monitored continuously in the background via the Android Geofencing API while that feature is on, so a boundary crossing can be detected and the configured contacts texted automatically — the *place definitions* (name, coordinates, radius, chosen contacts) are stored locally and encrypted on-device so the app knows what to watch, but individual location fixes are still never logged or stored, only evaluated against those boundaries in the moment.
+- **Location — Shared.** Purpose: App functionality. Required (it's the app's core function). For request-reply, obtained on demand, held in memory only long enough to send the reply, then discarded — never written to disk or a server. For the opt-in Loc Notice feature, monitored continuously in the background via the Android Geofencing API while that feature is on, so a boundary crossing can be detected and the configured contacts texted automatically — the *place definitions* (name, coordinates, radius, chosen contacts) are stored locally and encrypted on-device so the app knows what to watch, but individual location fixes are still never logged or stored, only evaluated against those boundaries in the moment. For the opt-in find-my-phone feature, obtained on a repeating timer (every 5 minutes, every 1 minute after panic mode triggers) for as long as tracking is active, and texted to whoever sent the triggering passphrase message; each fix is discarded immediately after it's sent, never written to disk.
+- **Photos and videos — Shared.** Purpose: App functionality (find-my-phone's Panic Mode only). One front-facing-camera photo is captured after 3 wrong unlock-PIN attempts on a device find-my-phone has locked, sent once via MMS to whoever sent the triggering passphrase message, and deleted from the device immediately once that send succeeds. Never uploaded to a server, never used for any purpose besides that single send, and never shared with the developer, an analytics service, or any other third party.
 - Personal info — not collected
 - Financial info — not collected
 - Health and fitness — not collected
 - Messages — not collected
-- Photos and videos — not collected
 - Audio files — not collected
 - Files and docs — not collected
 - Calendar — not collected
@@ -16483,7 +16919,7 @@ The app will receive a rating of **Everyone**.
 
 If Google Play reviewers contact you for additional clarification, use this response template:
 
-> QuicLoc is a single-purpose personal safety tool built around a home-screen widget: the user taps it to send a safety-check or emergency alert, with their GPS location, to their chosen emergency contacts — no incoming message of any kind is required for this to work. SMS and notification access extend that same mechanism by additionally letting the user's pre-approved trusted contacts request the location themselves by sending a keyword, which the app answers automatically with a Google Maps link. QuicLoc also offers an opt-in feature, Loc Notice (off by default, its own switch), that automatically texts the user's chosen contacts when the user arrives at or leaves a place they've configured, using the Android Geofencing API. All sensitive permissions (SMS, notification access, background location) are used exclusively for these safety functions. No data is collected, stored server-side, or shared with any third party including the developer. The list of emergency contacts and any Loc Notice places are encrypted on-device using Android Keystore-backed AES-256 encryption and are protected by biometric authentication. The app has no network connectivity or backend of its own — it uses only Android system APIs and Google Play Services (GPS, and the Geofencing API for the opt-in Loc Notice feature).
+> QuicLoc is a single-purpose personal safety tool built around a home-screen widget: the user taps it to send a safety-check or emergency alert, with their GPS location, to their chosen emergency contacts — no incoming message of any kind is required for this to work. SMS and notification access extend that same mechanism by additionally letting the user's pre-approved trusted contacts request the location themselves by sending a keyword, which the app answers automatically with a Google Maps link. QuicLoc also offers two further opt-in features, each off by default with its own switch: Loc Notice, which automatically texts the user's chosen contacts when the user arrives at or leaves a place they've configured, using the Android Geofencing API; and find-my-phone, an anti-theft feature where the user sets a private passphrase and PIN, and a message matching that passphrase (from any sender — this is intentional, since a stolen phone's owner may be texting from an unfamiliar number) locks the device, begins texting its location back to whoever sent it, and, after repeated wrong unlock attempts, sends one front-camera photo of whoever is holding it via MMS. All sensitive permissions (SMS, notification access, background location, camera, device admin, full-screen intent) are used exclusively for these safety functions. No data is collected, stored server-side, or shared with any third party including the developer. The list of emergency contacts, the find-my-phone passphrase/PIN, and any Loc Notice places are encrypted on-device using Android Keystore-backed AES-256 encryption and are protected by biometric authentication. The app has no network connectivity or backend of its own — it uses only Android system APIs and Google Play Services (GPS, and the Geofencing API for the opt-in Loc Notice feature).
 
 
 ######################################################
@@ -16585,176 +17021,333 @@ The paste step is a manual button tap, not an automatic read-on-resume: Android 
 
 # Find-my-phone / Lockdown
 
-> **⚠ Currently DISABLED.** This entire feature is turned off in shipped builds: the
-> `:feature_findmyphone` module is excluded from the build (`settings.gradle.kts` + the app's
-> `dynamicFeatures`) and `FindMyPhone.ENABLED` is `false`, so the setup UI is hidden, the passphrase
-> trigger no-ops, and none of its permissions (`CAMERA`, `USE_FULL_SCREEN_INTENT`, `BIND_DEVICE_ADMIN`)
-> are declared. The code is kept in the repo; re-enable by re-adding the module in both Gradle files
-> and flipping `FindMyPhone.ENABLED` to `true`. The rest of this document describes how it works **when
-> enabled**.
-
 This is the passphrase-triggered emergency path. Distinct from the normal "loc" trigger flow.
 
 > **Module boundary.** The entire lockdown feature — `TrackingService`, `TrackingLockActivity`,
-> `LockdownController`, `QuicLocDeviceAdmin`, and the `IntruderCamera` capture — lives in the
-> on-demand `:feature_findmyphone` dynamic feature module (package `com.hereliesaz.quicloc.lockdown`).
-> The base install carries none of it (nor its `CAMERA` / `USE_FULL_SCREEN_INTENT` permissions, nor the
-> Device Admin receiver) until find-my-phone is set up and the module is downloaded. The base reaches
-> the module **only** through the `FindMyPhone` bridge (`app/.../FindMyPhone.kt`), which addresses it by
-> `ComponentName`. The module fuses into sideload APKs (`dist:fusing dist:include="true"`); the Play AAB
-> path keeps it on-demand. See [PLAY_PUBLISHING.md](PLAY_PUBLISHING.md). Module→base calls (e.g.
-> `LocationHelper`, `WhitelistManager`) stay direct via `implementation(project(":app"))`.
+> `LockdownController`, `QuicLocDeviceAdmin`, `TrackingAlarmReceiver`, `PinAttemptDecision`, and the
+> `IntruderCamera` capture — lives in the on-demand `:feature_findmyphone` dynamic feature module
+> (package `com.hereliesaz.quicloc.lockdown`). The base install carries none of it (nor its `CAMERA` /
+> `USE_FULL_SCREEN_INTENT` permissions, nor the Device Admin receiver) until find-my-phone is set up
+> and the module is downloaded. The base reaches the module **only** through the `FindMyPhone` bridge
+> (`app/.../FindMyPhone.kt`), which addresses it by `ComponentName` — including `FindMyPhone.ENABLED`,
+> the runtime master switch this whole feature is gated behind. The module fuses into sideload APKs
+> (`dist:fusing dist:include="true"`, built as a universal APK via bundletool — see
+> [PLAY_PUBLISHING.md](PLAY_PUBLISHING.md)); the Play AAB path keeps it on-demand. Module→base calls
+> (e.g. `LocationHelper`, `WhitelistManager`) stay direct via `implementation(project(":app"))`.
 
 ## Setup
 
 User sets, in the app:
 
-- A **passphrase** between 10 and 150 characters (any text).
-- A **6-digit PIN** they'll need to unlock tracking.
+- A **passphrase** between 10 and 150 characters (any text). Trimmed before storage
+  (`WhitelistManager.setPassphrase`) — a stray leading/trailing space from the entry field is stripped
+  rather than silently making the stored passphrase never match again; a whitespace-only value is
+  stored as unset.
+- A **6-digit PIN** they'll need to unlock tracking. The same PIN used to unlock the app and encrypt
+  the backup — see [SECURITY.md](SECURITY.md).
 
 Both are stored in `EncryptedSharedPreferences` (`quicloc_secure_prefs`) and in the PIN-encrypted backup blob.
 
+Clearing the app PIN (a separate settings card, `AppPinCard`) while a passphrase is still armed also
+clears the passphrase — `MainActivity.onClearAppPin` does both, and the confirmation dialog warns about
+this before the user confirms. Without this, removing the PIN would leave an armed trigger that could
+never be stopped: the stop-tracking PIN check in `TrackingLockActivity` compares against
+`WhitelistManager.getPin()`, and a `null` expected PIN can never match any entered PIN by design (see
+`PinAttemptDecision`), so a thief triggering the passphrase after the owner cleared their PIN would lock
+and photograph the owner with no way back in.
+
 ## Activation
 
-The passphrase fires when any incoming SMS or messaging-app notification body equals `"loc <passphrase>"` or `"quicloc <passphrase>"`, **regardless of whitelist**. This is the only place QuicLoc accepts a trigger from a non-whitelisted number — the assumption is your phone has been stolen, you're texting from a friend's, and the passphrase is your proof of identity.
+The passphrase fires when any incoming SMS or messaging-app notification body equals `"loc <passphrase>"`
+or `"quicloc <passphrase>"`, **regardless of whitelist**. This is intentional, not an oversight: it is
+the only place QuicLoc accepts a trigger from a non-whitelisted number, on the assumption your phone has
+been stolen, you're texting from a friend's, and the passphrase — not your number — is your proof of
+identity. `NotificationListener` additionally requires the notification's sender to contain at least one
+digit before triggering; a chat app's display-name-only "sender" has no phone number QuicLoc could reply
+to, so triggering on one would lock the device and start "tracking" that silently replies to nobody. SMS
+triggers are unaffected — a raw phone number is always present there.
 
 ```
-trigger detected
+trigger detected (SmsReceiver / NotificationListener)
    │
    ▼
-WhitelistManager.clearPassphraseSync()   ← commit() not apply(): single-use
-   │                                       must survive a crash
-   ▼
-FindMyPhone.trigger(sender, "SMS")   or   FindMyPhone.trigger(sender, package)
-   │     (starts the module's TrackingService by ComponentName;
-   │      no-op if the :feature_findmyphone module was never installed)
-   ▼
-TrackingService.onStartCommand   (reads FindMyPhone.EXTRA_SENDER / EXTRA_SOURCE)
-   │  startForeground with type LOCATION (Android 14+)
-   │  saveState() to quicloc_tracking_state
-   │  start trackingRunnable (5-min interval)
+FindMyPhone.trigger(context, sender, source)
+   │   starts TrackingService by ComponentName;
+   │   returns false — and starts nothing — if the
+   │   :feature_findmyphone module isn't installed yet
    │
-   ▼
-showForegroundNotification()
+   ├─ started == true:
+   │     WhitelistManager.clearPassphraseSync()
+   │         commit(), not apply() — must survive a crash between
+   │         here and the next boot, now that tracking has genuinely begun
    │
-   ├─ LockdownController.lockNow(this)
-   │     │
-   │     ├─ Device Admin granted? → DevicePolicyManager.lockNow()
-   │     │                          returns true  ─────────────┐
-   │     │                                                     │
-   │     └─ Device Admin NOT granted → returns false           │
-   │                                                           ▼
-   ├─ if returns false:                          device is now locked
-   │     setFullScreenIntent on the FGS notification
-   │     try startActivity(TrackingLockActivity)
-   │         (allowed when triggered from
-   │          NotificationListener; usually blocked
-   │          from SmsReceiver on Android 10+)
-   │
-   └─ either way, FGS keeps running and posting location updates
+   └─ started == false (module not installed / still downloading):
+         FindMyPhone.requestInstall(context)
+             best-effort: kick off the download so a retry (or a resend
+             of the same trigger text) can succeed without redoing setup
+         passphrase is left ARMED — burning it here would permanently
+             disarm the feature for zero protective benefit, since nothing
+             was actually intercepted-and-replayed to guard against
 ```
+
+```
+TrackingService.onStartCommand   (reads FindMyPhone.EXTRA_SENDER / EXTRA_SOURCE)
+   │
+   ├─ doTick()             fired first, before locking — async, just kicks off the
+   │                        FusedLocationProvider request and returns, giving GPS a
+   │                        head start while the screen is still on
+   ├─ scheduleNextTick()    arms the first AlarmManager wakeup alarm
+   │
+   ├─ claimForeground()     idempotent — startForeground with type LOCATION
+   │                        (Android 14+); safe to call again on every later tick,
+   │                        it just refreshes the existing notification
+   │
+   └─ engageLockdown()      one-shot — only on a genuinely fresh session (the
+         │                  initial trigger, or a freshly-recreated process
+         │                  resuming a persisted one) — never on a routine tick,
+         │                  which would otherwise relaunch the lock activity over
+         │                  whatever the person on-screen was doing, including a
+         │                  PIN they were mid-typing
+         │
+         ├─ startActivity(TrackingLockActivity)   best-effort direct launch;
+         │      wrapped in try/catch — may be blocked by Android 10+'s
+         │      background-activity-start restrictions depending on caller
+         │
+         └─ LockdownController.lockNow(this)
+               ├─ Device Admin granted? → DevicePolicyManager.lockNow() → true
+               └─ Device Admin NOT granted → false (the cover-screen activity
+                                              above is the only lock that happens)
+```
+
+The tick after a fresh trigger (or a resumed session, on a null-intent restart / `TrackingAlarmReceiver`
+tick / boot recovery) always calls `claimForeground()` first, then `engageLockdown()` only if the process
+was freshly (re)created — see "Service persistence" below.
 
 ## Location updates while tracked
 
 ```
-trackingRunnable
-   │  sendLocationUpdate()
-   │      LocationHelper.getCurrentLocationAndReply(sender)
-   │  if isPanicMode and photoPathToSend != null:
-   │      sendMmsPhoto(sender, photoPath)
-   │  postDelayed(this, interval)
-   │      interval = 60_000 ms (panic) or 300_000 ms (normal)
+doTick()   (called once immediately on trigger, then once per scheduled AlarmManager tick)
+   │  LocationHelper.getCurrentLocationAndReply(sender)   — async; returns immediately
+   │  onResult(succeeded):
+   │      if isPanicMode and photoPathToSend != null:
+   │          photoPathToSend = null; saveState()   ← cleared BEFORE the send call, so
+   │          sendMmsPhoto(sender, photo)              the photo goes out at most once per
+   │                                                    panic escalation — not once a
+   │                                                    minute, forever, until the correct
+   │                                                    PIN is entered (the old behavior)
+
+scheduleNextTick()
+   │  intervalMs = 60_000 (panic mode) or 300_000 (normal)
+   │  AlarmManager.set(ELAPSED_REALTIME_WAKEUP, now + intervalMs, TrackingAlarmReceiver)
 ```
 
-Updates continue until the user enters the correct PIN in `TrackingLockActivity` (or, on a real device-locked install, the user reopens QuicLoc and the activity gets resumed through the FGS notification's contentIntent).
+Updates continue until the user enters the correct PIN in `TrackingLockActivity` (or, on a real
+device-locked install, reopens QuicLoc and the activity is resumed through the FGS notification's
+content intent) — see `TrackingService.stopTracking`.
+
+## Ticking: AlarmManager, not Handler
+
+Ticks are driven by `AlarmManager` wakeup alarms (`TrackingAlarmReceiver`, a manifest-registered
+`exported=false` `BroadcastReceiver`), not `Handler.postDelayed`. `Handler.postDelayed` measures against
+`SystemClock.uptimeMillis()`, which **stops advancing while the CPU is suspended** — on a locked,
+screen-off device (exactly this service's normal operating state, especially once it's locked the phone
+itself) that could silently stall the entire tracking cadence indefinitely, with no error and no log
+line to notice by.
+
+`scheduleNextTick()` calls `AlarmManager.set(ELAPSED_REALTIME_WAKEUP, ...)` — deliberately the **non-exact**
+variant, not `setExactAndAllowWhileIdle`. Exact alarms require the user to grant
+`SCHEDULE_EXACT_ALARM`/`USE_EXACT_ALARM`, a permission this feature doesn't otherwise need. A non-exact
+wakeup alarm still forces a real CPU wake during deep sleep — the actual fix, since `Handler` couldn't do
+that at all — Doze may just defer delivery into the next maintenance window by some margin rather than
+firing at the exact millisecond, which is an acceptable trade for a 1–5 minute tracking cadence.
+
+Re-scheduling reuses the same stable request code/`PendingIntent`, so there is never more than one tick
+alarm armed per session — a service instance being recreated mid-session can't end up with two
+overlapping schedules ticking the same session twice. `TrackingService.onDestroy()` also cancels this
+instance's scheduled alarm defensively, in case the OS reclaims the instance without an explicit
+`stopTracking()` call.
 
 ## Service persistence
 
-`TrackingService` returns `START_STICKY`. If the OS kills it under memory pressure, it restarts with a `null` intent — `onStartCommand` detects this, calls `loadState()` to read sender/source/panic-mode/photo-path from `quicloc_tracking_state` prefs, and resumes where it left off.
+`TrackingService` is `START_STICKY`. Three independent things can interrupt a running session, and each
+has its own recovery path:
 
-`quicloc_tracking_state` is plain `SharedPreferences` — it must work in Direct Boot conditions (post-reboot, pre-user-unlock).
+1. **This service instance is killed** (OS memory pressure, still the same process). `START_STICKY`
+   restarts it with a `null` intent; `onStartCommand` detects that, calls `loadState()` to read
+   sender/source/panic-mode/photo-path back from the `quicloc_tracking_state` prefs file, and resumes
+   (`claimForeground` → `engageLockdown` → `doTick` → `scheduleNextTick`).
+2. **The whole process is killed** (not just this service instance). The next `TrackingAlarmReceiver`
+   alarm still fires — alarms survive a process death — and restarts `TrackingService` in a fresh
+   process, which rehydrates the same persisted state via `loadState()`. This is the same mechanism that
+   makes the periodic ticking itself reliable; recovering from a process kill is really just what
+   happens when the next scheduled tick lands on a service that has nothing loaded in memory yet.
+3. **The device reboots.** Neither of the above applies — `START_STICKY` only restarts a killed
+   *process*, and a reboot cancels every scheduled `AlarmManager` alarm along with everything else.
+   `BootReceiver` calls `FindMyPhone.resumeTrackingAfterBoot(context)`, which checks
+   `FindMyPhone.wasTrackingActive(context)` (a direct read of the same `quicloc_tracking_state` prefs
+   file `TrackingService` itself writes, addressed without a module class reference — see `FindMyPhone`'s
+   class doc) and, if a session was active, restarts `TrackingService` via a new shared
+   `FindMyPhone.ACTION_TICK` action, which resumes exactly like a normal tick would. Without this, a
+   thief power-cycling a tracked device — the single most obvious thing to try — would have ended
+   protection permanently, since the passphrase that started the session was already single-use.
+
+**This is not Direct Boot support.** `quicloc_tracking_state` is plain `SharedPreferences`, which lives
+in credential-encrypted storage and is unreadable before the device's first post-reboot unlock — so
+`resumeTrackingAfterBoot` can only resume tracking once the device has been unlocked at least once since
+the reboot (ordinary `BOOT_COMPLETED` semantics), not before any unlock. Resuming *before* any post-reboot
+unlock would additionally require the PIN/passphrase themselves — `WhitelistManager`'s Keystore-backed
+`EncryptedSharedPreferences` — to be readable pre-unlock too, which they deliberately are not. Trading
+that away for a narrower post-theft recovery window isn't worth the loss in at-rest protection for the
+whitelist and PIN, so this gap is accepted and documented rather than silently assumed away.
 
 ## Wrong-PIN flow (panic mode)
 
+The escalate-at-3 rule is a pure function, extracted so it's directly unit-testable without Compose or
+Robolectric:
+
 ```
 TrackingLockActivity.onPinEntered
-   │  if pin == expectedPin:
-   │     TrackingService.stopTracking(this)
-   │     finishAndRemoveTask()
-   │  else:
-   │     failCount++
-   │     if failCount >= 3:
-   │         triggerPanicMode()
-   │     else:
-   │         Toast("Incorrect PIN")
+   │  PinAttemptDecision.evaluate(pin, expectedPin, failCountSoFar)
+   │
+   ├─ Unlocked             → TrackingService.stopTracking(this); finishAndRemoveTask()
+   ├─ WrongPin(n)           → Toast("Incorrect PIN")             [n < 3]
+   ├─ PanicTriggered(n==3)  → triggerPanicMode()                 [fires exactly once —
+   │                                                                only on the transition
+   │                                                                into the 3rd wrong attempt]
+   └─ AlreadyLocked(n > 3)  → Toast("Device Locked.")             [every wrong attempt after
+                                                                     the 3rd — no new capture,
+                                                                     no new escalation]
 ```
 
-`triggerPanicMode`:
+`PinAttemptDecision` (`feature_findmyphone/.../PinAttemptDecision.kt`) returns `PanicTriggered` only on
+the exact transition into the 3rd wrong attempt; every wrong attempt after that returns `AlreadyLocked`,
+not another `PanicTriggered`. This matters because `triggerPanicMode()` isn't idempotent — the old
+`if (failCount >= 3)` check re-ran it (fresh camera capture, fresh panic-mode escalation) on every single
+wrong PIN past the third, unboundedly.
+
+`triggerPanicMode()`:
 
 ```
-1. Capture front-camera photo via CameraX
-   onError → enter panic mode without photo
-   onImageSaved → enter panic mode WITH photo path
-   
+1. If CAMERA is granted:
+      IntruderCamera.start(this) { onReady ->
+          IntruderCamera.capture(this) { path -> TrackingService.enterPanicMode(this, path) }
+      }
+   else:
+      TrackingService.enterPanicMode(this, null)   ← CAMERA is never requested from the lock
+                                                       screen itself; if it wasn't granted during
+                                                       setup, panic mode still proceeds, just
+                                                       without a photo
+
 2. TrackingService.enterPanicMode(photoPath)
    │  isPanicMode = true
-   │  photoPathToSend = path
-   │  re-post trackingRunnable
-   │  → next tick interval is 60_000 ms (1 min) not 300_000 ms
-   │  → next tick also sends the photo via MMS
+   │  photoPathToSend = photoPath
+   │  saveState()
+   │  claimForeground()
+   │  engageLockdown()                only if this is a freshly-recreated process
+   │  scheduleNextTick(immediate = true)   ← fires almost immediately: the resulting tick
+                                              both sends the location update and (since
+                                              isPanicMode is now true) the one panic photo
 ```
 
-Photo is captured to `externalMediaDirs.firstOrNull()`. Excluded from Auto Backup via `data_extraction_rules.xml`.
+`IntruderCamera.start()` is called lazily, from inside `triggerPanicMode()` — right before the single
+capture it's for, not for the whole lock session. Binding a `CameraX` use case opens the camera device
+immediately, lighting the OS's privacy indicator for as long as it stays bound; binding it up front (as
+an earlier version did, in `onCreate`) would light that indicator the moment the lock screen appears,
+telegraphing what's about to happen well before any capture. The indicator now only lights up right as
+the photo is actually taken, matching this feature's "silently captures" framing.
+
+Photo is captured to `externalMediaDirs.firstOrNull()`. Excluded from Auto Backup via
+`data_extraction_rules.xml`. Deleted from disk immediately after its one successful MMS send — see "MMS
+photo send" below — kept only on a decode/send failure, so a failed attempt doesn't lose the only copy.
 
 ## Why two lockdown mechanisms?
 
-Two paths exist because **without Device Admin we can't actually lock the device**. The cover-screen `TrackingLockActivity` was the original approach; Device Admin is the upgrade. We keep both because:
+Two paths exist because **without Device Admin we can't actually lock the device**. The cover-screen
+`TrackingLockActivity` was the original approach; Device Admin is the upgrade. We keep both because:
 
 - Device Admin is opt-in. Users who don't grant it still get *something* (the cover screen).
-- The cover screen alone is real but weak — a thief can pull down the notification shade, tap an app, and use Recents. It's a deterrent, not a lock.
-- Device Admin gives real lock via `DevicePolicyManager.lockNow()`. The thief needs the system unlock credential to do anything.
+- The cover screen alone is real but weak — a thief can pull down the notification shade, tap an app,
+  and use Recents. It's a deterrent, not a lock.
+- Device Admin gives real lock via `DevicePolicyManager.lockNow()`. The thief needs the system unlock
+  credential to do anything.
 
 `LockdownController.lockNow` is the single decision point; callers don't have to know about both paths.
 
 ## Cover-screen activity gotchas
 
-- `android:showWhenLocked="true"` + `android:turnScreenOn="true"` in the manifest let it appear over the keyguard.
-- `FLAG_DISMISS_KEYGUARD` (deprecated but still works) tries to dismiss the keyguard if it's been "swiped away" but unlocked.
-- `onUserLeaveHint` re-launches the activity when the user presses Home. On Android 10+, this background activity launch is restricted; works while the activity is foreground (the launching happens during transition) but isn't guaranteed.
-- Requires `USE_FULL_SCREEN_INTENT` permission to bring itself up via the FGS notification on Android 14+. This permission is **declared in the `:feature_findmyphone` module manifest** (not the base), so it's present once the module is installed. On API 34+ the user must still grant the *runtime* full-screen-intent toggle separately in Settings (see below).
+- `android:showWhenLocked="true"` + `android:turnScreenOn="true"` (and the matching window flags) let it
+  appear over the keyguard **without dismissing it** — the user must satisfy both the system unlock and
+  the QuicLoc PIN to stop tracking. A previous version also set `FLAG_DISMISS_KEYGUARD`, which on a
+  non-secure lock screen actively bypassed the device lock instead of merely covering it; that flag has
+  been removed (`TrackingLockActivity.onCreate` documents why in a comment, so it doesn't get re-added by
+  habit).
+- `onUserLeaveHint` re-launches the activity when the user presses Home. On Android 10+, this background
+  activity launch is restricted; works while the activity is still foreground (the launch happens during
+  the transition) but isn't guaranteed.
+- The PIN field matches the rest of the app's PIN fields: `KeyboardType.NumberPassword`,
+  `PasswordVisualTransformation` (masked — not cleartext, since this screen is by design shown in
+  public, over the keyguard, to whoever is holding the phone), a digit-only filter, and a 6-character
+  cap.
+- Requires `USE_FULL_SCREEN_INTENT` permission to bring itself up via the FGS notification on Android
+  14+. This permission is **declared in the `:feature_findmyphone` module manifest** (not the base), so
+  it's present once the module is installed. On API 34+ the user must still grant the *runtime*
+  full-screen-intent toggle separately in Settings (see below).
 
 ## Full-screen-intent on Android 14+
 
-On API 34+, `setFullScreenIntent` requires the user to have granted `USE_FULL_SCREEN_INTENT` to your app, separately from the manifest declaration. Path: Settings → Apps → QuicLoc → Notifications → "Full screen notifications".
+On API 34+, `setFullScreenIntent` requires the user to have granted `USE_FULL_SCREEN_INTENT` to the app,
+separately from the manifest declaration. Path: Settings → Apps → QuicLoc → Notifications → "Full screen
+notifications".
 
-We declare the permission. We don't yet prompt the user to grant it — should be added. `AppSettings.wasFullScreenIntentPrompted` is the gate but it's not wired up to anything yet.
-
-## Re-entering panic mode after restart
-
-If the service was killed mid-panic and restarted via `START_STICKY`:
-
-- `loadState()` reads `isPanicMode = true` and `photoPathToSend = "..."` from prefs.
-- The runnable restarts on the panic 60 s interval.
-- The next tick sends the location *and* the saved photo path's MMS.
-
-The photo file persists on external media until the user clears it. We don't auto-delete because the user might want to see what the intruder looked like.
+This is prompted for, not just declared: `MainActivity.checkFullScreenIntentPermission()` runs at the end
+of the first-launch permission chain (right after Notification Access), shows a rationale dialog, and on
+"Continue" hands off to `Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT`.
+`AppSettings.wasFullScreenIntentPrompted` flags the auto-prompt as done so later launches don't re-nag. If
+the grant is still missing later, a re-entry card in the main settings screen (API 34+ only) offers the
+same flow again on demand — see [PERMISSIONS.md](PERMISSIONS.md#use_full_screen_intent-android-14-runtime-grant).
 
 ## MMS photo send (klinker library)
 
-`TrackingService.sendMmsPhoto` uses the `com.klinkerapps:android-smsmms` library to send the panic photo. The library wraps the historically-painful MMS APIs. The `android-smsmms` dependency lives in the `:feature_findmyphone` module (only `TrackingService` uses it), not the base.
+`TrackingService.sendMmsPhoto` uses the `com.klinkerapps:android-smsmms` library to send the panic photo.
+The library wraps the historically-painful MMS APIs. The `android-smsmms` dependency lives in the
+`:feature_findmyphone` module (only `TrackingService` uses it), not the base.
 
 Notes:
 
 - `useSystemSending = true` means we use the carrier's MMS APN, not our own.
-- We downsample the photo to ~800×800 before sending (MMS carrier limits).
-- All MMS work happens on a `Thread { ... }.start()` — never on the main thread.
+- `downsampleForMms()` caps the image at `MMS_MAX_DIMENSION_PX` (800px) on its longer side — a real cap,
+  not "roughly": it prefilters with `BitmapFactory.inSampleSize` (which only supports power-of-two
+  steps, and can alone leave an image up to ~2x the target on its long side depending on aspect ratio),
+  then finishes with an exact `Bitmap.createScaledBitmap` pass so the result never exceeds 800px on
+  either dimension. MMS carriers reject or re-compress oversized images.
+- Decoding runs on a bare `Thread { ... }.start()` — never on the main thread — and the decode/scale path
+  has a dedicated `catch (e: OutOfMemoryError)` alongside the usual `catch (e: Exception)`, since
+  `OutOfMemoryError` is an `Error`, not caught by the latter. An uncaught `Error` on this thread would hit
+  the default uncaught-exception handler and kill the whole process — taking the foreground service and
+  the lock screen down with it, mid-response to a theft — so a very large source image degrading the
+  send is handled instead of crashing.
+- The local photo file is deleted right after its MMS send succeeds; kept on a decode/send failure so a
+  retry or manual recovery is still possible.
 
 ## Things to watch out for
 
-- **FGS start from background on Android 14+.** `TrackingService` uses `foregroundServiceType="location"` only — the intruder photo is captured by the visible `TrackingLockActivity` (CAMERA permission, no camera-typed FGS). `NotificationListenerService` grants a temporary background-start exemption; `SmsReceiver` may not. If you see FGS-start crashes on Android 14, this is the first place to look.
-- **`startActivity` from a background-started Service.** Forbidden on Android 10+ without `SYSTEM_ALERT_WINDOW`. We wrap in try/catch and rely on the full-screen-intent path as the fallback.
-- **PIN comparison.** Currently `==` on Strings. Not constant-time. The 3-strikes-then-photograph defense is what really discourages brute forcing.
-- **Don't expand Device Admin policies casually.** We only ever request `force-lock`. Adding anything else (wipe, reset password, etc.) changes the trust story dramatically.
+- **FGS start from background on Android 12+.** `TrackingService` uses `foregroundServiceType="location"`
+  only — the intruder photo is captured by the visible `TrackingLockActivity` (CAMERA permission, no
+  camera-typed FGS). `SmsReceiver` calling `startForegroundService` from a `BroadcastReceiver.onReceive`
+  is on the Android 12+ background-FGS-start exemption allowlist (see `SmsReceiver`'s own class doc), and
+  `TrackingAlarmReceiver`'s `onReceive` → `startForegroundService` call is exempt for the identical
+  reason — a manifest-registered `BroadcastReceiver` reacting to a broadcast, in both cases. Both are the
+  same shape, so if one is exempt the other is too; there's no remaining hedge about `SmsReceiver` here.
+  `NotificationListenerService` gets its own background-start exemption while bound. If you see
+  FGS-start crashes on a newer Android version, the first question is whether the *caller* of
+  `startForegroundService` still qualifies for an exemption on that version.
+- **`startActivity` from a background-started Service.** Forbidden on Android 10+ without
+  `SYSTEM_ALERT_WINDOW`. `engageLockdown()` wraps the direct `startActivity` call in try/catch and relies
+  on the full-screen-intent path as the fallback.
+- **PIN comparison.** Currently `==` on Strings. Not constant-time. The 3-strikes-then-photograph defense
+  is what really discourages brute forcing.
+- **Don't expand Device Admin policies casually.** We only ever request `force-lock`. Adding anything
+  else (wipe, reset password, etc.) changes the trust story dramatically.
 
 
 ######################################################
@@ -16955,12 +17548,6 @@ debug APKs for sideloading.
 - **App Bundle auto-splits.** Play generates per-device APKs split by **screen density** and
   **language** automatically from the single `.aab` — no extra artifacts or config. (There are
   no native libraries in this app, so there's no ABI split to worry about.)
-- **Dynamic feature module: `:feature_findmyphone` — CURRENTLY DISABLED.** The find-my-phone /
-  lockdown feature is not shipped right now: the module is excluded from `settings.gradle.kts` and the
-  app's `dynamicFeatures`, and `FindMyPhone.ENABLED` is `false`. So the published app declares no
-  `CAMERA` / `USE_FULL_SCREEN_INTENT` / `BIND_DEVICE_ADMIN` and there is nothing extra to declare in
-  the Play Console for it. The module's code remains in the repo. Re-enable by re-adding the module in
-  both Gradle files and flipping `FindMyPhone.ENABLED`. The description below applies when enabled.
 - **Dynamic feature module: `:feature_findmyphone` (on-demand, fused into APKs).** The **entire**
   find-my-phone / lockdown feature — the tracking foreground service, the PIN-gate lock screen, the
   Device Admin receiver, and the panic-mode intruder camera (CameraX) — is delivered as one on-demand
@@ -16978,31 +17565,72 @@ debug APKs for sideloading.
     receiver class. `QuicLocApp : SplitCompatApplication` + `SplitCompat.installActivity` make the
     freshly-installed code loadable in-process. There is no longer a reflective `IntruderCamera`
     boundary — the camera lives in the same split as its caller, `TrackingLockActivity`.
-  - **`<dist:fusing dist:include="true"/>`** means the module is **fused into the monolithic
-    `assembleDebug`/`assembleRelease` APKs**, so sideload users (the GitHub-Releases APK) still get
-    find-my-phone with its components present at install time. The Play **AAB** path keeps it
-    on-demand: it's downloaded via `SplitInstall` during find-my-phone setup and won't fetch from a
-    bare `assembleRelease` APK.
+  - **`<dist:fusing dist:include="true"/>`** marks the module for fusing, but that attribute is read by
+    **bundletool, not by AGP's `assembleRelease`/`assembleDebug`** — `./gradlew assembleRelease` on the
+    base module only ever builds the base module's own code, dynamic-feature modules never get folded
+    in regardless of `dist:fusing`. This used to mean the plain base APK that was attached straight to
+    GitHub Releases shipped with **zero** find-my-phone/lockdown code for every sideload user, silently,
+    even in a build where the feature was otherwise fully wired up. The fix: build the signed `.aab`
+    (`bundleRelease` — this already correctly contains every module) and then run it through
+    bundletool's **universal mode** (`build-apks --mode=universal`, wrapped as the composite action
+    [`.github/actions/build-universal-apk`](../.github/actions/build-universal-apk/action.yml)), which
+    reads `dist:fusing` itself and produces one signed APK with every fusing-marked module folded in.
+    `ci-cd.yml` and `build-apk.yml` both build the AAB then hand it to this action to produce the
+    GitHub-Release APK — see "Sideload APK build" below. The Play **AAB** path was never affected by
+    this bug: it keeps the module on-demand, downloaded via `SplitInstall` during find-my-phone setup.
   - **Setup is install-first.** Device Admin and `CAMERA` are only grantable *after* the module is
     installed (their declarations must be in the merged manifest before
     `ACTION_ADD_DEVICE_ADMIN` / the runtime CAMERA prompt can resolve). So `MainActivity`'s
     find-my-phone setup sequences: grant SMS/location → `FindMyPhone.requestInstall` → on installed,
     request `CAMERA` then prompt for Device Admin.
-  - Needs **device testing** (cannot be covered by CI): on the **AAB** path confirm the module
+  - Needs **device testing** (cannot be covered by CI): on the **AAB/Play** path confirm the module
     downloads at setup, the Device Admin prompt resolves post-install, a passphrase trigger launches
-    the tracking service via `ComponentName`, and a build *without* the module degrades (a
-    `loc <passphrase>` just doesn't start tracking; core `loc` still replies). On the **APK** path
-    confirm the fused feature is present and works. Also verify the base AAB manifest carries no
-    `CAMERA`/`USE_FULL_SCREEN_INTENT` and no lockdown components.
-  - **Note for R8:** `isMinifyEnabled` is true, so the module's components are addressed by
-    `ComponentName` string from the base, so keep them:
-    `-keep class com.hereliesaz.quicloc.lockdown.** { *; }`.
+    the tracking service via `ComponentName`, and (if you build a variant without the module) a build
+    *without* it degrades gracefully (a `loc <passphrase>` just doesn't start tracking; core `loc` still
+    replies). On the **sideload APK** path — the universal APK bundletool produces, not a plain
+    `assembleRelease` build — confirm the fused feature is actually present and reachable at install
+    time (find-my-phone setup completes without ever downloading anything, since the module's already
+    in the APK) and works end-to-end. Also verify the base AAB manifest carries no
+    `CAMERA`/`USE_FULL_SCREEN_INTENT` and no lockdown components until the module installs.
+  - **Note for R8:** `isMinifyEnabled` is true, and the module's components are addressed by
+    `ComponentName` string from the base, not a compile-time class reference, so R8 has no call site to
+    infer keep rules from. `app/proguard-rules.pro` keeps them explicitly:
+    `-keep class com.hereliesaz.quicloc.lockdown.** { *; }` (same reasoning for
+    `-keep class com.klinker.android.send_message.** { *; }`, the MMS library, which drives sending via
+    reflection). Losing either rule doesn't fail the build — it fails at runtime, with the module's
+    classes present but unreachable by name once R8 has renamed/stripped them.
+  - **androidx.tracing / guava:listenablefuture version pinning.** With the module enabled, R8 used to
+    fail the release/bundle build outright with `Type ... is defined multiple times` — `:app` and
+    `:feature_findmyphone` were pulling in different transitive versions of `androidx.tracing` (and
+    guava's empty `listenablefuture` shim), so R8 saw two copies of the same class at merge time. Both
+    modules now `implementation` the exact same pinned versions
+    (`libs.androidx.tracing`, `libs.guava.listenablefuture` in `gradle/libs.versions.toml`), so R8 sees
+    one copy of each. Without this fix, the feature literally could not ship — `bundleRelease` failed
+    before producing an artifact at all.
   - The core SMS + location permissions stay in the base on purpose: they're driven by a
     manifest `SmsReceiver` the system delivers broadcasts to, and the app must answer `loc` the
     moment it's installed. `READ_CONTACTS` is not declared anywhere in the app — the "Pick from
     Contacts" button uses `Intent.ACTION_PICK`, which needs no permission (see
     [PERMISSIONS.md](PERMISSIONS.md)). The `BIND_*` signature permissions (Notification Listener,
     Device Admin) were intentionally left in the base/module — see the PR discussion.
+
+### Sideload APK build (GitHub Releases)
+
+The APK attached to a GitHub Release is **not** `assembleRelease`'s output. Both `ci-cd.yml` (on a `v*`
+tag) and `build-apk.yml` (`workflow_dispatch`) instead:
+
+1. `./gradlew bundleRelease` — build the signed `.aab`, which already contains every module correctly.
+2. Run [`.github/actions/build-universal-apk`](../.github/actions/build-universal-apk/action.yml), which
+   downloads a pinned `bundletool` release and runs
+   `build-apks --bundle=<aab> --mode=universal --ks=<keystore> ...`, then unzips the single
+   `universal.apk` bundletool produces — already signed with the same keystore Gradle used, no separate
+   `apksigner` step needed.
+3. The resulting universal APK is verified with
+   [`.github/actions/verify-android-signature`](../.github/actions/verify-android-signature) before it's
+   attached to the release, same as the AAB.
+
+This is what makes the sideload APK a genuinely fused build: it's the one artifact in the whole pipeline
+built specifically by reading `dist:fusing`, rather than assuming AGP does it.
 - **R8 / resource shrinking: enabled.** `isMinifyEnabled` and `isShrinkResources` are true in `release` builds to optimize performance and reduce APK size. ProGuard rules are configured in `app/proguard-rules.pro`.
   (Compose and CameraX ship their own consumer ProGuard rules.)
 - **Play in-app updates (Play Core):** an optional future enhancement; not wired up.
@@ -17347,7 +17975,7 @@ The background components (`SmsReceiver`, `NotificationListener`, `LocationReply
 
 ### The QuicLoc PIN as a second unlock method
 
-There is one 6-digit QuicLoc PIN (`WhitelistManager.getPin`/`setPin`), and it does three jobs: it unlocks the settings UI, it is the PBKDF2 input for the backup blob, and — when find-my-phone is enabled — it stops tracking.
+There is one 6-digit QuicLoc PIN (`WhitelistManager.getPin`/`setPin`), and it does three jobs: it unlocks the settings UI, it is the PBKDF2 input for the backup blob, and — when find-my-phone is enabled — it stops tracking. Because that third job depends on the PIN existing at all, removing the PIN while a find-my-phone passphrase is still armed also clears the passphrase (`MainActivity.onClearAppPin`) — an armed trigger with no PIN left to stop it would lock and photograph the phone's own owner with no way back in. See [LOCKDOWN.md](LOCKDOWN.md#setup) for the mechanics; this is documented here because it's a direct consequence of the PIN's dual role, not a UI-only detail.
 
 `MainActivity.promptBiometric` picks the gate:
 
@@ -17420,9 +18048,18 @@ This is weak by modern standards, and got weaker in practice once Loc Notice shi
 | Diagnostic log | | | ✓ (privacy choice — see below) |
 | Active tracking state | | | ✓ (runtime only) |
 | Loc Notice transition state (last enter/exit per place) | | | ✓ (runtime only) |
-| Intruder photos (panic mode) | | | ✓ (forensic, ephemeral) |
+| Intruder photos (panic mode) | | | ✓ (see lifecycle below) |
 
 History and the diagnostic log are intentionally excluded from backup. Both are logs of who's been interacting with your location (who asked, or which app/number triggered what) — restoring either to a new device leaks that log into the user's backup chain. Since both are just in-app troubleshooting/UI conveniences, dropping them is the safer default.
+
+**Intruder photo lifecycle.** The panic-mode photo is written to `externalMediaDirs` (MediaStore-visible,
+excluded from Auto Backup via `data_extraction_rules.xml`, so it never enters the backup chain regardless
+of the table above) and lives there only until `TrackingService` successfully MMS-sends it to whoever
+triggered tracking — `sendMmsPhoto` deletes the local file immediately once that send succeeds. It is
+kept only if the send itself fails (a decode error or MMS transport failure), so a failed attempt doesn't
+lose the only copy; a later successful retry still deletes it. Exactly one send is attempted per panic
+escalation (see [LOCKDOWN.md](LOCKDOWN.md#wrong-pin-flow-panic-mode)), so there's no unbounded
+accumulation of photo files from repeated wrong PINs or repeated ticks.
 
 ## Code paths reviewed for security
 
@@ -17460,10 +18097,23 @@ All unit tests live in `app/src/test/java/com/hereliesaz/quicloc/`. Most use Rob
 | [WhitelistManagerTest](../app/src/test/java/com/hereliesaz/quicloc/WhitelistManagerTest.kt) | Add/remove/dedup, normalization, starred 3-cap + slot reuse, removing a number un-stars it, name-vs-number matching (`isWhitelistedByName`), bulk `replaceAllNumbers`/`replaceStarred` (used by restore), my-number / passphrase / PIN / onboarding round-trips, persistence across new manager instances |
 | [AppSettingsTest](../app/src/test/java/com/hereliesaz/quicloc/AppSettingsTest.kt) | All defaults (`isEnabled=true`, `reminderNotificationEnabled=false`, all "prompted" flags = false), all setter round-trips, prompted flags are independent |
 | [RequestHistoryManagerTest](../app/src/test/java/com/hereliesaz/quicloc/RequestHistoryManagerTest.kt) | Empty default, newest-first ordering, 100-entry cap with correct eviction (sender0…sender19 evicted, sender20…sender119 kept), `clearHistory`, `formattedTime` renders, cross-instance persistence |
-| [TutorialsTest](../app/src/test/java/com/hereliesaz/quicloc/TutorialsTest.kt) | `MAIN_ID` resolvable, `byId` unknown returns null, every tutorial has non-empty title/summary/body, IDs are unique + kebab-case, the catalog contains the expected 9 tutorials |
-| [ManifestRegistrationTest](../app/src/test/java/com/hereliesaz/quicloc/ManifestRegistrationTest.kt) | Every receiver (widget, SMS, toggle, boot, device admin), service (location reply, tracking, notification listener), and activity (main, tracking-lock, widget-help) is declared, exported correctly, and where needed declares the right `permission`. Backup XML is wired up in the application tag. |
+| [TutorialsTest](../app/src/test/java/com/hereliesaz/quicloc/TutorialsTest.kt) | `MAIN_ID` resolvable, `byId` unknown returns null, every tutorial has non-empty title/summary/body, IDs are unique + kebab-case, the catalog contains the expected 12 tutorials, the find-my-phone/real-lockdown tutorials (and the Camera/Device Admin/Full-Screen-Intent sections of the permissions tutorial) are present when `FindMyPhone.ENABLED` and absent when it isn't — both directions asserted |
+| [ManifestRegistrationTest](../app/src/test/java/com/hereliesaz/quicloc/ManifestRegistrationTest.kt) | Every **base-manifest** receiver (widget, SMS, toggle, boot), service (location reply, notification listener), and activity (main, widget-help) is declared, exported correctly, and where needed declares the right `permission`. Backup XML is wired up in the application tag. **Does not cover `QuicLocDeviceAdmin`, `TrackingService`, or `TrackingLockActivity`** — those live in the on-demand `:feature_findmyphone` module, so they're absent from the base merged manifest Robolectric reads here; the test file has explicit comments marking each as intentionally skipped for that reason. There is currently no manifest-registration test running against the module's own (merged-in) manifest — see "What's NOT automated" below. |
 
 When a unit test fails, that's the first thing to check before assuming the underlying behavior changed.
+
+### `:feature_findmyphone` module tests
+
+The on-demand module has its own test source set (`feature_findmyphone/src/test/java/com/hereliesaz/quicloc/lockdown/`), separate from the base app's. It includes at least
+[PinAttemptDecisionTest](../feature_findmyphone/src/test/java/com/hereliesaz/quicloc/lockdown/PinAttemptDecisionTest.kt),
+a plain-JUnit test of `PinAttemptDecision.evaluate()` — the pure function `TrackingLockActivity` delegates
+wrong-PIN/panic-escalation decisions to (see [LOCKDOWN.md](LOCKDOWN.md#wrong-pin-flow-panic-mode)) — that
+pins down the escalate-exactly-once-at-the-3rd-wrong-attempt contract (correct PIN always unlocks
+regardless of fail count, a removed/`null` PIN never matches, and every wrong attempt past the third is
+`AlreadyLocked` rather than a repeated `PanicTriggered`). Additional Robolectric-based coverage for
+`TrackingService` itself is also expected in this same test source set; check the directory for the
+current set of test classes rather than relying on this doc to enumerate them, since they're expected to
+grow independently of this file.
 
 Everything below has to be exercised on a real device or emulator.
 
@@ -17643,11 +18293,19 @@ SmsReceiver.onReceive
         │  Telephony.Sms.Intents.getMessagesFromIntent(...)
         │  reassemble multipart by sender
         │
-        ├─ if body == "loc <passphrase>"
-        │     whitelist.clearPassphraseSync()           (commit, not apply)
+        ├─ if body == "loc <passphrase>"    (FindMyPhone.ENABLED gate first)
         │     FindMyPhone.trigger(sender, "SMS")
         │       (starts the :feature_findmyphone TrackingService by
-        │        ComponentName; no-op if the module isn't installed)
+        │        ComponentName; returns false — starts nothing — if
+        │        the module isn't installed)
+        │     ├─ true  → whitelist.clearPassphraseSync()  (commit, not apply —
+        │     │             only burned once tracking has actually started;
+        │     │             a trigger that never took effect leaves nothing to
+        │     │             guard against, so it isn't worth disarming for)
+        │     └─ false → FindMyPhone.requestInstall(context)  (kick off the
+        │                   module download; passphrase left ARMED so the
+        │                   same "loc <passphrase>" text can retry once it
+        │                   finishes)
         │     → see LOCKDOWN.md
         │
         ├─ if WhitelistManager.isWhitelisted(sender)
@@ -17664,6 +18322,7 @@ SmsReceiver.onReceive
 - **Multi-part reassembly.** A long SMS arrives as multiple `SmsMessage` parts. We concatenate `messageBody` per `displayOriginatingAddress` so the trigger word match works whether the user sent "loc" in 1 part or 30.
 - **Number normalization.** `WhitelistManager.cleanPhoneNumber` strips everything but digits and `+`. `PhoneNumberUtils.compare` handles country-code differences (so `+15551234` matches `15551234` matches `(555) 123-4`).
 - **No `goAsync()`.** The receiver returns in ms; the heavy lifting (GPS, SMS send) is in `LocationReplyService`. Calling `startForegroundService` from a broadcast receiver is exempt from the FGS background-start restrictions on Android 12+.
+- **Passphrase never logged or recorded raw.** A passphrase-trigger match logs `'[passphrase redacted]'` instead of the real body, and the same redacted string is what's written to the diagnostics log (not gated by the "capture all" diagnostics setting, unlike every other diagnostic row) — the diagnostics screen has a "Share" action that can export the log via any app, so the raw passphrase must never end up in it.
 
 ## Path 2: Chat-app notification
 
@@ -17688,11 +18347,22 @@ NotificationListener.onNotificationPosted(sbn)
         │  dedupeKey = "{sbn.key}|{sender}|{body}"
         │  skip if seen within last 60 s
         │
-        ├─ if body == "loc <passphrase>"
-        │     whitelist.clearPassphraseSync()
+        ├─ if body == "loc <passphrase>"    (FindMyPhone.ENABLED gate first)
+        │     sender.any { it.isDigit() }?
+        │       no  → log + record why, do nothing further (a chat-app
+        │               display name has no phone number to reply to —
+        │               starting tracking would lock the device and
+        │               "track" a reply that goes nowhere)
+        │       yes ↓
         │     FindMyPhone.trigger(sender, packageName)
         │       (starts the :feature_findmyphone TrackingService by
-        │        ComponentName; no-op if the module isn't installed)
+        │        ComponentName; returns false — starts nothing — if
+        │        the module isn't installed)
+        │     ├─ true  → whitelist.clearPassphraseSync()  (only once tracking
+        │     │             has actually started — see the SMS path's identical
+        │     │             reasoning)
+        │     └─ false → FindMyPhone.requestInstall(context)  (passphrase left
+        │                   ARMED so the same message can retry once installed)
         │
         ├─ if WhitelistManager.isWhitelistedByName(sender)
         │       (case-insensitive name match OR PhoneNumberUtils.compare)
@@ -17712,6 +18382,7 @@ NotificationListener.onNotificationPosted(sbn)
 - **Self-guard.** `if (sbn.packageName == packageName) return` prevents our own foreground-service notifications from being parsed.
 - **Inline reply.** We don't open the chat app. We call `Notification.Action.actionIntent.send(...)` with a `RemoteInput` Bundle holding `"QuicLoc: <maps link>"`. The chat app receives it as a normal "type and send" event.
 - **Hidden-content notifications never trigger.** Signal in private-notification mode shows "You have a new message" with no body. The trigger string is gone before we see it. We document this in the Trigger Word tutorial.
+- **Passphrase never logged or recorded raw.** Same redaction as the SMS path — `'[passphrase redacted]'` in both the log line and the diagnostics record for a passphrase match.
 
 ## Path 3: Widget tap
 
@@ -18417,6 +19088,9 @@ android {
             excludes += "/META-INF/*.version"
         }
     }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
@@ -18448,6 +19122,10 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
 
+    // Pinned to match the base's explicit version (see app/build.gradle.kts)
+    // so R8 sees one androidx.tracing copy, not a base/module version skew.
+    implementation(libs.androidx.tracing)
+
     // Guava ListenableFuture needed for CameraX.
     implementation(libs.androidx.concurrent.futures)
     implementation(libs.androidx.concurrent.futures.ktx)
@@ -18456,6 +19134,11 @@ dependencies {
     // MMS — panic mode sends the intruder photo via MMS. Only TrackingService
     // uses klinker, so the dependency lives here, not in the base.
     implementation(libs.android.smsmms)
+
+    // Test-only. Matches :app's own test dependency set.
+    testImplementation(libs.junit)
+    testImplementation(libs.core.ktx)
+    testImplementation(libs.robolectric)
 }
 
 
@@ -18511,6 +19194,15 @@ dependencies {
             android:name=".TrackingService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!--
+            Drives TrackingService's periodic ticks via AlarmManager wakeup
+            alarms — see TrackingAlarmReceiver's class doc for why this
+            replaced a Handler-based schedule.
+        -->
+        <receiver
+            android:name=".TrackingAlarmReceiver"
+            android:exported="false" />
 
         <!--
             Cover-screen PIN gate, drawn over the keyguard. Launched by
@@ -18576,26 +19268,39 @@ import java.io.File
  * activity's external media dir on capture. Every call degrades gracefully
  * (returns `null`) when the camera isn't ready, so a failed capture never
  * blocks the lock.
+ *
+ * [start] is deliberately called lazily — right before the capture it's for,
+ * not for the whole lock session — because binding a `CameraX` use case
+ * opens the camera device immediately, lighting the OS privacy indicator for
+ * as long as it stays bound. Binding it for the entire session would light
+ * that indicator well before any capture actually happens, telegraphing the
+ * trap to whoever is holding the phone.
  */
 class IntruderCamera {
 
     private var imageCapture: ImageCapture? = null
 
-    /** Bind the front camera to [activity]'s lifecycle so a capture is ready. */
-    fun start(activity: ComponentActivity) {
+    /**
+     * Bind the front camera to [activity]'s lifecycle so a capture is ready.
+     * [onReady] runs once binding finishes (success or failure) — [capture]
+     * called before that would just find nothing ready and report no photo,
+     * so callers should wait for it.
+     */
+    fun start(activity: ComponentActivity, onReady: () -> Unit) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(activity)
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
             val capture = ImageCapture.Builder().build()
-            imageCapture = capture
             try {
                 cameraProvider.unbindAll()
                 cameraProvider.bindToLifecycle(
                     activity, CameraSelector.DEFAULT_FRONT_CAMERA, capture
                 )
+                imageCapture = capture
             } catch (exc: Exception) {
                 Log.e(TAG, "Use case binding failed", exc)
             }
+            onReady()
         }, ContextCompat.getMainExecutor(activity))
     }
 
@@ -18691,6 +19396,64 @@ object LockdownController {
 
 
 ######################################################
+# FILE: feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/PinAttemptDecision.kt
+######################################################
+
+package com.hereliesaz.quicloc.lockdown
+
+/**
+ * What a PIN attempt on [TrackingLockActivity]'s lock screen should do, as a
+ * pure function of the attempt and the fail count so far — extracted out of
+ * the activity so the escalate-exactly-once-at-3 rule is directly
+ * unit-testable without Compose or Robolectric.
+ */
+sealed class PinAttemptOutcome {
+    /** The correct PIN was entered — stop tracking. */
+    object Unlocked : PinAttemptOutcome()
+
+    /** Wrong PIN, still under the panic threshold. */
+    data class WrongPin(val failCount: Int) : PinAttemptOutcome()
+
+    /**
+     * Wrong PIN, and this is the exact attempt that crosses the panic
+     * threshold — escalate [TrackingService] into panic mode. Returned only
+     * once per lock session: further wrong attempts after this one are
+     * [AlreadyLocked], not another [PanicTriggered].
+     */
+    data class PanicTriggered(val failCount: Int) : PinAttemptOutcome()
+
+    /** Wrong PIN, already past the panic threshold — nothing new to do. */
+    data class AlreadyLocked(val failCount: Int) : PinAttemptOutcome()
+}
+
+object PinAttemptDecision {
+    /**
+     * Number of wrong attempts that triggers panic mode. Matches
+     * [TrackingLockActivity]'s documented "3 wrong PIN entries" behavior.
+     */
+    const val PANIC_THRESHOLD = 3
+
+    /**
+     * @param pin what was just entered.
+     * @param expectedPin the currently-set QuicLoc PIN, or null if none is
+     *   set (e.g. it was removed — see `MainActivity.onClearAppPin`). A null
+     *   [expectedPin] can never match any [pin], by design: there is no
+     *   "any PIN works" fallback.
+     * @param failCountBefore the fail count going into this attempt.
+     */
+    fun evaluate(pin: String, expectedPin: String?, failCountBefore: Int): PinAttemptOutcome {
+        if (expectedPin != null && pin == expectedPin) return PinAttemptOutcome.Unlocked
+        val failCount = failCountBefore + 1
+        return when {
+            failCount == PANIC_THRESHOLD -> PinAttemptOutcome.PanicTriggered(failCount)
+            failCount > PANIC_THRESHOLD -> PinAttemptOutcome.AlreadyLocked(failCount)
+            else -> PinAttemptOutcome.WrongPin(failCount)
+        }
+    }
+}
+
+
+######################################################
 # FILE: feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/QuicLocDeviceAdmin.kt
 ######################################################
 
@@ -18733,6 +19496,46 @@ class QuicLocDeviceAdmin : DeviceAdminReceiver() {
 
 
 ######################################################
+# FILE: feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/TrackingAlarmReceiver.kt
+######################################################
+
+package com.hereliesaz.quicloc.lockdown
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import com.hereliesaz.quicloc.FindMyPhone
+
+/**
+ * Fired by [android.app.AlarmManager] to drive [TrackingService]'s periodic
+ * ticks even while the device is fully suspended — `Handler.postDelayed`
+ * cannot fire at all during CPU suspend, which used to silently stall the
+ * tracking cadence on a pocketed, screen-off stolen phone. AlarmManager
+ * wakeup alarms are the platform's actual mechanism for this; this receiver
+ * just forwards the wakeup to the service, which does the real work (see
+ * [TrackingService.scheduleNextTick]) and reschedules the next one.
+ *
+ * Also the entry point that recovers from the *service's own process* being
+ * killed (as opposed to a reboot, which [FindMyPhone.resumeTrackingAfterBoot]
+ * handles separately): the alarm still fires as long as this manifest
+ * receiver is registered, restarting the service, which reloads its
+ * persisted session from `quicloc_tracking_state` and resumes.
+ */
+class TrackingAlarmReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val svcIntent = Intent(context, TrackingService::class.java).apply {
+            action = FindMyPhone.ACTION_TICK
+        }
+        // AlarmManager-triggered broadcasts to a manifest receiver are on
+        // the Android 12+ background-FGS-start exemption allowlist — same
+        // reasoning SmsReceiver documents for its own startForegroundService
+        // call from onReceive.
+        context.startForegroundService(svcIntent)
+    }
+}
+
+
+######################################################
 # FILE: feature_findmyphone/src/main/java/com/hereliesaz/quicloc/lockdown/TrackingLockActivity.kt
 ######################################################
 
@@ -18742,19 +19545,20 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.play.core.splitcompat.SplitCompat
 import com.hereliesaz.quicloc.WhitelistManager
@@ -18770,13 +19574,14 @@ import com.hereliesaz.quicloc.WhitelistManager
  * Home — though this background activity launch is restricted on Android
  * 10+ and may not always succeed.
  *
- * 3 wrong PIN entries → panic mode:
+ * The 3rd wrong PIN entry (and only the 3rd — see [onPinEntered]) triggers
+ * panic mode:
  *
- *   1. Capture a front-camera photo via [IntruderCamera] (returns no photo if
- *      the camera isn't ready / CAMERA wasn't granted).
- *   2. Hand the photo path to [TrackingService.enterPanicMode] which
+ *   1. Lazily bind and capture a front-camera photo via [IntruderCamera]
+ *      (returns no photo if CAMERA was never granted, or binding fails).
+ *   2. Hand the photo path to [TrackingService.enterPanicMode], which
  *      shortens the tracking interval to 1 min and sends the photo via MMS
- *      on the next tick.
+ *      exactly once.
  *
  * Correct PIN → [TrackingService.stopTracking] + `finishAndRemoveTask`.
  *
@@ -18787,20 +19592,19 @@ import com.hereliesaz.quicloc.WhitelistManager
  *     there, or use Recents.
  *   - PIN comparison uses `==` (not constant-time). The 3-strikes rule is
  *     the practical defense.
- *   - CAMERA can't be requested over the keyguard, so we rely on it being
- *     granted up front during find-my-phone setup. If it wasn't, panic mode
- *     still proceeds, just without a photo.
+ *   - CAMERA is never requested here — a runtime permission dialog shown to
+ *     whoever is holding the phone would both tip them off and give them a
+ *     one-tap way to permanently deny it. It must already be granted from
+ *     the find-my-phone setup flow (MainActivity requests it right after the
+ *     module installs); if it wasn't, panic mode still proceeds, just
+ *     without a photo.
  */
 class TrackingLockActivity : ComponentActivity() {
 
-    companion object {
-        private const val TAG = "QuicLoc.TrackingLockActivity"
-    }
-
     private var failCount = 0
-    // The camera lives in this same split, so it's always present here. It only
-    // produces a photo once start() has bound the front camera (which needs the
-    // CAMERA permission); otherwise capture() returns null and the lock proceeds.
+    // The camera lives in this same split, so it's always present here. Only
+    // bound lazily, right before a capture — see IntruderCamera's class doc
+    // for why binding it for the whole lock session would be worse.
     private val intruderCamera = IntruderCamera()
 
     override fun attachBaseContext(newBase: Context) {
@@ -18840,48 +19644,40 @@ class TrackingLockActivity : ComponentActivity() {
             // Do nothing to prevent back button
         }
 
-        // Bind the front camera now if CAMERA is already granted (it can't be
-        // requested over the keyguard, so a denial here just means no photo).
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            intruderCamera.start(this)
-        } else {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
-        }
-
         setContent {
             MaterialTheme {
-                LockScreenUI(
-                    onPinEntered = { pin ->
-                        val expectedPin = WhitelistManager(this).getPin()
-                        if (pin == expectedPin) {
-                            TrackingService.stopTracking(this)
-                            finishAndRemoveTask()
-                        } else {
-                            failCount++
-                            if (failCount >= 3) {
-                                triggerPanicMode()
-                            } else {
-                                Toast.makeText(this, "Incorrect PIN", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                )
+                LockScreenUI(onPinEntered = ::onPinEntered)
             }
         }
     }
 
-    // Removed the invalid override fun super.onBackPressed()
-
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 10 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            intruderCamera.start(this)
+    private fun onPinEntered(pin: String) {
+        val expectedPin = WhitelistManager(this).getPin()
+        when (val outcome = PinAttemptDecision.evaluate(pin, expectedPin, failCount)) {
+            is PinAttemptOutcome.Unlocked -> {
+                TrackingService.stopTracking(this)
+                finishAndRemoveTask()
+            }
+            is PinAttemptOutcome.WrongPin -> {
+                failCount = outcome.failCount
+                Toast.makeText(this, "Incorrect PIN", Toast.LENGTH_SHORT).show()
+            }
+            is PinAttemptOutcome.PanicTriggered -> {
+                // Escalate exactly once, on the transition into the 3rd
+                // wrong attempt — PinAttemptDecision returns AlreadyLocked
+                // (not another PanicTriggered) for every attempt after this
+                // one, so this branch fires at most once per lock session.
+                failCount = outcome.failCount
+                triggerPanicMode()
+            }
+            is PinAttemptOutcome.AlreadyLocked -> {
+                failCount = outcome.failCount
+                Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
     override fun onUserLeaveHint() {
-
         super.onUserLeaveHint()
         if (!isFinishing) {
             val intent = android.content.Intent(this, TrackingLockActivity::class.java).apply {
@@ -18891,18 +19687,24 @@ class TrackingLockActivity : ComponentActivity() {
         }
     }
 
-
     /**
-     * Fires after 3 wrong PIN entries. Captures a front-camera photo (if the
-     * camera bound successfully) and escalates [TrackingService] into panic
-     * mode. The photo lives in [externalMediaDirs] — excluded from Auto Backup
-     * via `data_extraction_rules.xml`. If no photo is available, panic mode
-     * still proceeds without one.
+     * Fires exactly once per lock session, on the 3rd wrong PIN. Binds the
+     * front camera (if CAMERA is granted) and captures a photo, then
+     * escalates [TrackingService] into panic mode regardless of whether the
+     * photo succeeded. The photo lives in [externalMediaDirs] and is deleted
+     * by [TrackingService] once it's been sent — see that class's
+     * `sendMmsPhoto`.
      */
     private fun triggerPanicMode() {
         Toast.makeText(this, "Device Locked.", Toast.LENGTH_SHORT).show()
-        intruderCamera.capture(this) { path ->
-            TrackingService.enterPanicMode(this@TrackingLockActivity, path)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            intruderCamera.start(this) {
+                intruderCamera.capture(this) { path ->
+                    TrackingService.enterPanicMode(this@TrackingLockActivity, path)
+                }
+            }
+        } else {
+            TrackingService.enterPanicMode(this, null)
         }
     }
 }
@@ -18925,9 +19727,11 @@ fun LockScreenUI(onPinEntered: (String) -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
             OutlinedTextField(
                 value = pin,
-                onValueChange = { pin = it },
+                onValueChange = { pin = it.filter(Char::isDigit).take(6) },
                 label = { Text("Enter 6-digit PIN to unlock") },
-                singleLine = true
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                visualTransformation = PasswordVisualTransformation(),
             )
             Spacer(modifier = Modifier.height(16.dp))
             Button(onClick = { onPinEntered(pin) }) {
@@ -18945,6 +19749,7 @@ fun LockScreenUI(onPinEntered: (String) -> Unit) {
 package com.hereliesaz.quicloc.lockdown
 
 import android.annotation.SuppressLint
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -18953,13 +19758,15 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Handler
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.IBinder
-import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.ServiceCompat
 import com.hereliesaz.quicloc.FindMyPhone
 import com.hereliesaz.quicloc.LocationHelper
+import java.io.File
 
 /**
  * Persistent foreground service that powers the find-my-phone path. Lives in
@@ -18975,13 +19782,21 @@ import com.hereliesaz.quicloc.LocationHelper
  *   - 5 minutes normally
  *   - 1 minute in panic mode (entered after 3 wrong PIN attempts)
  *
- * In panic mode, each tick also sends the captured intruder photo as MMS.
+ * On entering panic mode, the captured intruder photo is sent via MMS
+ * exactly once (not resent on every subsequent tick — see [doTick]).
  *
  * Service-level concerns:
  *
  *   - `START_STICKY` + state persisted in `quicloc_tracking_state` prefs so
  *     the service can resume on its own after an OS kill. The null-intent
- *     restart path in [onStartCommand] handles this.
+ *     restart path in [onStartCommand] handles this, and [TrackingAlarmReceiver]
+ *     handles the same recovery if the *process* (not just the service
+ *     instance) was killed — see its class doc. [FindMyPhone.resumeTrackingAfterBoot]
+ *     handles the reboot case, which START_STICKY does not cover at all.
+ *   - Ticks are driven by [AlarmManager] wakeup alarms, not a `Handler` —
+ *     `Handler.postDelayed` cannot fire while the CPU is suspended (deep
+ *     sleep), which would silently stall tracking on a pocketed, screen-off
+ *     device. See [scheduleNextTick].
  *   - `foregroundServiceType="location"` — Android 14+ FGS type requirement.
  *     The intruder photo is captured by the visible [TrackingLockActivity]
  *     (CAMERA only, no camera-typed FGS).
@@ -18997,6 +19812,11 @@ class TrackingService : Service() {
         private const val TAG = "QuicLoc.TrackingService"
         private const val CHANNEL_ID = "quicloc_tracking"
         private const val NOTIF_ID = 2002
+        private const val ALARM_REQUEST_CODE = 2003
+
+        private const val NORMAL_INTERVAL_MS = 300_000L // 5 min
+        private const val PANIC_INTERVAL_MS = 60_000L // 1 min
+        private const val MMS_MAX_DIMENSION_PX = 800
 
         const val ACTION_STOP = "com.hereliesaz.quicloc.STOP_TRACKING"
         const val ACTION_PANIC_MODE = "com.hereliesaz.quicloc.PANIC_MODE"
@@ -19016,10 +19836,12 @@ class TrackingService : Service() {
 
         /**
          * Escalate the running service into panic mode (1-minute interval,
-         * MMS photo on every tick). Called by [TrackingLockActivity] after
-         * 3 wrong PIN entries. [photoPath] is the absolute path to the
-         * front-camera capture; null if camera capture failed but we still
-         * want to escalate the tracking cadence.
+         * one MMS photo). Called by [TrackingLockActivity] exactly once, on
+         * the wrong-PIN attempt that crosses the 3-strike threshold — see
+         * that class for why it must not call this more than once per
+         * lock session. [photoPath] is the absolute path to the front-camera
+         * capture; null if camera capture failed but we still want to
+         * escalate the tracking cadence.
          */
         fun enterPanicMode(context: Context, photoPath: String?) {
             val intent = Intent(context, TrackingService::class.java).apply {
@@ -19033,14 +19855,15 @@ class TrackingService : Service() {
     private var sender: String? = null
     private var source: String = "Unknown"
     private var isPanicMode = false
-    private var handler = Handler(Looper.getMainLooper())
     private var photoPathToSend: String? = null
-
 
     /**
      * Persists the current sender/source/panic-mode/photo path into plain
-     * `SharedPreferences` so [onStartCommand]'s null-intent restart branch
-     * can rehydrate everything if the OS kills the service.
+     * `SharedPreferences` so [onStartCommand] can rehydrate everything after
+     * either an OS-initiated restart of this exact service instance (the
+     * null-intent path) or a full process kill ([TrackingAlarmReceiver]
+     * restarting a fresh instance, or [FindMyPhone.resumeTrackingAfterBoot]
+     * after a reboot).
      */
     private fun saveState() {
         val prefs = getSharedPreferences("quicloc_tracking_state", Context.MODE_PRIVATE)
@@ -19068,14 +19891,6 @@ class TrackingService : Service() {
             .apply()
     }
 
-    private val trackingRunnable = object : Runnable {
-        override fun run() {
-            sendLocationUpdate()
-            val interval = if (isPanicMode) 60_000L else 300_000L // 1 min or 5 min
-            handler.postDelayed(this, interval)
-        }
-    }
-
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -19083,16 +19898,37 @@ class TrackingService : Service() {
         createNotificationChannel()
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        // Defensive: if this instance is going away without stopTracking()
+        // having run (e.g. the OS reclaims it under memory pressure without
+        // an explicit stop), cancel this instance's scheduled alarm so a
+        // still-pending one from a *replacement* instance (which reschedules
+        // under the same stable request code, so it would simply overwrite
+        // this one) is the only one left armed — never two overlapping
+        // schedules ticking the same session twice.
+        if (sender != null) cancelScheduledTick()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Any entry point that finds no in-memory session first tries to
+        // restore one from disk. Covers the null-intent OS-restart path AND
+        // a fresh process spun up by TrackingAlarmReceiver or
+        // FindMyPhone.resumeTrackingAfterBoot — both start this service with
+        // a non-null Intent, so without this they'd fall through to
+        // "no session, no sender extra, stop" instead of resuming.
+        val freshlyRestored = sender == null && loadState()
+
         if (intent == null) {
-            // Restore state from SharedPreferences
-            if (!loadState()) {
+            if (sender == null) {
                 stopSelf()
                 return START_NOT_STICKY
             }
             Log.d(TAG, "TrackingService restarted by system, restoring state for $sender")
-            showForegroundNotification()
-            handler.post(trackingRunnable)
+            claimForeground()
+            engageLockdown()
+            doTick()
+            scheduleNextTick()
             return START_STICKY
         }
 
@@ -19103,12 +19939,35 @@ class TrackingService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_PANIC_MODE -> {
+                if (sender == null) {
+                    // A stray/duplicate broadcast with nothing persisted to
+                    // escalate — bail without writing any state, so it can't
+                    // resurrect a session that was already stopped.
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
                 Log.d(TAG, "Entering panic mode")
                 isPanicMode = true
                 photoPathToSend = intent.getStringExtra(EXTRA_PHOTO_PATH)
                 saveState()
-                handler.removeCallbacks(trackingRunnable)
-                handler.post(trackingRunnable)
+                claimForeground()
+                // Only a freshly-recreated process needs the lock screen
+                // re-engaged — an already-running session's lock activity is
+                // already up; relaunching it here would blow away any PIN
+                // digits the person on the lock screen was mid-typing.
+                if (freshlyRestored) engageLockdown()
+                scheduleNextTick(immediate = true)
+                return START_STICKY
+            }
+            FindMyPhone.ACTION_TICK -> {
+                if (sender == null) {
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                claimForeground()
+                if (freshlyRestored) engageLockdown()
+                doTick()
+                scheduleNextTick()
                 return START_STICKY
             }
         }
@@ -19130,58 +19989,35 @@ class TrackingService : Service() {
             // device. fetchLocation is async — it just kicks off the
             // FusedLocationProvider request and returns. Doing it here gives
             // the GPS subsystem a head start while the screen is still on.
-            // The subsequent periodic ticks are scheduled by trackingRunnable
-            // re-posting itself.
-            sendLocationUpdate()
-            handler.postDelayed(trackingRunnable, if (isPanicMode) 60_000L else 300_000L)
-            showForegroundNotification()
+            doTick()
+            scheduleNextTick()
+            claimForeground()
+            engageLockdown()
         }
 
         return START_STICKY
     }
 
     /**
-     * Ordering matters here. We must:
-     *
-     *   1. Claim FGS status FIRST, so we have background-activity-start
-     *      privileges and so the location-typed FGS is registered with the
-     *      OS before anything else runs. If we lock first, the OS-level
-     *      "no background work" rules kick in before our FGS is recognised
-     *      and the immediate location fetch silently times out.
-     *   2. Launch the PIN-gate Activity SECOND, before the device actually
-     *      locks. Combined with the activity's manifest `showWhenLocked=true`,
-     *      it draws over the keyguard AND stays on top once the user unlocks
-     *      it — so the QuicLoc PIN is required even after a Device Admin
-     *      `lockNow`. Without this step a thief could just enter the system
-     *      PIN and walk away from the tracking.
-     *   3. Lock via Device Admin LAST. If admin isn't granted, the
-     *      `FullScreenIntent` + `startActivity` above are the only barrier,
-     *      but they're always wired up regardless of grant state.
+     * Claims (or refreshes) foreground-service status. Idempotent and cheap
+     * to call on every tick — required at least once per process lifetime
+     * (Android tears the process down if a `startForegroundService`-started
+     * service never calls this promptly), and calling it again just updates
+     * the existing notification.
      */
-    private fun showForegroundNotification() {
-        val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        }
-
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
+    private fun claimForeground() {
         val builder = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("QuicLoc Tracking Active")
             .setContentText("Enter your QuicLoc PIN to stop tracking.")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentIntent(pendingIntent)
+            .setContentIntent(lockActivityPendingIntent())
             // Always wired up — the PIN gate must surface regardless of
             // whether Device Admin lockNow succeeds. On Android 14+ this
             // requires USE_FULL_SCREEN_INTENT to be granted (the in-app
             // permissions panel exposes it).
-            .setFullScreenIntent(pendingIntent, true)
+            .setFullScreenIntent(lockActivityPendingIntent(), true)
             .setOngoing(true)
 
-        // Step 1: claim FGS status. Location only — the intruder photo is
-        // captured by the visible TrackingLockActivity (CAMERA permission, no
-        // camera-typed FGS needed).
         ServiceCompat.startForeground(
             this,
             NOTIF_ID,
@@ -19190,30 +20026,107 @@ class TrackingService : Service() {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
             } else 0
         )
+    }
 
-        // Step 2: bring the PIN-gate Activity up BEFORE locking.
+    /**
+     * One-shot: bring up the PIN-gate lock activity and attempt a real
+     * Device Admin lock. Called once per lock "session" (initial trigger, or
+     * a freshly-recreated process resuming one) — NOT on every periodic
+     * tick, which would repeatedly relaunch [TrackingLockActivity] over
+     * whatever the person in front of the phone was doing (including typing
+     * a PIN) and repeatedly re-invoke `lockNow()` for no benefit.
+     */
+    private fun engageLockdown() {
+        val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
         try {
             startActivity(lockIntent)
         } catch (e: Exception) {
             Log.w(TAG, "Could not start lock activity directly — relying on FullScreenIntent", e)
         }
-
-        // Step 3: lock via Device Admin. Best-effort — no-op if admin not granted.
         val realLockSucceeded = LockdownController.lockNow(this)
         Log.d(TAG, "Lock attempt: realLockSucceeded=$realLockSucceeded")
     }
 
+    private fun lockActivityPendingIntent(): PendingIntent {
+        val lockIntent = Intent(this, TrackingLockActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+        return PendingIntent.getActivity(
+            this, 0, lockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun tickPendingIntent(): PendingIntent {
+        val intent = Intent(this, TrackingAlarmReceiver::class.java)
+        return PendingIntent.getBroadcast(
+            this, ALARM_REQUEST_CODE, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    /**
+     * Schedules the next tick via [AlarmManager] instead of
+     * `Handler.postDelayed`. `Handler.postDelayed` measures against
+     * `SystemClock.uptimeMillis()`, which stops advancing while the CPU is
+     * suspended — on a locked, screen-off device (exactly the state this
+     * service runs in) that silently stalls the whole tracking cadence with
+     * no error and no log. `AlarmManager` wakeup alarms are the platform's
+     * actual mechanism for "run code at this time even during deep sleep".
+     *
+     * Deliberately a non-exact wakeup alarm (`set`, not
+     * `setExactAndAllowWhileIdle`) — exact alarms need the user to grant
+     * `SCHEDULE_EXACT_ALARM`/`USE_EXACT_ALARM`, another permission this
+     * feature doesn't otherwise need. A non-exact wakeup alarm still forces
+     * a real CPU wake (which is the actual bug being fixed here — Handler
+     * couldn't do that at all), Doze may just defer delivery into the next
+     * maintenance window by some margin rather than firing at the exact
+     * millisecond.
+     *
+     * Re-scheduling with the same stable [ALARM_REQUEST_CODE]/[PendingIntent]
+     * replaces any alarm already pending for this session — there is never
+     * more than one tick alarm armed at a time, so a service instance being
+     * recreated mid-session can't end up with two overlapping schedules.
+     */
+    private fun scheduleNextTick(immediate: Boolean = false) {
+        val intervalMs = if (immediate) 0L else if (isPanicMode) PANIC_INTERVAL_MS else NORMAL_INTERVAL_MS
+        val am = getSystemService(AlarmManager::class.java) ?: return
+        val triggerAt = SystemClock.elapsedRealtime() + intervalMs
+        try {
+            am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, tickPendingIntent())
+        } catch (t: Throwable) {
+            Log.w(TAG, "Could not schedule next tracking tick", t)
+        }
+    }
+
+    private fun cancelScheduledTick() {
+        val am = getSystemService(AlarmManager::class.java) ?: return
+        try {
+            am.cancel(tickPendingIntent())
+        } catch (t: Throwable) {
+            Log.w(TAG, "Could not cancel scheduled tracking tick", t)
+        }
+    }
+
     @SuppressLint("MissingPermission")
-    private fun sendLocationUpdate() {
+    private fun doTick() {
         val targetSender = sender ?: return
         Log.d(TAG, "Fetching location for tracking update...")
         LocationHelper.getCurrentLocationAndReply(
             context = this,
             phoneNumber = targetSender,
             onResult = { succeeded ->
-                // Also send photo if in panic mode, regardless of location success
-                if (isPanicMode && photoPathToSend != null) {
-                    sendMmsPhoto(targetSender, photoPathToSend!!)
+                // Send the panic-mode photo at most once: the tick right
+                // after escalation (or the escalation's own immediate tick)
+                // sends it and clears photoPathToSend, so later ticks in the
+                // same panic session don't keep re-sending the identical
+                // photo indefinitely (that used to be one MMS per minute,
+                // forever, until the correct PIN was entered).
+                val photo = photoPathToSend
+                if (isPanicMode && photo != null) {
+                    photoPathToSend = null
+                    saveState()
+                    sendMmsPhoto(targetSender, photo)
                 }
             }
         )
@@ -19230,45 +20143,79 @@ class TrackingService : Service() {
                 val transaction = com.klinker.android.send_message.Transaction(this@TrackingService, settings)
                 val message = com.klinker.android.send_message.Message("QuicLoc Lock Image", targetSender)
 
-                // Add image
-                val file = java.io.File(photoPath)
+                val file = File(photoPath)
                 if (file.exists()) {
-                    val options = android.graphics.BitmapFactory.Options().apply {
-                        inJustDecodeBounds = true
+                    val bitmap = downsampleForMms(photoPath, MMS_MAX_DIMENSION_PX)
+                    if (bitmap != null) {
+                        message.setImage(bitmap)
+                        transaction.sendNewMessage(message, com.klinker.android.send_message.Transaction.NO_THREAD_ID)
+                        Log.d(TAG, "MMS enqueued via library")
+                        // The photo already made it to the owner (or is
+                        // enqueued to) — the local copy in externalMediaDirs
+                        // is MediaStore-visible and backup-eligible, so don't
+                        // leave it sitting there indefinitely. Kept on a
+                        // decode/send failure below so a retry or manual
+                        // recovery is still possible.
+                        file.delete()
+                    } else {
+                        Log.e(TAG, "Could not decode photo for MMS: $photoPath")
                     }
-                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
-
-                    // Calculate inSampleSize
-                    var inSampleSize = 1
-                    val reqWidth = 800
-                    val reqHeight = 800
-                    if (options.outHeight > reqHeight || options.outWidth > reqWidth) {
-                        val halfHeight = options.outHeight / 2
-                        val halfWidth = options.outWidth / 2
-                        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
-                            inSampleSize *= 2
-                        }
-                    }
-
-                    options.inJustDecodeBounds = false
-                    options.inSampleSize = inSampleSize
-
-                    val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
-                    message.setImage(bitmap)
-                    transaction.sendNewMessage(message, com.klinker.android.send_message.Transaction.NO_THREAD_ID)
-                    Log.d(TAG, "MMS enqueued via library")
                 } else {
                     Log.e(TAG, "Photo file not found: $photoPath")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to send MMS", e)
+            } catch (e: OutOfMemoryError) {
+                // BitmapFactory/createScaledBitmap can throw OutOfMemoryError
+                // (not Exception) on a very large source image — this runs on
+                // a bare Thread, so an uncaught Error here would hit the
+                // default uncaught-exception handler and kill the whole
+                // process, taking the FGS and the lock screen down with it
+                // mid-response to a theft.
+                Log.e(TAG, "Out of memory decoding photo for MMS: $photoPath", e)
             }
         }.start()
     }
 
+    /**
+     * Decodes [path] downsampled so neither dimension exceeds
+     * [maxDimensionPx] — MMS carriers reject/re-compress oversized images.
+     * `inSampleSize` only supports power-of-two steps, so it alone can leave
+     * an image up to ~2x the target on its long side depending on aspect
+     * ratio; this finishes with an exact [Bitmap.createScaledBitmap] pass so
+     * the cap is real, not "roughly". Returns null if the file can't be
+     * decoded at all.
+     */
+    private fun downsampleForMms(path: String, maxDimensionPx: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var inSampleSize = 1
+        val longSide = maxOf(bounds.outWidth, bounds.outHeight)
+        while (longSide / (inSampleSize * 2) >= maxDimensionPx) inSampleSize *= 2
+
+        val decoded = BitmapFactory.decodeFile(path, BitmapFactory.Options().apply {
+            this.inSampleSize = inSampleSize
+        }) ?: return null
+
+        val decodedLongSide = maxOf(decoded.width, decoded.height)
+        if (decodedLongSide <= maxDimensionPx) return decoded
+
+        val scale = maxDimensionPx.toFloat() / decodedLongSide
+        val scaled = Bitmap.createScaledBitmap(
+            decoded,
+            (decoded.width * scale).toInt().coerceAtLeast(1),
+            (decoded.height * scale).toInt().coerceAtLeast(1),
+            true
+        )
+        if (scaled !== decoded) decoded.recycle()
+        return scaled
+    }
+
     private fun stopTracking() {
+        cancelScheduledTick()
         clearState()
-        handler.removeCallbacksAndMessages(null)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -19283,6 +20230,76 @@ class TrackingService : Service() {
         }
         getSystemService(NotificationManager::class.java)
             .createNotificationChannel(channel)
+    }
+}
+
+
+######################################################
+# FILE: feature_findmyphone/src/test/java/com/hereliesaz/quicloc/lockdown/PinAttemptDecisionTest.kt
+######################################################
+
+package com.hereliesaz.quicloc.lockdown
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class PinAttemptDecisionTest {
+
+    @Test
+    fun `correct pin unlocks regardless of prior fail count`() {
+        assertEquals(
+            PinAttemptOutcome.Unlocked,
+            PinAttemptDecision.evaluate("123456", "123456", failCountBefore = 2)
+        )
+    }
+
+    @Test
+    fun `null expected pin never unlocks`() {
+        // Regression test: a removed PIN (expectedPin == null) must never
+        // match any entered pin — "" == null is false in Kotlin, but this
+        // pins the contract explicitly rather than relying on that being
+        // remembered.
+        val outcome = PinAttemptDecision.evaluate("123456", null, failCountBefore = 0)
+        assertEquals(PinAttemptOutcome.WrongPin(1), outcome)
+    }
+
+    @Test
+    fun `first and second wrong attempts are just wrong, no escalation`() {
+        assertEquals(
+            PinAttemptOutcome.WrongPin(1),
+            PinAttemptDecision.evaluate("000000", "123456", failCountBefore = 0)
+        )
+        assertEquals(
+            PinAttemptOutcome.WrongPin(2),
+            PinAttemptDecision.evaluate("000000", "123456", failCountBefore = 1)
+        )
+    }
+
+    @Test
+    fun `third wrong attempt triggers panic exactly once`() {
+        assertEquals(
+            PinAttemptOutcome.PanicTriggered(3),
+            PinAttemptDecision.evaluate("000000", "123456", failCountBefore = 2)
+        )
+    }
+
+    @Test
+    fun `every wrong attempt after the third is AlreadyLocked, never PanicTriggered again`() {
+        // The bug this whole extraction exists to prevent: failCount >= 3
+        // used to retrigger a fresh photo capture and a fresh panic-mode MMS
+        // on every single wrong PIN past the third, unboundedly.
+        for (before in 3..10) {
+            val outcome = PinAttemptDecision.evaluate("000000", "123456", failCountBefore = before)
+            assertEquals("failCountBefore=$before", PinAttemptOutcome.AlreadyLocked(before + 1), outcome)
+        }
+    }
+
+    @Test
+    fun `correct pin still unlocks even after panic mode was triggered`() {
+        assertEquals(
+            PinAttemptOutcome.Unlocked,
+            PinAttemptDecision.evaluate("123456", "123456", failCountBefore = 5)
+        )
     }
 }
 
@@ -19335,6 +20352,7 @@ concurrent-futures = "1.3.0"
 guava-listenablefuture = "9999.0-empty-to-avoid-conflict-with-guava"
 playServicesAuth = "21.6.0"
 playFeatureDelivery = "2.1.0"
+androidx-tracing = "1.3.0"
 
 [libraries]
 android-smsmms = { group = "com.klinkerapps", name = "android-smsmms", version.ref = "androidSmsmms" }
@@ -19366,6 +20384,7 @@ material = { group = "com.google.android.material", name = "material", version.r
 play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 play-feature-delivery = { group = "com.google.android.play", name = "feature-delivery", version.ref = "playFeatureDelivery" }
+androidx-tracing = { group = "androidx.tracing", name = "tracing", version.ref = "androidx-tracing" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 
 [plugins]
@@ -19511,10 +20530,7 @@ dependencyResolutionManagement {
 }
 rootProject.name = "QuicLoc"
 include(":app")
-// Find-my-phone / lockdown feature is currently DISABLED (kept in the repo,
-// not shipped). Re-enable by uncommenting this include, re-adding it to the
-// app's `dynamicFeatures`, and flipping `FindMyPhone.ENABLED` to true.
-// include(":feature_findmyphone")
+include(":feature_findmyphone")
 
 
 ======================================================
