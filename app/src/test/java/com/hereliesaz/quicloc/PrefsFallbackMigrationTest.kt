@@ -71,4 +71,49 @@ class PrefsFallbackMigrationTest {
         assertEquals("value", real.getString("existing", null))
         assertFalse(real.contains("pin"))
     }
+
+    // ---- StringSet stores (GeofenceStore, WhitelistManager) --------------
+    // A single-key StringSet store (GeofenceStore has exactly one key) would
+    // hit the "real store already has this key" skip on every migration
+    // once there's any pre-outage data at all, silently discarding every
+    // record added only during the outage. These pin the union-merge fix.
+
+    @Test
+    fun `unions a StringSet key instead of skipping it when the real store already has it`() {
+        context.getSharedPreferences("test_fallback", Context.MODE_PRIVATE)
+            .edit().putStringSet("entries", setOf("added-during-outage")).commit()
+
+        val real = context.getSharedPreferences("test_real", Context.MODE_PRIVATE)
+        real.edit().putStringSet("entries", setOf("pre-existing")).commit()
+
+        migratePlaintextFallback(context, "test_fallback", real)
+
+        assertEquals(
+            setOf("pre-existing", "added-during-outage"),
+            real.getStringSet("entries", emptySet())
+        )
+    }
+
+    @Test
+    fun `StringSet union still recovers when the real store has no prior value for that key`() {
+        context.getSharedPreferences("test_fallback", Context.MODE_PRIVATE)
+            .edit().putStringSet("entries", setOf("only-in-fallback")).commit()
+
+        val real = context.getSharedPreferences("test_real", Context.MODE_PRIVATE)
+        migratePlaintextFallback(context, "test_fallback", real)
+
+        assertEquals(setOf("only-in-fallback"), real.getStringSet("entries", emptySet()))
+    }
+
+    @Test
+    fun `StringSet union clears the fallback file same as a scalar migration`() {
+        context.getSharedPreferences("test_fallback", Context.MODE_PRIVATE)
+            .edit().putStringSet("entries", setOf("x")).commit()
+        val real = context.getSharedPreferences("test_real", Context.MODE_PRIVATE)
+        real.edit().putStringSet("entries", setOf("y")).commit()
+
+        migratePlaintextFallback(context, "test_fallback", real)
+
+        assertTrue(context.getSharedPreferences("test_fallback", Context.MODE_PRIVATE).all.isEmpty())
+    }
 }

@@ -8,8 +8,12 @@ import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.Geofence
+import com.google.android.gms.location.GeofencingClient
 import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
+import com.google.android.gms.tasks.Tasks
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * The only file that talks to `GeofencingClient`. [sync] fully reconciles
@@ -19,23 +23,54 @@ import com.google.android.gms.location.LocationServices
  * cheap, and it means every mutation call site is just "mutate the store,
  * then sync" with no way for an OS-level registration to drift from the
  * store (e.g. a deleted place that keeps firing).
+ *
+ * `sync()` calls are serialized onto a single background thread rather than
+ * fired as independent async chains: `removeGeofences`/`addGeofences` are
+ * both async Play Services calls, and two overlapping sync()s (e.g. saving a
+ * location and immediately deleting it) could otherwise interleave —
+ * a stale add from the first call landing after the second call's remove
+ * would resurrect a just-deleted geofence. Running each sync to completion
+ * (via [Tasks.await], safe here because it's off the calling thread) before
+ * the next one starts removes that race entirely.
  */
 object GeofenceRegistrar {
     private const val TAG = "QuicLoc.GeofenceReg"
+    private const val AWAIT_TIMEOUT_S = 30L
+
+    private val executor = Executors.newSingleThreadExecutor()
 
     fun sync(context: Context) {
         val appContext = context.applicationContext
-        val client = LocationServices.getGeofencingClient(appContext)
-        val pi = pendingIntent(appContext)
-
-        client.removeGeofences(pi).addOnCompleteListener {
-            registerCurrentSet(appContext, client, pi)
+        executor.execute {
+            try {
+                syncBlocking(appContext)
+            } catch (e: Exception) {
+                Log.e(TAG, "sync failed", e)
+            }
         }
+    }
+
+    private fun syncBlocking(context: Context) {
+        val client = LocationServices.getGeofencingClient(context)
+        val pi = pendingIntent(context)
+
+        try {
+            Tasks.await(client.removeGeofences(pi), AWAIT_TIMEOUT_S, TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            // Whatever the cause (transient GMS error, timeout, no prior
+            // registration to remove), don't let a failed removal silently
+            // leave stale geofences un-reconciled -- GeofenceBroadcastReceiver
+            // separately re-checks the master toggle at fire time as a
+            // backstop, but logging this loudly means it isn't invisible.
+            Log.e(TAG, "removeGeofences failed — registration may be stale until the next sync", e)
+        }
+
+        registerCurrentSet(context, client, pi)
     }
 
     private fun registerCurrentSet(
         context: Context,
-        client: com.google.android.gms.location.GeofencingClient,
+        client: GeofencingClient,
         pi: PendingIntent,
     ) {
         if (!AppSettings.isLocNoticeEnabled(context)) return
@@ -44,9 +79,7 @@ object GeofenceRegistrar {
             return
         }
 
-        val entries = GeofenceStore(context).getAll()
-            .filter { it.enabled }
-            .take(GeofenceEntry.MAX_GEOFENCES)
+        val entries = selectForRegistration(GeofenceStore(context).getAll())
         if (entries.isEmpty()) return
 
         // Every enabled entry is registered for BOTH directions regardless of
@@ -67,12 +100,32 @@ object GeofenceRegistrar {
             .build()
 
         try {
-            client.addGeofences(request, pi)
-                .addOnFailureListener { e -> Log.e(TAG, "addGeofences failed", e) }
+            Tasks.await(client.addGeofences(request, pi), AWAIT_TIMEOUT_S, TimeUnit.SECONDS)
         } catch (e: SecurityException) {
             Log.e(TAG, "Missing location permission for geofencing", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "addGeofences failed", e)
         }
     }
+
+    /**
+     * Which stored entries should actually be registered with Play
+     * Services: enabled only, capped at [GeofenceEntry.MAX_GEOFENCES],
+     * newest-first. A pure function of the input list — deliberately
+     * separated from [registerCurrentSet] so the truncation/ordering logic
+     * is directly unit-testable without a real `GeofencingClient`.
+     *
+     * Sorting by [GeofenceEntry.createdAt] before truncating matters
+     * because `SharedPreferences`' `StringSet` has no defined iteration
+     * order — without it, an over-the-cap truncation would silently drop an
+     * arbitrary location (which one changes on every add/remove) rather
+     * than consistently keeping the newest ones.
+     */
+    fun selectForRegistration(entries: List<GeofenceEntry>): List<GeofenceEntry> =
+        entries
+            .filter { it.enabled }
+            .sortedByDescending { it.createdAt }
+            .take(GeofenceEntry.MAX_GEOFENCES)
 
     private fun hasBackgroundLocation(context: Context): Boolean {
         val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

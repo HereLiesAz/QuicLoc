@@ -64,6 +64,13 @@ runs:
           '{iss:$iss, scope:"https://www.googleapis.com/auth/androidpublisher", aud:$aud, iat:$iat, exp:$exp}' \
           | b64url)
         jq -r '.private_key' "$sa" > "$RUNNER_TEMP/key.pem"
+        # sa.json holds the same private key as key.pem (which the next few
+        # lines already delete once signing is done) but was, until now,
+        # never deleted at all -- leaving the full service-account
+        # credential readable on disk for the rest of the job, including
+        # every Gradle plugin and transitive build dependency that runs
+        # after this action returns.
+        rm -f "$sa"
         sig=$(printf '%s' "$header_b64.$claim_b64" | openssl dgst -sha256 -sign "$RUNNER_TEMP/key.pem" | b64url)
         jwt="$header_b64.$claim_b64.$sig"
         rm -f "$RUNNER_TEMP/key.pem"

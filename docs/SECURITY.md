@@ -41,16 +41,18 @@ That last row is a deliberate non-lockout, unchanged from before; what *is* new 
 
 ## On-device storage encryption
 
-Two prefs files contain sensitive data:
+Sensitive data lives in `EncryptedSharedPreferences`:
 
 | File | Class | Encryption |
 |---|---|---|
 | `quicloc_secure_prefs` | `WhitelistManager` | `EncryptedSharedPreferences` (AES-256-GCM values, AES-256-SIV keys, master key from Android Keystore) |
 | `quicloc_history` | `RequestHistoryManager` | Same as above |
+| `quicloc_diagnostics` | `DiagnosticLogManager` | Same as above |
+| `quicloc_locnotice_prefs` | `GeofenceStore` | Same as above — place names, coordinates, radius, and which contacts get told are at least as sensitive as the whitelist itself (they reveal home/work addresses tied to specific people) |
 
 The master key is held in the hardware-backed Android Keystore (when available — falls back to software Keystore on older devices). The key never leaves the secure element on Pixels/most flagships.
 
-Non-sensitive state (`quicloc_app_settings`, `quicloc_tracking_state`) is in plain `SharedPreferences`. The toggle, reminder-notification preference, and "already prompted" flags are not worth encrypting and *do* need to back up.
+Non-sensitive state (`quicloc_app_settings`, `quicloc_tracking_state`, `quicloc_geofence_state`) is in plain `SharedPreferences`. The toggle, reminder-notification preference, "already prompted" flags, and Loc Notice's ephemeral per-geofence transition bookkeeping are not worth encrypting; the first group *does* need to back up, the second (like tracking state) deliberately does not — see the backup-pathway table below.
 
 ### Fallback path
 
@@ -73,7 +75,7 @@ See [BACKUP.md](BACKUP.md) for the full format and rationale.
 
 A 6-digit PIN is 10⁶ ≈ 2²⁰ entropy. PBKDF2 with 600k iterations slows offline guessing to ~50 ms/attempt on a single mobile core; on a strong GPU rig, ~1 ms/attempt. Full brute force takes ~17 minutes.
 
-This is weak by modern standards. We accept it because:
+This is weak by modern standards, and got weaker in practice once Loc Notice shipped: the blob now also carries saved-place names and exact coordinates (home, work, anywhere else configured), not just contact numbers. We accept it because:
 
 - The attacker also needs the blob, which lives in `files/` — only reachable through Auto Backup (Google E2E-encrypted with device PIN) or device-transfer (similarly protected).
 - An attacker who already has the user's Google account *and* device PIN can already read the encrypted blob's plaintext-equivalent (the prefs themselves on the source device).
@@ -92,11 +94,15 @@ This is weak by modern standards. We accept it because:
 | Find-my-phone PIN | | ✓ | |
 | Find-my-phone passphrase | | ✓ | |
 | Onboarding-completed flag | | ✓ | |
+| Loc Notice master switch | ✓ | | |
+| Loc Notice locations (name, coordinates, radius, contacts) | | ✓ | |
 | Request history | | | ✓ (privacy choice — see below) |
+| Diagnostic log | | | ✓ (privacy choice — see below) |
 | Active tracking state | | | ✓ (runtime only) |
+| Loc Notice transition state (last enter/exit per place) | | | ✓ (runtime only) |
 | Intruder photos (panic mode) | | | ✓ (forensic, ephemeral) |
 
-History is intentionally excluded from backup. It's a log of who's been asking for your location; restoring it to a new device leaks that log into the user's backup chain. Since it's just a UI convenience, dropping it is the safer default.
+History and the diagnostic log are intentionally excluded from backup. Both are logs of who's been interacting with your location (who asked, or which app/number triggered what) — restoring either to a new device leaks that log into the user's backup chain. Since both are just in-app troubleshooting/UI conveniences, dropping them is the safer default.
 
 ## Code paths reviewed for security
 

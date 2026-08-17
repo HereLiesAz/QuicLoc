@@ -59,7 +59,12 @@ Select: **Yes**
 
 **Describe why your app needs background location access:**
 
-> QuicLoc's core function is to respond to incoming location requests automatically, including when the device screen is off and the app is not in the foreground. When a trigger message is received from a whitelisted contact, the app must obtain the device's current GPS coordinates to send a location reply. This is the sole purpose of background location access. The location is used only to generate a Google Maps link sent to the requesting contact. Location is never obtained proactively, stored, logged, or transmitted to any server or third party.
+> QuicLoc uses background location for two distinct, both user-visible and user-controlled, safety functions:
+>
+> 1. **Request-reply (always available).** When a trigger message is received from a whitelisted contact, including when the screen is off and the app is not in the foreground, QuicLoc obtains the device's current GPS coordinates to send a location reply. Location is read only at the moment of replying to a request, never on a schedule.
+> 2. **Loc Notice (opt-in, off by default, separate switch from the rest of the app).** The user names a place, picks contacts, and chooses to be alerted on arrival and/or departure. While this feature is on, Android's Geofencing API (Google Play services) continuously monitors location in the background to detect boundary crossings for the user's saved places, and QuicLoc automatically texts the chosen contacts when one occurs. This is genuine ongoing background location use — the feature cannot work otherwise — and is fully disclosed to the user in-app before they turn it on, with its own on/off switch independent of every other function in the app.
+>
+> In both cases, location is used only to (1) generate the Google Maps link or arrival/departure text sent to the relevant contact(s), and (2) evaluate geofence boundaries on-device via the Android platform's Geofencing API. It is never obtained for any other purpose, never stored beyond what's needed for the feature to function (Loc Notice's place definitions — name, coordinates, radius — are stored locally, encrypted, so the app knows what to monitor; no location *fix* itself is ever logged or stored), and never transmitted to QuicLoc's developer or any server QuicLoc operates — QuicLoc has none.
 
 **Provide a video demonstrating the background location use:**
 > Record a short screen recording showing, in this order:
@@ -68,8 +73,10 @@ Select: **Yes**
 > 3. Locking the device / closing the app.
 > 4. Sending "loc" from that contact's device to trigger a response while the device is locked.
 > 5. The automatic GPS reply arriving on the sending device.
+> 6. Turning on Loc Notice, adding a place (walking through the address → Maps → paste-coordinates flow), picking a contact, and turning on "notify when I arrive."
+> 7. Leaving and re-entering that place's radius (or using a location-simulation tool) and showing the automatic arrival text arrive on the contact's device, with no request sent and the app not open.
 >
-> Upload this to YouTube (unlisted) and paste the link in the Play Console form.
+> Upload this to YouTube (unlisted) and paste the link in the Play Console form. Steps 6-7 are not optional padding — a reviewer who only sees the request-reply demo has no way to verify the *other* declared use of background location, and a mismatch between the written declaration and the demo video is a documented rejection reason.
 
 ---
 
@@ -152,10 +159,10 @@ Select: **Yes**
 Fill in the Data safety form as follows:
 
 ### Does your app collect or share any of the required user data types?
-**Yes — Location is shared (not collected).** Location is sent directly, device-to-device, to one or more of the user's own emergency contacts — either because the user tapped the home-screen widget to send a safety-check or emergency alert, or because a contact the user has specifically allowed to ask requested it by texting the trigger word. This is the explicit, sole function of the app. It is never collected, stored, or transmitted to the developer, an analytics service, or any other third party. See [`PLAY_PUBLISHING.md`](PLAY_PUBLISHING.md#data-safety--privacy).
+**Yes — Location is shared (not collected).** Location is sent directly, device-to-device, to one or more of the user's own emergency contacts, in three ways: the user tapped the home-screen widget to send a safety-check or emergency alert; a contact the user has specifically allowed to ask requested it by texting the trigger word; or (if the user has turned on the opt-in Loc Notice feature) the user crossed the boundary of a place they configured, and QuicLoc automatically texted the contacts they chose for that place. This is the explicit function of the app. It is never collected, stored, or transmitted to the developer, an analytics service, or any other third party. See [`PLAY_PUBLISHING.md`](PLAY_PUBLISHING.md#data-safety--privacy).
 
 ### Data types to declare:
-- **Location — Shared.** Purpose: App functionality. Required (it's the app's core function). Obtained on demand, held in memory only long enough to send the reply, then discarded — never written to disk or a server.
+- **Location — Shared.** Purpose: App functionality. Required (it's the app's core function). For request-reply, obtained on demand, held in memory only long enough to send the reply, then discarded — never written to disk or a server. For the opt-in Loc Notice feature, monitored continuously in the background via the Android Geofencing API while that feature is on, so a boundary crossing can be detected and the configured contacts texted automatically — the *place definitions* (name, coordinates, radius, chosen contacts) are stored locally and encrypted on-device so the app knows what to watch, but individual location fixes are still never logged or stored, only evaluated against those boundaries in the moment.
 - Personal info — not collected
 - Financial info — not collected
 - Health and fitness — not collected
@@ -174,7 +181,7 @@ Fill in the Data safety form as follows:
 **N/A** — No data is transmitted to any server. The only transmission is the SMS/notification reply sent directly to the requesting contact through standard Android system APIs.
 
 ### Can users request data deletion?
-**Yes** — All user data (the emergency contact list) is stored locally on-device and can be deleted at any time by removing entries in the app or uninstalling the app entirely.
+**Yes** — All user data (the emergency contact list, and any Loc Notice places) is stored locally on-device and can be deleted at any time by removing entries in the app or uninstalling the app entirely.
 
 ---
 
@@ -193,4 +200,4 @@ The app will receive a rating of **Everyone**.
 
 If Google Play reviewers contact you for additional clarification, use this response template:
 
-> QuicLoc is a single-purpose personal safety tool built around a home-screen widget: the user taps it to send a safety-check or emergency alert, with their GPS location, to their chosen emergency contacts — no incoming message of any kind is required for this to work. SMS and notification access extend that same mechanism by additionally letting the user's pre-approved trusted contacts request the location themselves by sending a keyword, which the app answers automatically with a Google Maps link. All sensitive permissions (SMS, notification access, background location) are used exclusively for this single function. No data is collected, stored server-side, or shared with any third party including the developer. The list of emergency contacts is encrypted on-device using Android Keystore-backed AES-256 encryption and is protected by biometric authentication. The app has no network connectivity of its own — it uses only Android system APIs and Google Play Services for GPS.
+> QuicLoc is a single-purpose personal safety tool built around a home-screen widget: the user taps it to send a safety-check or emergency alert, with their GPS location, to their chosen emergency contacts — no incoming message of any kind is required for this to work. SMS and notification access extend that same mechanism by additionally letting the user's pre-approved trusted contacts request the location themselves by sending a keyword, which the app answers automatically with a Google Maps link. QuicLoc also offers an opt-in feature, Loc Notice (off by default, its own switch), that automatically texts the user's chosen contacts when the user arrives at or leaves a place they've configured, using the Android Geofencing API. All sensitive permissions (SMS, notification access, background location) are used exclusively for these safety functions. No data is collected, stored server-side, or shared with any third party including the developer. The list of emergency contacts and any Loc Notice places are encrypted on-device using Android Keystore-backed AES-256 encryption and are protected by biometric authentication. The app has no network connectivity or backend of its own — it uses only Android system APIs and Google Play Services (GPS, and the Geofencing API for the opt-in Loc Notice feature).

@@ -1,5 +1,6 @@
 package com.hereliesaz.quicloc
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -48,6 +50,9 @@ import kotlin.math.roundToInt
  * pattern, not `QuicLocScreen`'s heavier prop-drilled one — this is a
  * separate full-screen navigation, not an inline section).
  *
+ * @param contacts The current whitelist, used only to flag when a location's
+ *   stored contact tokens no longer resolve (e.g. after a rename) — see the
+ *   "N contact(s) not found" line below.
  * @param onEntriesChanged Called after any mutation so the caller can
  *   refresh the count shown on the Config screen's Loc Notice section.
  */
@@ -55,12 +60,18 @@ import kotlin.math.roundToInt
 fun LocNoticeListScreen(
     modifier: Modifier = Modifier,
     store: GeofenceStore,
+    contacts: List<WhitelistManager.ContactEntry>,
     onEdit: (String) -> Unit,
     onAddNew: () -> Unit,
+    onBack: () -> Unit,
     onEntriesChanged: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var entries by remember { mutableStateOf(store.getAll()) }
+    var confirmDeleteId by remember { mutableStateOf<String?>(null) }
+    val resolvedTokens = remember(contacts) { contacts.map { it.displayToken }.toSet() }
+
+    BackHandler(onBack = onBack)
 
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
         Card(
@@ -106,47 +117,54 @@ fun LocNoticeListScreen(
             }
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
                 items(entries, key = { it.id }) { entry ->
+                    val resolvedCount = entry.contactTokens.count { it in resolvedTokens }
+                    val missingCount = entry.contactTokens.size - resolvedCount
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(text = entry.name, style = MaterialTheme.typography.bodyLarge)
-                                Text(
-                                    text = "${entry.radiusMeters.roundToInt()}m · " +
-                                        (if (entry.notifyOnEnter) "arrive " else "") +
-                                        (if (entry.notifyOnExit) "leave " else "") +
-                                        "· ${entry.contactTokens.size} contact${if (entry.contactTokens.size == 1) "" else "s"}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            TextButton(onClick = { onEdit(entry.id) }) { Text("Edit") }
-                            Switch(
-                                checked = entry.enabled,
-                                onCheckedChange = { newState ->
-                                    store.setEnabled(entry.id, newState)
-                                    GeofenceRegistrar.sync(context)
-                                    entries = store.getAll()
-                                    onEntriesChanged()
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(text = entry.name, style = MaterialTheme.typography.bodyLarge)
+                                    Text(
+                                        text = "${entry.radiusMeters.roundToInt()}m · " +
+                                            (if (entry.notifyOnEnter) "arrive " else "") +
+                                            (if (entry.notifyOnExit) "leave " else "") +
+                                            "· ${entry.contactTokens.size} contact${if (entry.contactTokens.size == 1) "" else "s"}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                 }
-                            )
-                            IconButton(onClick = {
-                                store.remove(entry.id)
-                                GeofenceStateStore.clear(context, entry.id)
-                                GeofenceRegistrar.sync(context)
-                                entries = store.getAll()
-                                onEntriesChanged()
-                            }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete ${entry.name}")
+                                TextButton(onClick = { onEdit(entry.id) }) { Text("Edit") }
+                                Switch(
+                                    checked = entry.enabled,
+                                    onCheckedChange = { newState ->
+                                        store.setEnabled(entry.id, newState)
+                                        // A missed opposite transition while paused would
+                                        // otherwise permanently wedge future alerts (a
+                                        // stale ENTER makes the next real ENTER read as a
+                                        // duplicate) -- clearing on every enable/disable
+                                        // keeps that state honest either direction.
+                                        GeofenceStateStore.clear(context, entry.id)
+                                        GeofenceRegistrar.sync(context)
+                                        entries = store.getAll()
+                                        onEntriesChanged()
+                                    }
+                                )
+                                IconButton(onClick = { confirmDeleteId = entry.id }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete ${entry.name}")
+                                }
+                            }
+                            if (missingCount > 0) {
+                                Text(
+                                    text = "⚠ $missingCount contact${if (missingCount == 1) "" else "s"} no longer found — check names in Emergency contacts.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
                             }
                         }
                     }
@@ -154,12 +172,43 @@ fun LocNoticeListScreen(
             }
         }
     }
+
+    val toDelete = entries.firstOrNull { it.id == confirmDeleteId }
+    if (toDelete != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteId = null },
+            title = { Text("Delete \"${toDelete.name}\"?") },
+            text = { Text("This location will no longer notify anyone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        store.remove(toDelete.id)
+                        GeofenceStateStore.clear(context, toDelete.id)
+                        GeofenceRegistrar.sync(context)
+                        entries = store.getAll()
+                        confirmDeleteId = null
+                        onEntriesChanged()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteId = null }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 /**
  * Add/edit a Loc Notice location. The address→Maps and Maps→coordinates
  * handoff (see [MapsHandoff]) means this screen never calls a Maps/Places
  * API itself — it only writes/reads the clipboard and launches an intent.
+ *
+ * @param onBeginSystemFlow Called immediately before launching Maps, so the
+ *   activity knows to skip its re-lock-on-pause path (see
+ *   `MainActivity.beginSystemFlow`) — without it, leaving to Maps and coming
+ *   back triggers a re-authentication that discards every `remember`ed field
+ *   in this screen, silently wiping whatever the user had typed.
  */
 @Composable
 fun LocNoticeEditScreen(
@@ -169,12 +218,22 @@ fun LocNoticeEditScreen(
     entryId: String?,
     onSaved: () -> Unit,
     onDeleted: () -> Unit,
+    onBack: () -> Unit,
+    onBeginSystemFlow: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val existing = remember(entryId) { entryId?.let { store.get(it) } }
 
+    // Name-only whitelist entries (added by typing a handle with no phone
+    // number) have nothing to text -- offering them here would let a
+    // location "save" successfully while being unable to ever notify
+    // anyone, silently. Matches WhitelistManager.getDialableNumbers()'s
+    // existing exclusion for the same reason.
+    val dialableContacts = remember(contacts) { contacts.filter { it.number.isNotEmpty() } }
+    val nameOnlyCount = contacts.size - dialableContacts.size
+
     var name by remember { mutableStateOf(existing?.name ?: "") }
-    var address by remember { mutableStateOf("") }
+    var address by remember { mutableStateOf(existing?.address ?: "") }
     var pinned by remember {
         mutableStateOf(existing?.let { it.latitude to it.longitude })
     }
@@ -185,6 +244,8 @@ fun LocNoticeEditScreen(
     var selectedTokens by remember { mutableStateOf(existing?.contactTokens ?: emptySet()) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
+
+    BackHandler(onBack = onBack)
 
     Column(
         modifier = modifier
@@ -223,7 +284,10 @@ fun LocNoticeEditScreen(
         Spacer(modifier = Modifier.height(8.dp))
         Row {
             Button(
-                onClick = { MapsHandoff.openInMaps(context, address) },
+                onClick = {
+                    onBeginSystemFlow()
+                    MapsHandoff.openInMaps(context, address)
+                },
                 enabled = address.isNotBlank(),
             ) { Text("Open in Maps") }
             Spacer(modifier = Modifier.width(8.dp))
@@ -233,7 +297,11 @@ fun LocNoticeEditScreen(
                     pasteError = "That doesn't look like coordinates — expected something like " +
                         "37.4221, -122.0848. In Maps, long-press the pin, then tap the " +
                         "coordinates to copy them, then come back and try again."
-                    pinned = null
+                    // Deliberately NOT clearing `pinned` here -- a bad clipboard
+                    // read (stale content, wrong locale decimal separator, a
+                    // copy-paste of something unrelated) shouldn't destroy an
+                    // already-valid pin with no way back short of redoing the
+                    // whole Maps trip from memory.
                 } else {
                     pasteError = null
                     pinned = result
@@ -241,12 +309,18 @@ fun LocNoticeEditScreen(
             }) { Text("Paste location") }
         }
         pinned?.let { (lat, lng) ->
-            Text(
-                text = "Pinned: ${"%.4f".format(lat)}, ${"%.4f".format(lng)}",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(top = 4.dp),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "Pinned: ${"%.4f".format(java.util.Locale.US, lat)}, ${"%.4f".format(java.util.Locale.US, lng)}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 4.dp).weight(1f),
+                )
+                TextButton(onClick = {
+                    onBeginSystemFlow()
+                    MapsHandoff.viewCoordinatesInMaps(context, lat, lng)
+                }) { Text("View in Maps") }
+            }
         }
         pasteError?.let {
             Text(
@@ -289,14 +363,15 @@ fun LocNoticeEditScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
         Text(text = "Who gets told", style = MaterialTheme.typography.titleSmall)
-        if (contacts.isEmpty()) {
+        if (dialableContacts.isEmpty()) {
             Text(
-                text = "No trusted contacts yet — add one in Emergency contacts first.",
+                text = "No trusted contacts with a phone number yet — add one in Emergency " +
+                    "contacts first (a name typed with no number can't be texted).",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else {
-            for (contact in contacts) {
+            for (contact in dialableContacts) {
                 val token = contact.displayToken
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -319,6 +394,14 @@ fun LocNoticeEditScreen(
                         }
                     }
                 }
+            }
+            if (nameOnlyCount > 0) {
+                Text(
+                    text = "$nameOnlyCount contact${if (nameOnlyCount == 1) "" else "s"} not shown — no phone number on file.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
             }
         }
 
@@ -353,6 +436,7 @@ fun LocNoticeEditScreen(
                     notifyOnExit = notifyExit,
                     enabled = existing?.enabled ?: true,
                     contactTokens = selectedTokens,
+                    address = address.trim(),
                 )
                 if (existing == null) store.add(entry) else store.update(entry.copy(id = existing.id))
                 GeofenceRegistrar.sync(context)
@@ -388,7 +472,7 @@ fun LocNoticeEditScreen(
                         showDeleteConfirm = false
                         onDeleted()
                     },
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) { Text("Delete") }
             },
             dismissButton = {

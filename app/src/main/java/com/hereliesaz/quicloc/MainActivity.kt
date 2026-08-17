@@ -1209,8 +1209,10 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             MainView.LocNoticeList -> LocNoticeListScreen(
                                 modifier = Modifier.padding(innerPadding),
                                 store = geofenceStore,
+                                contacts = whitelistManager.getContacts(),
                                 onEdit = { id -> view = MainView.LocNoticeEdit(id) },
                                 onAddNew = { view = MainView.LocNoticeEdit(null) },
+                                onBack = { view = MainView.Config },
                                 onEntriesChanged = {
                                     geofenceEntriesState.value = geofenceStore.getAll()
                                 },
@@ -1228,6 +1230,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     geofenceEntriesState.value = geofenceStore.getAll()
                                     view = MainView.LocNoticeList
                                 },
+                                onBack = { view = MainView.LocNoticeList },
+                                onBeginSystemFlow = { beginSystemFlow() },
                             )
                             MainView.Config -> {
                             QuicLocScreen(
@@ -1266,6 +1270,15 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 onToggleLocNotice = { newState ->
                                     AppSettings.setLocNoticeEnabled(this@MainActivity, newState)
                                     locNoticeEnabledState.value = newState
+                                    if (!newState) {
+                                        // Same reasoning as the per-location toggle: a
+                                        // missed opposite transition while monitoring was
+                                        // off would otherwise permanently wedge that
+                                        // location's alerts once re-enabled.
+                                        for (g in geofenceStore.getAll()) {
+                                            GeofenceStateStore.clear(this@MainActivity, g.id)
+                                        }
+                                    }
                                     GeofenceRegistrar.sync(this@MainActivity)
                                 },
                                 onOpenLocNotice = { view = MainView.LocNoticeList },
@@ -1647,9 +1660,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 "closed. This is the whole point of the app.",
             ifSkipped = "QuicLoc can only answer while you happen to have it open on screen. " +
                 "Every other request goes unanswered.",
-            limits = "\"All the time\" is about *when it may ask*, not how often it does. " +
-                "Location is still only read in the seconds it takes to answer a request from " +
-                "someone on your list.",
+            limits = "\"All the time\" is about *when it may ask*, not how often it does. For " +
+                "replying to requests, location is only read in the seconds it takes to answer " +
+                "one. The one exception is Loc Notice, a separate opt-in feature (off by " +
+                "default, its own switch) that watches your location continuously in the " +
+                "background while it's turned on, to alert your contacts when you arrive or " +
+                "leave a place you've configured — you'll see that disclosed again, on its own, " +
+                "before you turn it on.",
             nextStep = "Android won't let apps ask for this directly. The next screen is the " +
                 "system Location page for QuicLoc — tap \"Allow all the time\" there.",
             confirmLabel = "Open Settings",
@@ -2066,10 +2083,15 @@ fun QuicLocScreen(
     // this existed, or not yet reflected in this snapshot.
     val sharingCount = numbersList.count { canRequestLocationByToken[it] != false }
 
-    // Enabled locations with at least one contact picked — anything else
-    // (off, or on with nobody to tell) doesn't count as "usable" for the
-    // checklist, same logic as an empty/name-only whitelist.
-    val locNoticeUsableCount = locNoticeEntries.count { it.enabled && it.contactTokens.isNotEmpty() }
+    // Enabled locations with at least one contact that actually resolves to
+    // a dialable number — a location whose only selected contact is a
+    // name-only whitelist entry (or one that's since been renamed/removed)
+    // can never send a text, so it must not count as "usable" here, the
+    // same logic QuicLocScreen already applies to the whitelist itself via
+    // dialableCount/numbersByToken.
+    val locNoticeUsableCount = locNoticeEntries.count { entry ->
+        entry.enabled && entry.contactTokens.any { token -> token in numbersByToken.keys }
+    }
 
     // Same source of truth as the All Permissions table — the checklist and the
     // table can never disagree.
@@ -2558,8 +2580,10 @@ fun QuicLocScreen(
                     Text("Turn on Loc Notice", style = MaterialTheme.typography.titleSmall)
                     Text(
                         text = "Separate from the master switch above — you can have one on " +
-                            "without the other. Needs \"Allow all the time\" location to work " +
-                            "with the app closed.",
+                            "without the other. Unlike the rest of QuicLoc, this watches your " +
+                            "location continuously in the background while it's on, not just " +
+                            "when someone asks — that's what lets it notice a crossing. Needs " +
+                            "\"Allow all the time\" location.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

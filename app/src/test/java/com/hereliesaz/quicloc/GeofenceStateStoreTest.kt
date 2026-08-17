@@ -26,21 +26,69 @@ class GeofenceStateStoreTest {
             .edit().clear().commit()
     }
 
+    /**
+     * Seeds a past "last fired" timestamp for (id, transition) directly,
+     * bypassing [GeofenceStateStore.evaluate]'s own real-wall-clock write --
+     * this is how the 60s-recovery path is tested without either sleeping
+     * in a unit test or mocking `System.currentTimeMillis()` (which
+     * [GeofenceStateStore] calls directly). Deliberately reaches into the
+     * same plain prefs file/key format `evaluate` itself writes
+     * (`at_<id>_<transition>`); a rename there needs a matching update here.
+     */
+    private fun seedLastFiredAgo(id: String, transition: Int, msAgo: Long) {
+        context.getSharedPreferences("quicloc_geofence_state", Context.MODE_PRIVATE)
+            .edit()
+            .putLong("at_${id}_$transition", System.currentTimeMillis() - msAgo)
+            .commit()
+    }
+
     @Test
     fun `first transition for a geofence is processed`() {
         assertEquals(GeofenceStateStore.Result.PROCESS, GeofenceStateStore.evaluate(context, "home", enter))
     }
 
     @Test
-    fun `an exact repeat of the same transition is a duplicate`() {
+    fun `an exact repeat of the same transition within seconds is a duplicate`() {
         GeofenceStateStore.evaluate(context, "home", enter)
         assertEquals(GeofenceStateStore.Result.DUPLICATE, GeofenceStateStore.evaluate(context, "home", enter))
     }
 
     @Test
-    fun `a genuine direction change right after is flap-suppressed, not processed`() {
+    fun `a same-direction repeat outside the duplicate window but inside the flap window is suppressed`() {
+        seedLastFiredAgo("home", enter, msAgo = 30_000L)
+        assertEquals(GeofenceStateStore.Result.FLAP_SUPPRESSED, GeofenceStateStore.evaluate(context, "home", enter))
+    }
+
+    @Test
+    fun `a same-direction repeat after the flap window has fully elapsed is processed again`() {
+        // The path a prior review found completely untested: does the
+        // cooldown actually expire, or does a location get permanently
+        // stuck once it flaps once?
+        seedLastFiredAgo("home", enter, msAgo = 61_000L)
+        assertEquals(GeofenceStateStore.Result.PROCESS, GeofenceStateStore.evaluate(context, "home", enter))
+    }
+
+    @Test
+    fun `the opposite direction firing right after is never suppressed by the other direction`() {
+        // The actual bug this design fixes: an ENTER that never sent a text
+        // (direction was off, so GeofenceBroadcastReceiver never calls
+        // evaluate() for it) must not be able to poison EXIT's cooldown --
+        // and per this store's own contract, evaluate() is only ever
+        // called for actionable transitions, so ENTER and EXIT are
+        // completely independent regardless of how close together they
+        // fire. A genuine short stop (arrive, leave 45s later) must still
+        // send both texts.
         GeofenceStateStore.evaluate(context, "home", enter)
-        assertEquals(GeofenceStateStore.Result.FLAP_SUPPRESSED, GeofenceStateStore.evaluate(context, "home", exit))
+        assertEquals(GeofenceStateStore.Result.PROCESS, GeofenceStateStore.evaluate(context, "home", exit))
+    }
+
+    @Test
+    fun `each direction tracks its own independent cooldown`() {
+        seedLastFiredAgo("home", enter, msAgo = 30_000L)
+        // "enter" is inside its own flap window -- suppressed.
+        assertEquals(GeofenceStateStore.Result.FLAP_SUPPRESSED, GeofenceStateStore.evaluate(context, "home", enter))
+        // "exit" has never fired before -- unaffected by enter's state.
+        assertEquals(GeofenceStateStore.Result.PROCESS, GeofenceStateStore.evaluate(context, "home", exit))
     }
 
     @Test
@@ -51,9 +99,11 @@ class GeofenceStateStoreTest {
     }
 
     @Test
-    fun `clear resets bookkeeping for a geofence`() {
+    fun `clear resets bookkeeping for both directions of a geofence`() {
         GeofenceStateStore.evaluate(context, "home", enter)
+        GeofenceStateStore.evaluate(context, "home", exit)
         GeofenceStateStore.clear(context, "home")
         assertEquals(GeofenceStateStore.Result.PROCESS, GeofenceStateStore.evaluate(context, "home", enter))
+        assertEquals(GeofenceStateStore.Result.PROCESS, GeofenceStateStore.evaluate(context, "home", exit))
     }
 }

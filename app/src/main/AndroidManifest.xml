@@ -32,6 +32,21 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!--
+        Needed for MapsHandoff's resolveActivity() check on `geo:` intents
+        (Loc Notice's address/pin handoff) to actually see a matching maps
+        app. Without this, Android 11+ package-visibility filtering makes
+        resolveActivity() return null even with Maps installed, so every
+        "Open in Maps" tap falls through to the disambiguation chooser
+        instead of launching Maps directly.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
+        </intent>
+    </queries>
+
     <application
         android:name=".QuicLocApp"
         android:allowBackup="true"

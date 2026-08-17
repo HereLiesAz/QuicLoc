@@ -56,23 +56,24 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         ) return
         val isEnter = transition == Geofence.GEOFENCE_TRANSITION_ENTER
 
+        // Registration-time gating (GeofenceRegistrar.sync) can lag reality
+        // if a removeGeofences() call failed silently -- checking the master
+        // toggle here too means turning Loc Notice off actually stops texts
+        // from going out, not just stops future registrations. Re-sync so
+        // the stale Play Services registration gets another chance to clear.
+        if (!AppSettings.isLocNoticeEnabled(context)) {
+            Log.w(TAG, "Geofence event received while Loc Notice is off — ignoring, re-syncing registration")
+            GeofenceRegistrar.sync(context)
+            return
+        }
+
         val store = GeofenceStore(context)
         val whitelist = WhitelistManager(context)
         val history = RequestHistoryManager(context)
         val diagnostics = DiagnosticLogManager(context)
 
         for (geofence in event.triggeringGeofences.orEmpty()) {
-            val id = geofence.requestId
-            when (GeofenceStateStore.evaluate(context, id, transition)) {
-                GeofenceStateStore.Result.DUPLICATE -> continue
-                GeofenceStateStore.Result.FLAP_SUPPRESSED -> {
-                    diagnostics.record(diagEvent(id, isEnter, "(suppressed)", DiagOutcome.LOCNOTICE_FLAP_SUPPRESSED, "Repeated crossing within the cooldown window — no text sent."))
-                    continue
-                }
-                GeofenceStateStore.Result.PROCESS -> {
-                    processTransition(context, store, whitelist, history, diagnostics, id, isEnter)
-                }
-            }
+            processTransition(context, store, whitelist, history, diagnostics, geofence.requestId, isEnter, transition)
         }
     }
 
@@ -84,38 +85,45 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         diagnostics: DiagnosticLogManager,
         geofenceId: String,
         isEnter: Boolean,
+        transition: Int,
     ) {
         val entry = store.get(geofenceId)
-        if (entry == null || !entry.enabled) {
-            diagnostics.record(diagEvent(geofenceId, isEnter, "(deleted)", DiagOutcome.LOCNOTICE_ENTRY_MISSING, "Geofence fired but the location no longer exists or is disabled."))
+        // The actual "does this fire a text, and to whom" decision is a
+        // pure function (see LocNoticeDecision) so it's unit-testable
+        // without a real GeofencingEvent -- this method is just the I/O
+        // shell around it (state-store dedupe, SMS send, logging).
+        val decision = LocNoticeDecision.decide(entry, isEnter, whitelist.getContacts())
+        if (decision is LocNoticeAction.Skip) {
+            diagnostics.record(diagEvent(geofenceId, isEnter, entry?.name ?: "(deleted)", decision.outcome, decision.reason))
+            if (decision.outcome == DiagOutcome.LOCNOTICE_NO_CONTACTS) {
+                history.record(sender = entry!!.name, source = "Loc Notice (${if (isEnter) "arrived" else "left"})", succeeded = false)
+            }
             return
         }
+        decision as LocNoticeAction.Send
+        val name = entry!!.name
 
-        val directionOn = if (isEnter) entry.notifyOnEnter else entry.notifyOnExit
-        if (!directionOn) {
-            diagnostics.record(diagEvent(geofenceId, isEnter, entry.name, DiagOutcome.LOCNOTICE_DIRECTION_OFF, "Notify on ${if (isEnter) "arrival" else "departure"} is off for this location."))
-            return
+        // Dedupe/flap-suppress only among transitions that would actually
+        // send a text -- checked after the direction gate above (folded
+        // into LocNoticeDecision.decide), so a direction the user never
+        // wanted can't poison the cooldown state for the direction they do
+        // want (see GeofenceStateStore's doc).
+        when (GeofenceStateStore.evaluate(context, geofenceId, transition)) {
+            GeofenceStateStore.Result.DUPLICATE -> return
+            GeofenceStateStore.Result.FLAP_SUPPRESSED -> {
+                diagnostics.record(diagEvent(geofenceId, isEnter, name, DiagOutcome.LOCNOTICE_FLAP_SUPPRESSED, "Repeated crossing within the cooldown window — no text sent."))
+                return
+            }
+            GeofenceStateStore.Result.PROCESS -> Unit
         }
 
-        val contacts = whitelist.getContacts()
-            .filter { it.displayToken in entry.contactTokens }
-            .mapNotNull { it.number.takeIf(String::isNotEmpty) }
+        val allSent = decision.recipients.map { SmsSender.send(context, it, decision.message) }.all { it }
 
-        if (contacts.isEmpty()) {
-            diagnostics.record(diagEvent(geofenceId, isEnter, entry.name, DiagOutcome.LOCNOTICE_NO_CONTACTS, "No configured contact resolves to a dialable number."))
-            history.record(sender = entry.name, source = "Loc Notice (${if (isEnter) "arrived" else "left"})", succeeded = false)
-            return
-        }
-
-        val verb = if (isEnter) "arrived at" else "left"
-        val message = "QuicLoc Loc Notice: $verb \"${entry.name}\""
-        val allSent = contacts.map { SmsSender.send(context, it, message) }.all { it }
-
-        history.record(sender = entry.name, source = "Loc Notice (${if (isEnter) "arrived" else "left"})", succeeded = allSent)
+        history.record(sender = name, source = "Loc Notice (${if (isEnter) "arrived" else "left"})", succeeded = allSent)
         diagnostics.record(diagEvent(
-            geofenceId, isEnter, entry.name,
+            geofenceId, isEnter, name,
             if (allSent) DiagOutcome.LOCNOTICE_SENT else DiagOutcome.LOCNOTICE_SEND_FAILED,
-            "Notified ${contacts.size} contact(s)."
+            "Notified ${decision.recipients.size} contact(s)."
         ))
     }
 

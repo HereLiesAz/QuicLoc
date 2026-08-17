@@ -32,10 +32,29 @@ fun migratePlaintextFallback(
     val editor = encryptedPrefs.edit()
     var migratedAny = false
     for ((key, value) in fallbackData) {
-        // Never clobber data the real store already has -- if both somehow
-        // have the same key, the encrypted store's copy is the newer one
-        // (it's only reachable once Keystore is healthy again, which is
-        // strictly after whatever wrote the fallback entry).
+        if (value is Set<*>) {
+            // StringSet stores (WhitelistManager's contacts/starred,
+            // GeofenceStore's entries) hold their real data as one element
+            // per record under a single key -- if the real store already
+            // has that key (near-certain once there's any pre-outage data:
+            // GeofenceStore has exactly one key total), a same-key skip
+            // would silently discard every record added only during the
+            // outage instead of merging them in. Union instead: recovers
+            // outage-only records, keeps everything already there, and
+            // naturally dedupes an element present in both.
+            @Suppress("UNCHECKED_CAST")
+            val fallbackSet = value as Set<String>
+            val existing = encryptedPrefs.getStringSet(key, emptySet()) ?: emptySet()
+            val merged = existing + fallbackSet
+            if (merged.size != existing.size) {
+                migratedAny = true
+                editor.putStringSet(key, merged)
+            }
+            continue
+        }
+        // Scalars (a single number/string/flag) can only hold one value, so
+        // the real store's post-recovery copy -- strictly newer, since it's
+        // only reachable once Keystore is healthy again -- wins as-is.
         if (encryptedPrefs.contains(key)) continue
         migratedAny = true
         when (value) {
@@ -44,10 +63,6 @@ fun migratePlaintextFallback(
             is Int -> editor.putInt(key, value)
             is Long -> editor.putLong(key, value)
             is Float -> editor.putFloat(key, value)
-            is Set<*> -> {
-                @Suppress("UNCHECKED_CAST")
-                editor.putStringSet(key, value as Set<String>)
-            }
             else -> Unit
         }
     }
