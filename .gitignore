@@ -28,6 +28,11 @@ render.experimental.xml
 *.keystore
 keystore.properties
 
+# Claude Code local settings (per-machine/per-session tool-permission
+# grants) -- not shared repo config, shouldn't churn the commit history
+# every time a session auto-approves a new tool.
+.claude/settings.local.json
+
 # Google Services (e.g. APIs or Firebase)
 google-services.json
 
