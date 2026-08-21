@@ -288,8 +288,17 @@ same flow again on demand — see [PERMISSIONS.md](PERMISSIONS.md#use_full_scree
 ## MMS photo send (klinker library)
 
 `TrackingService.sendMmsPhoto` uses the `com.klinkerapps:android-smsmms` library to send the panic photo.
-The library wraps the historically-painful MMS APIs. The `android-smsmms` dependency lives in the
-`:feature_findmyphone` module (only `TrackingService` uses it), not the base.
+The library wraps the historically-painful MMS APIs. Only `TrackingService` (in `:feature_findmyphone`)
+calls into it, but the `android-smsmms` dependency is declared in **both** the base `:app` module and
+`:feature_findmyphone` — see the comment on it in `app/build.gradle.kts`. It can't live in the on-demand
+module alone: the AAR's own manifest declares a `<provider>` (`MmsFileProvider`), and content providers
+aren't supported in on-demand dynamic feature modules — Android instantiates every declared provider
+unconditionally at process start (`ActivityThread.installProvider`), regardless of whether the owning
+split is installed. With the dependency only in the module, that provider merged into the base app's
+manifest without its dex being guaranteed present, crashing **every** launch —
+`ClassNotFoundException: com.klinker.android.send_message.MmsFileProvider` — for any user who hadn't
+downloaded the module yet, i.e. anyone who hadn't set up find-my-phone. Declaring the same pinned version
+in `:app` puts the provider (and its dex) in the base install unconditionally, so it's always resolvable.
 
 Notes:
 

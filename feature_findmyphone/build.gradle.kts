@@ -81,8 +81,14 @@ dependencies {
     implementation(libs.androidx.concurrent.futures.ktx)
     implementation(libs.guava.listenablefuture)
 
-    // MMS — panic mode sends the intruder photo via MMS. Only TrackingService
-    // uses klinker, so the dependency lives here, not in the base.
+    // MMS — panic mode sends the intruder photo via MMS. TrackingService here
+    // is the only caller, but the dependency is ALSO declared in :app — its
+    // AAR manifest carries a <provider> (MmsFileProvider) that must be part
+    // of the base's own manifest/dex (content providers in on-demand feature
+    // modules crash the app at every launch until the module installs; see
+    // the comment on this same dependency in app/build.gradle.kts). Kept
+    // here too, at the same pinned version, purely so this file still
+    // compiles against the klinker classes.
     implementation(libs.android.smsmms)
 
     // Test-only. Matches :app's own test dependency set.
