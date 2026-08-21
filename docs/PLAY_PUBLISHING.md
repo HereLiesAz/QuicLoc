@@ -28,9 +28,21 @@ debug APKs for sideloading.
   `USE_FULL_SCREEN_INTENT`, the Device Admin receiver, the tracking FGS) until the user sets up
   find-my-phone. Flow:
   - `app/build.gradle.kts` lists `dynamicFeatures += setOf(":feature_findmyphone")`; the module
-    (`com.android.dynamic-feature`, namespace `com.hereliesaz.quicloc.lockdown`) holds the CameraX +
-    `android-smsmms` deps, the `CAMERA` / `USE_FULL_SCREEN_INTENT` permissions, the three lockdown
-    components, and `dist:on-demand` delivery.
+    (`com.android.dynamic-feature`, namespace `com.hereliesaz.quicloc.lockdown`) holds the CameraX deps,
+    the `CAMERA` / `USE_FULL_SCREEN_INTENT` permissions, the three lockdown components, and
+    `dist:on-demand` delivery. `android-smsmms` (used by `TrackingService`, which lives in this module)
+    is the one exception: it's declared in **both** this module and the base — see the next bullet and
+    the comment on the dependency in `app/build.gradle.kts`.
+  - **Content providers aren't supported in on-demand dynamic feature modules.** `android-smsmms`'s AAR
+    manifest declares a `<provider>` (`MmsFileProvider`), and Android instantiates every declared
+    provider unconditionally at process start, regardless of whether the owning on-demand split is
+    installed. Declaring the dependency only in `:feature_findmyphone` merged that provider into the
+    base app's manifest without guaranteeing its dex was present, so every launch before the module was
+    installed crashed with `ClassNotFoundException: ...MmsFileProvider` at `handleBindApplication` — for
+    any user who hadn't set up find-my-phone yet, i.e. most fresh installs. The fix: also declare
+    `android-smsmms` (same pinned version, via the version catalog) as an `implementation` dependency of
+    the base `:app` module, so the provider and its dex ship in the base install unconditionally. It
+    stays declared in `:feature_findmyphone` too, purely so `TrackingService.kt` still compiles there.
   - The base talks to it **only** through `FindMyPhone` (`app/.../FindMyPhone.kt`), which addresses the
     module by `ComponentName` string and degrades gracefully when the split isn't installed:
     `requestInstall` downloads it via `SplitInstall` (Play Feature Delivery), `trigger` starts the

@@ -228,6 +228,23 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
+    // MMS — TrackingService (in :feature_findmyphone) uses this to send the
+    // panic-mode intruder photo. The dependency must ALSO live here in the
+    // base, even though only the on-demand module calls into it: the AAR's
+    // own manifest declares a <provider> (MmsFileProvider), and Android
+    // instantiates every declared provider unconditionally at process start
+    // — content providers aren't supported in on-demand dynamic feature
+    // modules (see Play Feature Delivery docs). Declaring it only in
+    // :feature_findmyphone merged that provider into the app's manifest
+    // without its dex ever being guaranteed present, so every launch before
+    // the module was installed crashed with
+    // "ClassNotFoundException: ...MmsFileProvider" at handleBindApplication.
+    // Duplicated (not moved) in :feature_findmyphone's own build.gradle.kts
+    // so TrackingService.kt still compiles there — same pinned version via
+    // the version catalog, so R8 sees one class, not a version-skewed dupe
+    // (see the androidx.tracing/guava precedent below and in that module).
+    implementation(libs.android.smsmms)
+
     testImplementation(libs.junit)
     testImplementation(libs.core.ktx)
     testImplementation(libs.robolectric)
