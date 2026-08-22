@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    claude/permissions-declaration-form-mashva
-  Commit:    4e00d51dcd3595b71f18d957052bf9d7f9e86fe2
-  Timestamp: 2026-08-17 19:50:09 UTC
+  Branch:    main
+  Commit:    1a1ad224f24cfe15adf8df75ef50b59c6ecd74d7
+  Timestamp: 2026-08-21 23:56:16 UTC
 ======================================================
 
 
@@ -2278,6 +2278,23 @@ dependencies {
 
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+
+    // MMS — TrackingService (in :feature_findmyphone) uses this to send the
+    // panic-mode intruder photo. The dependency must ALSO live here in the
+    // base, even though only the on-demand module calls into it: the AAR's
+    // own manifest declares a <provider> (MmsFileProvider), and Android
+    // instantiates every declared provider unconditionally at process start
+    // — content providers aren't supported in on-demand dynamic feature
+    // modules (see Play Feature Delivery docs). Declaring it only in
+    // :feature_findmyphone merged that provider into the app's manifest
+    // without its dex ever being guaranteed present, so every launch before
+    // the module was installed crashed with
+    // "ClassNotFoundException: ...MmsFileProvider" at handleBindApplication.
+    // Duplicated (not moved) in :feature_findmyphone's own build.gradle.kts
+    // so TrackingService.kt still compiles there — same pinned version via
+    // the version catalog, so R8 sees one class, not a version-skewed dupe
+    // (see the androidx.tracing/guava precedent below and in that module).
+    implementation(libs.android.smsmms)
 
     testImplementation(libs.junit)
     testImplementation(libs.core.ktx)
@@ -17442,8 +17459,17 @@ same flow again on demand — see [PERMISSIONS.md](PERMISSIONS.md#use_full_scree
 ## MMS photo send (klinker library)
 
 `TrackingService.sendMmsPhoto` uses the `com.klinkerapps:android-smsmms` library to send the panic photo.
-The library wraps the historically-painful MMS APIs. The `android-smsmms` dependency lives in the
-`:feature_findmyphone` module (only `TrackingService` uses it), not the base.
+The library wraps the historically-painful MMS APIs. Only `TrackingService` (in `:feature_findmyphone`)
+calls into it, but the `android-smsmms` dependency is declared in **both** the base `:app` module and
+`:feature_findmyphone` — see the comment on it in `app/build.gradle.kts`. It can't live in the on-demand
+module alone: the AAR's own manifest declares a `<provider>` (`MmsFileProvider`), and content providers
+aren't supported in on-demand dynamic feature modules — Android instantiates every declared provider
+unconditionally at process start (`ActivityThread.installProvider`), regardless of whether the owning
+split is installed. With the dependency only in the module, that provider merged into the base app's
+manifest without its dex being guaranteed present, crashing **every** launch —
+`ClassNotFoundException: com.klinker.android.send_message.MmsFileProvider` — for any user who hadn't
+downloaded the module yet, i.e. anyone who hadn't set up find-my-phone. Declaring the same pinned version
+in `:app` puts the provider (and its dex) in the base install unconditionally, so it's always resolvable.
 
 Notes:
 
@@ -17679,9 +17705,21 @@ debug APKs for sideloading.
   `USE_FULL_SCREEN_INTENT`, the Device Admin receiver, the tracking FGS) until the user sets up
   find-my-phone. Flow:
   - `app/build.gradle.kts` lists `dynamicFeatures += setOf(":feature_findmyphone")`; the module
-    (`com.android.dynamic-feature`, namespace `com.hereliesaz.quicloc.lockdown`) holds the CameraX +
-    `android-smsmms` deps, the `CAMERA` / `USE_FULL_SCREEN_INTENT` permissions, the three lockdown
-    components, and `dist:on-demand` delivery.
+    (`com.android.dynamic-feature`, namespace `com.hereliesaz.quicloc.lockdown`) holds the CameraX deps,
+    the `CAMERA` / `USE_FULL_SCREEN_INTENT` permissions, the three lockdown components, and
+    `dist:on-demand` delivery. `android-smsmms` (used by `TrackingService`, which lives in this module)
+    is the one exception: it's declared in **both** this module and the base — see the next bullet and
+    the comment on the dependency in `app/build.gradle.kts`.
+  - **Content providers aren't supported in on-demand dynamic feature modules.** `android-smsmms`'s AAR
+    manifest declares a `<provider>` (`MmsFileProvider`), and Android instantiates every declared
+    provider unconditionally at process start, regardless of whether the owning on-demand split is
+    installed. Declaring the dependency only in `:feature_findmyphone` merged that provider into the
+    base app's manifest without guaranteeing its dex was present, so every launch before the module was
+    installed crashed with `ClassNotFoundException: ...MmsFileProvider` at `handleBindApplication` — for
+    any user who hadn't set up find-my-phone yet, i.e. most fresh installs. The fix: also declare
+    `android-smsmms` (same pinned version, via the version catalog) as an `implementation` dependency of
+    the base `:app` module, so the provider and its dex ship in the base install unconditionally. It
+    stays declared in `:feature_findmyphone` too, purely so `TrackingService.kt` still compiles there.
   - The base talks to it **only** through `FindMyPhone` (`app/.../FindMyPhone.kt`), which addresses the
     module by `ComponentName` string and degrades gracefully when the split isn't installed:
     `requestInstall` downloads it via `SplitInstall` (Play Feature Delivery), `trigger` starts the
@@ -19259,8 +19297,14 @@ dependencies {
     implementation(libs.androidx.concurrent.futures.ktx)
     implementation(libs.guava.listenablefuture)
 
-    // MMS — panic mode sends the intruder photo via MMS. Only TrackingService
-    // uses klinker, so the dependency lives here, not in the base.
+    // MMS — panic mode sends the intruder photo via MMS. TrackingService here
+    // is the only caller, but the dependency is ALSO declared in :app — its
+    // AAR manifest carries a <provider> (MmsFileProvider) that must be part
+    // of the base's own manifest/dex (content providers in on-demand feature
+    // modules crash the app at every launch until the module installs; see
+    // the comment on this same dependency in app/build.gradle.kts). Kept
+    // here too, at the same pinned version, purely so this file still
+    // compiles against the klinker classes.
     implementation(libs.android.smsmms)
 
     // Test-only. Matches :app's own test dependency set.
