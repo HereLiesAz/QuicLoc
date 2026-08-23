@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    claude/permissions-declaration-form-mashva
-  Commit:    abf69e6f3fd9232e179bfd583e94d5dc85d2c121
-  Timestamp: 2026-08-22 00:10:59 UTC
+  Branch:    claude/classnotfound-yf2-5hbbm7
+  Commit:    6bfbf2454a59d51fb6d37d537a2d247b01616a0b
+  Timestamp: 2026-08-23 14:13:42 UTC
 ======================================================
 
 
@@ -2319,6 +2319,20 @@ dependencies {
 -keep class com.hereliesaz.quicloc.** extends android.app.Service { *; }
 -dontwarn com.google.api.client.**
 -dontwarn org.joda.time.**
+
+# Play Feature Delivery's session-state model (SplitInstallSessionState and
+# its internal Parcelable counterparts) crosses the SplitInstallService AIDL
+# boundary via Parcel.readParcelable(), which resolves the class by the
+# fully-qualified name the (un-obfuscated) Play Store process wrote into the
+# Parcel — a Class.forName() lookup R8 can't see and so can't protect by
+# default. play-services-basement ships its own consumer rules to keep
+# names for the equivalent GMS SafeParcelable/ReflectedParcelable classes;
+# the feature-delivery AAR ships no consumer rules at all, so without this,
+# R8 renames these classes and the lookup throws NoClassDefFoundError /
+# "ClassNotFoundException: <short obfuscated name>" on a background
+# executor thread once a split-install response comes back.
+-keep class com.google.android.play.core.** { *; }
+-dontwarn com.google.android.play.core.**
 
 
 ######################################################
@@ -16457,7 +16471,7 @@ class WhitelistManagerTest {
 VERSION_A=1
 VERSION_B=3
 VERSION_C=14
-VERSION_D=2014
+VERSION_D=2015
 
 
 ######################################################
