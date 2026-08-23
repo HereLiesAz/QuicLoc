@@ -253,8 +253,8 @@ pass `publish: true` and `version_code_mode: auto`:
 | Input     | Default    | Meaning |
 |-----------|------------|---------|
 | `publish` | `true`     | **on** = build, upload to Play, roll out on internal, draft everywhere else; **off** = build + upload the `.aab` as a workflow artifact only, Play untouched |
-| `completed_track` | `internal` | The one track that actually gets rolled out |
-| `draft_tracks` | `alpha beta production` | Tracks that get the *same* bundle staged as a draft, space-separated. A track Play refuses is warned about and skipped |
+| `completed_tracks` | `internal` | Track(s) that actually get rolled out, space-separated — `internal alpha` rolls the same bundle out on both |
+| `draft_tracks` | `alpha beta production` | Tracks that get the *same* bundle staged as a draft, space-separated. A track Play refuses is warned about and skipped. A track also named in `completed_tracks` is rolled out instead of drafted |
 | `release_notes` | empty | Optional en-US release notes attached to every track's release |
 | `version_code_mode` | `auto` | `auto` = take the next code after whatever Play holds, so a stale `version.properties` can't block a release; `strict` = use `version.properties` exactly and fail if Play is ahead |
 
@@ -262,6 +262,8 @@ pass `publish: true` and `version_code_mode: auto`:
 
 The bundle is uploaded **once**, inside a single Play "edit", and that one `versionCode` is then
 assigned to every track before the edit is committed:
+
+With the default inputs:
 
 | Track | Status | Effect |
 |---|---|---|
@@ -273,6 +275,11 @@ assigned to every track before the edit is committed:
 So promoting a draft later ships **the exact artifact internal testers used** — same bytes, same
 signature, same `versionCode`. There is no rebuild, and no second `versionCode` to burn.
 
+A draft is deliberately invisible: it sits in the console until a human promotes it, so a green
+run does **not** mean testers on alpha/beta received anything. To roll a track out for real in the
+same run, name it in `completed_tracks` (e.g. `internal alpha`) rather than leaving it in
+`draft_tracks`.
+
 This is why the publish step is hand-rolled against the Play API
 ([`.github/actions/play-publish`](../.github/actions/play-publish/action.yml)) instead of using
 `r0adkll/upload-google-play`: that action opens its own edit and uploads the `.aab` per
@@ -282,14 +289,25 @@ shape; the action isn't.
 
 Failure behaviour is deliberate:
 
-- The **completed track failing is fatal** — that's the one track a run exists to land. The edit
+- A **completed track failing is fatal** — those are the tracks a run exists to land. The edit
   is abandoned and nothing is published.
 - A **draft track failing is a warning**. One track that isn't configured on the account
   shouldn't throw away a good internal rollout; the log and job summary say which ones landed.
 - If the uploaded bundle's `versionCode` doesn't match what this run built, the edit is abandoned
   — that mismatch means a stale artifact.
-- Play sometimes requires `changesNotSentForReview=true` on commit (apps whose changes can't be
-  auto-submitted for review). The commit is retried with it automatically.
+- Whether Play accepts `changesNotSentForReview=true` on commit depends on the app's current
+  state, and **it changes over the app's lifetime**. Some apps' edits can't be auto-submitted for
+  review and the flag is required; others (this one, as of August 2026) submit for review
+  automatically and reject the flag outright with
+  `"Changes are sent for review automatically. The query parameter changesNotSentForReview must
+  not be set."` The commit therefore tries it, and drops it and retries if Play objects
+  specifically to the flag. This matters more than it sounds: a rejected commit discards the
+  **entire** edit, so hard-coding the wrong answer means neither the rollout nor the drafts land.
+
+- After the commit, the tracks are read back and checked to actually carry the new `versionCode`.
+  Track state is only readable *inside* an edit, so a throwaway edit is opened for the read and
+  deleted without being committed. A completed track missing the version is fatal; a draft track
+  missing it is a warning.
 
 The workflow verifies the bundle's signature itself before the artifact is uploaded, and fails if it
 is unsigned or signed by an unexpected certificate — so a green run means a correctly signed bundle.

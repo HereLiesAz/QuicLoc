@@ -15,8 +15,8 @@ inputs:
     description: "The VERSION_CODE built by Gradle (for an additional sanity check)"
     required: false
     default: ''
-  completed-track:
-    description: "Track to roll out (completed)"
+  completed-tracks:
+    description: "Space-separated tracks to roll out (status completed). Each one is fatal if it fails."
     required: true
   draft-tracks:
     description: "Space-separated list of tracks to stage the same bundle as drafts"
@@ -36,7 +36,7 @@ outputs:
     description: "The versionCode that was uploaded and published/drafted"
     value: ${{ steps.publish.outputs.version-code }}
   rolled-out:
-    description: "The completed track that was rolled out (empty if none)"
+    description: "Space-separated list of tracks that were rolled out (empty if none)"
     value: ${{ steps.publish.outputs.rolled-out }}
   drafted:
     description: "Space-separated list of draft tracks that were staged"
@@ -57,7 +57,7 @@ runs:
         AAB: ${{ inputs.aab }}
         TOKEN_FILE: ${{ inputs.token-file }}
         EXPECTED_VERSION_CODE: ${{ inputs.expected-version-code }}
-        COMPLETED_TRACK: ${{ inputs.completed-track }}
+        COMPLETED_TRACKS: ${{ inputs.completed-tracks }}
         DRAFT_TRACKS: ${{ inputs.draft-tracks }}
         RELEASE_NAME: ${{ inputs.release-name }}
         RELEASE_NOTES: ${{ inputs.release-notes }}
@@ -65,7 +65,15 @@ runs:
         set -euo pipefail
         out="$RUNNER_TEMP/play-publish-out.json"
         # Run the publisher script; it writes JSON to $out on success.
-        ./.github/actions/play-publish/publish.sh "$PACKAGE_NAME" "$AAB" "$TOKEN_FILE" "$EXPECTED_VERSION_CODE" "$COMPLETED_TRACK" "$DRAFT_TRACKS" "$RELEASE_NAME" "$RELEASE_NOTES" "$out"
-        jq -r '.versionCode // ""' "$out" | awk '{print "version-code="$0}' >> "$GITHUB_OUTPUT"
-        jq -r '.rolledOut // ""' "$out" | awk '{print "rolled-out="$0}' >> "$GITHUB_OUTPUT"
-        jq -r '.drafted // [] | join(" ")' "$out" | awk '{print "drafted="$0}' >> "$GITHUB_OUTPUT"
+        ./.github/actions/play-publish/publish.sh "$PACKAGE_NAME" "$AAB" "$TOKEN_FILE" "$EXPECTED_VERSION_CODE" "$COMPLETED_TRACKS" "$DRAFT_TRACKS" "$RELEASE_NAME" "$RELEASE_NOTES" "$out"
+        # $(...) strips trailing newlines, so each key is written exactly once.
+        # The previous `| awk` form wrote one line per line of jq output: a
+        # joined track list carried a trailing newline, so "drafted" was set
+        # twice and the empty second write won. Every successful run then
+        # reported "No draft tracks were set" while the drafts had in fact
+        # landed.
+        {
+          echo "version-code=$(jq -r '.versionCode // ""' "$out")"
+          echo "rolled-out=$(jq -r '(.rolledOut // []) | join(" ")' "$out")"
+          echo "drafted=$(jq -r '(.drafted // []) | join(" ")' "$out")"
+        } >> "$GITHUB_OUTPUT"
