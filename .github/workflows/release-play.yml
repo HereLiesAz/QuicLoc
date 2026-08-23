@@ -32,7 +32,7 @@ on:
       publish:
         type: boolean
         default: true
-      completed_track:
+      completed_tracks:
         type: string
         default: internal
       draft_tracks:
@@ -50,13 +50,22 @@ on:
         description: "Publish to Play (off = build the .aab and upload it as a workflow artifact only)"
         type: boolean
         default: true
-      completed_track:
-        description: "Track to actually roll out to"
+      completed_tracks:
+        description: >
+          Track(s) to actually roll out to. Space-separated, so "internal alpha"
+          rolls the same bundle out on both; anything listed here is skipped in
+          draft_tracks rather than fought over.
         type: choice
-        options: [internal, alpha, beta, production]
+        options:
+          - internal
+          - internal alpha
+          - internal alpha beta
+          - alpha
+          - beta
+          - production
         default: internal
       draft_tracks:
-        description: "Tracks to stage the same bundle in as a draft (space-separated)"
+        description: "Tracks to stage the same bundle in as a draft (space-separated). Tracks also named in completed_tracks are rolled out instead of drafted."
         type: string
         default: alpha beta production
       release_notes:
@@ -288,22 +297,37 @@ jobs:
           aab: ${{ env.AAB_PATH }}
           token-file: ${{ steps.publish-token.outputs.token-file }}
           expected-version-code: ${{ env.VERSION_CODE }}
-          completed-track: ${{ inputs.completed_track }}
+          completed-tracks: ${{ inputs.completed_tracks }}
           draft-tracks: ${{ inputs.draft_tracks }}
           release-name: ${{ env.VERSION_NAME }}
           release-notes: ${{ inputs.release_notes }}
 
       - name: Say what landed where
         if: ${{ inputs.publish }}
+        # Values reach the shell through env rather than ${{ }} interpolation so
+        # a track name or release string can never be parsed as shell.
+        env:
+          VC: ${{ steps.play.outputs.version-code }}
+          ROLLED: ${{ steps.play.outputs.rolled-out }}
+          DRAFTED: ${{ steps.play.outputs.drafted }}
+          REQUESTED_DRAFTS: ${{ inputs.draft_tracks }}
         run: |
-          echo "versionCode ${{ steps.play.outputs.version-code }} is live on the ${{ steps.play.outputs.rolled-out }} track."
-          drafted="${{ steps.play.outputs.drafted }}"
-          if [ -n "$drafted" ]; then
-            echo "Drafts staged (same bundle) on: $drafted"
+          set -uo pipefail
+          echo "versionCode $VC rolled out on: ${ROLLED:-none}"
+          if [ -n "$DRAFTED" ]; then
+            echo "Drafts staged (same bundle) on: $DRAFTED"
             echo "Promote one in the console when you're ready — no rebuild needed."
-          else
-            echo "::warning::No draft tracks were set. Check the warnings above for which ones Play refused."
+            echo "A draft is not a release: nobody on those tracks receives it until it is promoted."
+          elif [ -n "$REQUESTED_DRAFTS" ]; then
+            echo "::warning::Draft tracks were requested ($REQUESTED_DRAFTS) but none were staged. Check the warnings above for which ones Play refused."
           fi
+          {
+            echo "### Play release"
+            echo ""
+            echo "- versionCode: \`$VC\`"
+            echo "- Rolled out: ${ROLLED:-none}"
+            echo "- Staged as draft: ${DRAFTED:-none}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # The versionCode is now spent, but the increment only ever happened on
       # this runner. Commit it so the repo tracks what actually shipped and the

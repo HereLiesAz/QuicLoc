@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    c6f9029e5ed397d07e676bd6ae7bdec3c044a540
-  Timestamp: 2026-08-23 15:19:47 UTC
+  Branch:    claude/aab-google-play-publishing-klw5yq
+  Commit:    30427164941b2b38419a06172828f05f954e5a9e
+  Timestamp: 2026-08-23 19:41:37 UTC
 ======================================================
 
 
@@ -528,8 +528,8 @@ inputs:
     description: "The VERSION_CODE built by Gradle (for an additional sanity check)"
     required: false
     default: ''
-  completed-track:
-    description: "Track to roll out (completed)"
+  completed-tracks:
+    description: "Space-separated tracks to roll out (status completed). Each one is fatal if it fails."
     required: true
   draft-tracks:
     description: "Space-separated list of tracks to stage the same bundle as drafts"
@@ -549,7 +549,7 @@ outputs:
     description: "The versionCode that was uploaded and published/drafted"
     value: ${{ steps.publish.outputs.version-code }}
   rolled-out:
-    description: "The completed track that was rolled out (empty if none)"
+    description: "Space-separated list of tracks that were rolled out (empty if none)"
     value: ${{ steps.publish.outputs.rolled-out }}
   drafted:
     description: "Space-separated list of draft tracks that were staged"
@@ -570,7 +570,7 @@ runs:
         AAB: ${{ inputs.aab }}
         TOKEN_FILE: ${{ inputs.token-file }}
         EXPECTED_VERSION_CODE: ${{ inputs.expected-version-code }}
-        COMPLETED_TRACK: ${{ inputs.completed-track }}
+        COMPLETED_TRACKS: ${{ inputs.completed-tracks }}
         DRAFT_TRACKS: ${{ inputs.draft-tracks }}
         RELEASE_NAME: ${{ inputs.release-name }}
         RELEASE_NOTES: ${{ inputs.release-notes }}
@@ -578,10 +578,18 @@ runs:
         set -euo pipefail
         out="$RUNNER_TEMP/play-publish-out.json"
         # Run the publisher script; it writes JSON to $out on success.
-        ./.github/actions/play-publish/publish.sh "$PACKAGE_NAME" "$AAB" "$TOKEN_FILE" "$EXPECTED_VERSION_CODE" "$COMPLETED_TRACK" "$DRAFT_TRACKS" "$RELEASE_NAME" "$RELEASE_NOTES" "$out"
-        jq -r '.versionCode // ""' "$out" | awk '{print "version-code="$0}' >> "$GITHUB_OUTPUT"
-        jq -r '.rolledOut // ""' "$out" | awk '{print "rolled-out="$0}' >> "$GITHUB_OUTPUT"
-        jq -r '.drafted // [] | join(" ")' "$out" | awk '{print "drafted="$0}' >> "$GITHUB_OUTPUT"
+        ./.github/actions/play-publish/publish.sh "$PACKAGE_NAME" "$AAB" "$TOKEN_FILE" "$EXPECTED_VERSION_CODE" "$COMPLETED_TRACKS" "$DRAFT_TRACKS" "$RELEASE_NAME" "$RELEASE_NOTES" "$out"
+        # $(...) strips trailing newlines, so each key is written exactly once.
+        # The previous `| awk` form wrote one line per line of jq output: a
+        # joined track list carried a trailing newline, so "drafted" was set
+        # twice and the empty second write won. Every successful run then
+        # reported "No draft tracks were set" while the drafts had in fact
+        # landed.
+        {
+          echo "version-code=$(jq -r '.versionCode // ""' "$out")"
+          echo "rolled-out=$(jq -r '(.rolledOut // []) | join(" ")' "$out")"
+          echo "drafted=$(jq -r '(.drafted // []) | join(" ")' "$out")"
+        } >> "$GITHUB_OUTPUT"
 
 
 ######################################################
@@ -1344,7 +1352,7 @@ on:
       publish:
         type: boolean
         default: true
-      completed_track:
+      completed_tracks:
         type: string
         default: internal
       draft_tracks:
@@ -1362,13 +1370,22 @@ on:
         description: "Publish to Play (off = build the .aab and upload it as a workflow artifact only)"
         type: boolean
         default: true
-      completed_track:
-        description: "Track to actually roll out to"
+      completed_tracks:
+        description: >
+          Track(s) to actually roll out to. Space-separated, so "internal alpha"
+          rolls the same bundle out on both; anything listed here is skipped in
+          draft_tracks rather than fought over.
         type: choice
-        options: [internal, alpha, beta, production]
+        options:
+          - internal
+          - internal alpha
+          - internal alpha beta
+          - alpha
+          - beta
+          - production
         default: internal
       draft_tracks:
-        description: "Tracks to stage the same bundle in as a draft (space-separated)"
+        description: "Tracks to stage the same bundle in as a draft (space-separated). Tracks also named in completed_tracks are rolled out instead of drafted."
         type: string
         default: alpha beta production
       release_notes:
@@ -1600,22 +1617,37 @@ jobs:
           aab: ${{ env.AAB_PATH }}
           token-file: ${{ steps.publish-token.outputs.token-file }}
           expected-version-code: ${{ env.VERSION_CODE }}
-          completed-track: ${{ inputs.completed_track }}
+          completed-tracks: ${{ inputs.completed_tracks }}
           draft-tracks: ${{ inputs.draft_tracks }}
           release-name: ${{ env.VERSION_NAME }}
           release-notes: ${{ inputs.release_notes }}
 
       - name: Say what landed where
         if: ${{ inputs.publish }}
+        # Values reach the shell through env rather than ${{ }} interpolation so
+        # a track name or release string can never be parsed as shell.
+        env:
+          VC: ${{ steps.play.outputs.version-code }}
+          ROLLED: ${{ steps.play.outputs.rolled-out }}
+          DRAFTED: ${{ steps.play.outputs.drafted }}
+          REQUESTED_DRAFTS: ${{ inputs.draft_tracks }}
         run: |
-          echo "versionCode ${{ steps.play.outputs.version-code }} is live on the ${{ steps.play.outputs.rolled-out }} track."
-          drafted="${{ steps.play.outputs.drafted }}"
-          if [ -n "$drafted" ]; then
-            echo "Drafts staged (same bundle) on: $drafted"
+          set -uo pipefail
+          echo "versionCode $VC rolled out on: ${ROLLED:-none}"
+          if [ -n "$DRAFTED" ]; then
+            echo "Drafts staged (same bundle) on: $DRAFTED"
             echo "Promote one in the console when you're ready — no rebuild needed."
-          else
-            echo "::warning::No draft tracks were set. Check the warnings above for which ones Play refused."
+            echo "A draft is not a release: nobody on those tracks receives it until it is promoted."
+          elif [ -n "$REQUESTED_DRAFTS" ]; then
+            echo "::warning::Draft tracks were requested ($REQUESTED_DRAFTS) but none were staged. Check the warnings above for which ones Play refused."
           fi
+          {
+            echo "### Play release"
+            echo ""
+            echo "- versionCode: \`$VC\`"
+            echo "- Rolled out: ${ROLLED:-none}"
+            echo "- Staged as draft: ${DRAFTED:-none}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # The versionCode is now spent, but the increment only ever happened on
       # this runner. Commit it so the repo tracks what actually shipped and the
@@ -17944,8 +17976,8 @@ pass `publish: true` and `version_code_mode: auto`:
 | Input     | Default    | Meaning |
 |-----------|------------|---------|
 | `publish` | `true`     | **on** = build, upload to Play, roll out on internal, draft everywhere else; **off** = build + upload the `.aab` as a workflow artifact only, Play untouched |
-| `completed_track` | `internal` | The one track that actually gets rolled out |
-| `draft_tracks` | `alpha beta production` | Tracks that get the *same* bundle staged as a draft, space-separated. A track Play refuses is warned about and skipped |
+| `completed_tracks` | `internal` | Track(s) that actually get rolled out, space-separated — `internal alpha` rolls the same bundle out on both |
+| `draft_tracks` | `alpha beta production` | Tracks that get the *same* bundle staged as a draft, space-separated. A track Play refuses is warned about and skipped. A track also named in `completed_tracks` is rolled out instead of drafted |
 | `release_notes` | empty | Optional en-US release notes attached to every track's release |
 | `version_code_mode` | `auto` | `auto` = take the next code after whatever Play holds, so a stale `version.properties` can't block a release; `strict` = use `version.properties` exactly and fail if Play is ahead |
 
@@ -17953,6 +17985,8 @@ pass `publish: true` and `version_code_mode: auto`:
 
 The bundle is uploaded **once**, inside a single Play "edit", and that one `versionCode` is then
 assigned to every track before the edit is committed:
+
+With the default inputs:
 
 | Track | Status | Effect |
 |---|---|---|
@@ -17964,6 +17998,11 @@ assigned to every track before the edit is committed:
 So promoting a draft later ships **the exact artifact internal testers used** — same bytes, same
 signature, same `versionCode`. There is no rebuild, and no second `versionCode` to burn.
 
+A draft is deliberately invisible: it sits in the console until a human promotes it, so a green
+run does **not** mean testers on alpha/beta received anything. To roll a track out for real in the
+same run, name it in `completed_tracks` (e.g. `internal alpha`) rather than leaving it in
+`draft_tracks`.
+
 This is why the publish step is hand-rolled against the Play API
 ([`.github/actions/play-publish`](../.github/actions/play-publish/action.yml)) instead of using
 `r0adkll/upload-google-play`: that action opens its own edit and uploads the `.aab` per
@@ -17973,14 +18012,25 @@ shape; the action isn't.
 
 Failure behaviour is deliberate:
 
-- The **completed track failing is fatal** — that's the one track a run exists to land. The edit
+- A **completed track failing is fatal** — those are the tracks a run exists to land. The edit
   is abandoned and nothing is published.
 - A **draft track failing is a warning**. One track that isn't configured on the account
   shouldn't throw away a good internal rollout; the log and job summary say which ones landed.
 - If the uploaded bundle's `versionCode` doesn't match what this run built, the edit is abandoned
   — that mismatch means a stale artifact.
-- Play sometimes requires `changesNotSentForReview=true` on commit (apps whose changes can't be
-  auto-submitted for review). The commit is retried with it automatically.
+- Whether Play accepts `changesNotSentForReview=true` on commit depends on the app's current
+  state, and **it changes over the app's lifetime**. Some apps' edits can't be auto-submitted for
+  review and the flag is required; others (this one, as of August 2026) submit for review
+  automatically and reject the flag outright with
+  `"Changes are sent for review automatically. The query parameter changesNotSentForReview must
+  not be set."` The commit therefore tries it, and drops it and retries if Play objects
+  specifically to the flag. This matters more than it sounds: a rejected commit discards the
+  **entire** edit, so hard-coding the wrong answer means neither the rollout nor the drafts land.
+
+- After the commit, the tracks are read back and checked to actually carry the new `versionCode`.
+  Track state is only readable *inside* an edit, so a throwaway edit is opened for the read and
+  deleted without being committed. A completed track missing the version is fatal; a draft track
+  missing it is a warning.
 
 The workflow verifies the bundle's signature itself before the artifact is uploaded, and fails if it
 is unsigned or signed by an unexpected certificate — so a green run means a correctly signed bundle.

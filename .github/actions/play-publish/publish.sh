@@ -5,7 +5,7 @@ package="$1"
 aab_glob="$2"
 token_file="$3"
 expected_vc="$4"
-completed_track="$5"
+completed_tracks="$5"
 draft_tracks="$6"
 release_name="$7"
 release_notes="$8"
@@ -55,6 +55,16 @@ mkdir -p "$tmp"
 edit_json="$tmp/edit.json"
 upload_resp="$tmp/upload.json"
 
+# A completed track is also implicitly excluded from the draft list: rolling a
+# track out and staging a draft on the same track in one edit is contradictory,
+# and Play would only keep whichever write landed last.
+is_completed_track() {
+  for c in $completed_tracks; do
+    [ "$c" = "$1" ] && return 0
+  done
+  return 1
+}
+
 # 1) Create an edit
 http=$(req POST "$api/edits" "$edit_json")
 if [ "$http" != "200" ] && [ "$http" != "201" ]; then
@@ -70,6 +80,10 @@ if [ -z "$edit_id" ]; then
   exit 1
 fi
 
+abandon_edit() {
+  curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" "$api/edits/${edit_id}" || true
+}
+
 # 2) Upload the AAB (media upload) - use Google's upload host
 upload_base="https://www.googleapis.com/upload/androidpublisher/v3/applications/$package"
 upload_url="$upload_base/edits/${edit_id}/bundles?uploadType=media"
@@ -83,7 +97,7 @@ if [ "$http" != "200" ] && [ "$http" != "201" ]; then
   echo "Response:"
   cat "$upload_resp"
   # attempt to delete edit to avoid leaking partial state
-  curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" "$api/edits/${edit_id}" || true
+  abandon_edit
   exit 1
 fi
 
@@ -91,43 +105,54 @@ version_code="$(jq -r '.versionCode // empty' "$upload_resp")"
 if [ -z "$version_code" ]; then
   echo "::error::Could not find versionCode in upload response"
   cat "$upload_resp"
-  curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" "$api/edits/${edit_id}" || true
+  abandon_edit
   exit 1
 fi
 
 # Optional sanity check
 if [ -n "$expected_vc" ] && [ "$expected_vc" != "$version_code" ]; then
   echo "::error::Expected VERSION_CODE $expected_vc but upload produced $version_code"
-  curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" "$api/edits/${edit_id}" || true
+  abandon_edit
   exit 1
 fi
 
-# Build release JSON helper (status = completed/draft)
+# Build release JSON helper (status = completed/draft).
+#
+# Built with `jq -n --arg` rather than `jq -R -s .` on a here-string: the latter
+# slurps the here-string's trailing newline into the value, which shipped release
+# names like "1.3.15.2015\n" to Play. versionCodes are sent as strings, which is
+# how the API documents int64 fields.
 make_release() {
   status="$1"   # completed or draft
   ver="$2"
   name="$3"
   notes="$4"
-  # releaseNotes array with en-US only
-  if [ -n "$notes" ]; then
-    printf '{"name":%s,"versionCodes":[%s],"status":"%s","releaseNotes":[{"language":"en-US","text":%s}]}' \
-      "$(jq -R -s . <<< "$name")" "$ver" "$status" "$(jq -R -s . <<< "$notes")"
-  else
-    printf '{"name":%s,"versionCodes":[%s],"status":"%s"}' "$(jq -R -s . <<< "$name")" "$ver" "$status"
-  fi
+  jq -n --arg vc "$ver" --arg s "$status" --arg n "$name" --arg t "$notes" '
+    {versionCodes: [$vc], status: $s}
+    + (if $n == "" then {} else {name: $n} end)
+    + (if $t == "" then {} else {releaseNotes: [{language: "en-US", text: $t}]} end)
+  '
+}
+
+put_track() {
+  # $1 = track, $2 = draft|completed. Echoes the HTTP status.
+  release_json="$tmp/release-$1.json"
+  make_release "$2" "$version_code" "$release_name" "$release_notes" \
+    | jq '{releases: [.]}' > "$release_json"
+  req PUT "$api/edits/${edit_id}/tracks/$1" "$tmp/track-$1.json" "$release_json"
 }
 
 drafted_arr=()
-rolled_out=""
+rolled_out_arr=()
 
 # 3) Put draft tracks
 if [ -n "$draft_tracks" ]; then
   for tr in $draft_tracks; do
-    release_json="$tmp/release-${tr}.json"
-    rel=$(make_release draft "$version_code" "$release_name" "$release_notes")
-    jq -n --argjson r "$rel" '{"releases": [$r]}' > "$release_json" 2>/dev/null || echo "{\"releases\":[$rel]}" > "$release_json"
-    url="$api/edits/${edit_id}/tracks/${tr}"
-    http=$(req PUT "$url" "$tmp/track-${tr}.json" "$release_json")
+    if is_completed_track "$tr"; then
+      echo "::notice::Skipping draft on $tr — it is being rolled out as a completed track instead."
+      continue
+    fi
+    http=$(put_track "$tr" draft)
     if [ "$http" != "200" ]; then
       echo "::warning::Could not stage draft on $tr (HTTP $http). Response:"
       cat "$tmp/track-${tr}.json"
@@ -138,41 +163,53 @@ if [ -n "$draft_tracks" ]; then
   done
 fi
 
-# 4) Put completed track (rollout)
-if [ -n "$completed_track" ]; then
-  release_json="$tmp/release-${completed_track}.json"
-  rel=$(make_release completed "$version_code" "$release_name" "$release_notes")
-  jq -n --argjson r "$rel" '{"releases": [$r]}' > "$release_json" 2>/dev/null || echo "{\"releases\":[$rel]}" > "$release_json"
-  url="$api/edits/${edit_id}/tracks/${completed_track}"
-  http=$(req PUT "$url" "$tmp/track-${completed_track}.json" "$release_json")
+# 4) Put completed tracks (rollout)
+for tr in $completed_tracks; do
+  http=$(put_track "$tr" completed)
   if [ "$http" != "200" ]; then
-    echo "::error::Failed to set completed track $completed_track (HTTP $http)"
+    echo "::error::Failed to set completed track $tr (HTTP $http)"
     echo "Response:"
-    cat "$tmp/track-${completed_track}.json"
+    cat "$tmp/track-${tr}.json"
     # cleanup
-    curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" "$api/edits/${edit_id}" || true
+    abandon_edit
     exit 1
-  else
-    rolled_out="$completed_track"
   fi
-fi
+  rolled_out_arr+=("$tr")
+done
 
 # 5) Commit the edit
-# changesNotSentForReview=true: without it, Play's API tries to auto-submit
-# the edit for review the moment it's committed, and refuses (HTTP 400) for
-# an edit that stages draft releases on tracks like alpha/beta/production --
-# those are deliberately left as drafts for a human to review and submit
-# from the Play Console UI, not auto-sent. Verified (not just assumed)
-# harmless for the completed rollout above: per Google's own Play Console
-# help docs, internal-track releases "go live within minutes" and "may not
-# be subject to the usual Play policy or security reviews" -- so a flag
-# that only defers *review submission* is a genuine no-op for that track,
-# not a guess. If completed_track is ever changed to something that DOES
-# go through review (alpha/beta/production), that assumption needs
-# revisiting -- see the read-back verification in step 6 below, which
-# would catch the release silently not going live either way.
+#
+# Whether Play accepts `changesNotSentForReview` is a property of the app's
+# current state, not of this pipeline, and it flips over an app's lifetime:
+#
+#   * Without the flag, Play used to reject the commit (HTTP 400) for an edit
+#     that stages draft releases -- it wanted to auto-submit them for review,
+#     and the whole point of a draft here is that a human submits it from the
+#     console instead. That is why the flag was hard-coded.
+#   * With the flag, Play now rejects the commit for this app with
+#     "Changes are sent for review automatically. The query parameter
+#     changesNotSentForReview must not be set." -- review submission is no
+#     longer a choice, so passing the flag at all is an error.
+#
+# Hard-coding either answer therefore breaks the moment Play changes its mind,
+# and it broke exactly that way: a rejected commit throws the *entire* edit
+# away, so neither the completed rollout nor the drafts land. Try the flag,
+# and if Play objects specifically to the flag, drop it and commit again. The
+# first attempt's failure is not fatal -- a 400 on the query parameter means
+# the request was never processed, so the edit is still open and intact.
 commit_out="$tmp/commit.json"
-http=$(req POST "$api/edits/${edit_id}:commit?changesNotSentForReview=true" "$commit_out")
+commit_edit() {
+  req POST "$api/edits/${edit_id}:commit${1}" "$commit_out"
+}
+
+http=$(commit_edit "?changesNotSentForReview=true")
+if [ "$http" != "200" ] && [ "$http" != "201" ] \
+   && grep -qi 'changesNotSentForReview' "$commit_out"; then
+  echo "::notice::Play refused changesNotSentForReview for this app (HTTP $http) — it submits changes for review automatically now. Retrying the commit without the flag."
+  cat "$commit_out"
+  http=$(commit_edit "")
+fi
+
 if [ "$http" != "200" ] && [ "$http" != "201" ]; then
   echo "::error::Failed to commit edit (HTTP $http)"
   echo "Response:"
@@ -180,42 +217,94 @@ if [ "$http" != "200" ] && [ "$http" != "201" ]; then
   # Same reasoning as every other failure path above: don't leave an open
   # edit (holding the uploaded bundle) dangling in Play Console just
   # because this was the step that happened to fail.
-  curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" "$api/edits/${edit_id}" || true
+  abandon_edit
   exit 1
 fi
 
-# 6) Read back the live track state to confirm the release actually took
-#    effect. A 200 on step 5 only means Play *accepted the commit request*
-#    -- it doesn't by itself prove the completed_track rollout is genuinely
-#    live, and this pipeline has already been burned once by an
-#    unverified assumption about commit-time behavior (see the comment on
-#    changesNotSentForReview above). A verification-call failure (network
-#    blip, transient API error) is a warning, not a hard failure -- the
-#    commit may well have succeeded and this just couldn't double-check.
-#    Confirming the commit succeeded but the versionCode is absent from
-#    the live track, though, is a real failure: it means "Published" would
-#    otherwise be reported for a release that isn't actually out.
-if [ -n "$completed_track" ]; then
-  verify_out="$tmp/verify.json"
-  http=$(req GET "$api/tracks/${completed_track}" "$verify_out")
-  if [ "$http" != "200" ]; then
-    echo "::warning::Could not verify the $completed_track track's live state after commit (HTTP $http) -- the commit itself was accepted, but this could not be independently confirmed. Response:"
-    cat "$verify_out"
-  else
-    live_match=$(jq -r --arg vc "$version_code" \
-      '[.releases[]? | select(.versionCodes != null) | select(.versionCodes[]? == $vc)] | length' \
-      "$verify_out")
-    if [ "$live_match" = "0" ]; then
-      echo "::error::Commit reported success, but versionCode $version_code was not found in the live $completed_track track afterward. Response:"
-      cat "$verify_out"
-      exit 1
-    fi
-    echo "Verified versionCode $version_code is present in the live $completed_track track."
-  fi
+# 6) Read back the committed track state to confirm the release actually took
+#    effect. A 200 on step 5 only means Play *accepted the commit request* --
+#    it doesn't by itself prove the rollout is genuinely live, and this
+#    pipeline has already been burned twice by unverified assumptions about
+#    commit-time behaviour (see the comment on changesNotSentForReview above).
+#
+#    Track state is only readable *inside* an edit -- there is no
+#    `applications/{pkg}/tracks/{track}` endpoint, and the previous code asked
+#    for one, so this check answered 404 on every single run and silently
+#    degraded to a warning. It has therefore never actually verified anything.
+#    A fresh throwaway edit reads the committed state; it is deleted, never
+#    committed, so it changes nothing.
+verify_edit=""
+verify_ins="$tmp/verify-edit.json"
+http=$(req POST "$api/edits" "$verify_ins")
+if [ "$http" = "200" ] || [ "$http" = "201" ]; then
+  verify_edit=$(jq -r '.id // empty' "$verify_ins")
 fi
 
-# Write structured output
-jq -n --arg vc "$version_code" --arg rolled "$rolled_out" --argjson drafted "$(jq -R -s -c 'split(" ") | map(select(length>0))' <<< "${drafted_arr[*]}")" \
+if [ -z "$verify_edit" ]; then
+  echo "::warning::Could not open an edit to verify the committed track state (HTTP $http) -- the commit itself was accepted, but this could not be independently confirmed."
+else
+  # A track's release carries the versionCode as a string; compare as strings.
+  track_has_version() {
+    verify_out="$tmp/verify-$1.json"
+    vh=$(req GET "$api/edits/${verify_edit}/tracks/$1" "$verify_out")
+    if [ "$vh" != "200" ]; then
+      echo "unreadable"
+      return 0
+    fi
+    jq -r --arg vc "$version_code" '
+      [.releases[]? | select(any(.versionCodes[]?; tostring == $vc))]
+      | if length == 0 then "absent" else (.[0].status // "present") end
+    ' "$verify_out"
+  }
+
+  verify_failed=0
+  for tr in $completed_tracks; do
+    state=$(track_has_version "$tr")
+    case "$state" in
+      unreadable)
+        echo "::warning::Could not read the $tr track back after commit -- the commit was accepted, but this could not be independently confirmed."
+        ;;
+      absent)
+        echo "::error::Commit reported success, but versionCode $version_code is not on the $tr track afterward. Response:"
+        cat "$tmp/verify-$tr.json"
+        verify_failed=1
+        ;;
+      *)
+        echo "Verified versionCode $version_code is on the $tr track (status: $state)."
+        ;;
+    esac
+  done
+
+  # Drafts are best-effort by design, so a missing one is reported, not fatal.
+  for tr in "${drafted_arr[@]:-}"; do
+    [ -n "$tr" ] || continue
+    state=$(track_has_version "$tr")
+    case "$state" in
+      unreadable) echo "::warning::Could not read the $tr track back to confirm the draft." ;;
+      absent)     echo "::warning::Draft on $tr was accepted during the edit but versionCode $version_code is not on that track now." ;;
+      *)          echo "Verified versionCode $version_code is staged on $tr (status: $state)." ;;
+    esac
+  done
+
+  curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" "$api/edits/${verify_edit}" || true
+  [ "$verify_failed" = "0" ] || exit 1
+fi
+
+# Write structured output. Both lists are newline-delimited into jq so a track
+# name can never be split or lost, and neither list carries a stray newline
+# into $GITHUB_OUTPUT.
+to_json_array() {
+  if [ "$#" -eq 0 ]; then
+    echo '[]'
+  else
+    printf '%s\n' "$@" | jq -R -s -c 'split("\n") | map(select(length > 0))'
+  fi
+}
+
+jq -n \
+  --arg vc "$version_code" \
+  --argjson rolled "$(to_json_array "${rolled_out_arr[@]:-}")" \
+  --argjson drafted "$(to_json_array "${drafted_arr[@]:-}")" \
   '{versionCode: ($vc|tonumber), rolledOut: $rolled, drafted: $drafted}' > "$out_file"
 
-echo "Published versionCode $version_code; rolled out: $rolled_out; drafted: ${drafted_arr[*]}"
+echo "Published versionCode $version_code; rolled out: ${rolled_out_arr[*]:-none}; drafted: ${drafted_arr[*]:-none}"
