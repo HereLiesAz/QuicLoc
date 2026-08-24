@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    b315ddb34f805a51e7311e5b1e560d173e8c8bae
-  Timestamp: 2026-08-24 20:04:31 UTC
+  Commit:    02bd72340dea4a3e81e6025b9ab634c58fe56a67
+  Timestamp: 2026-08-24 21:40:02 UTC
 ======================================================
 
 
@@ -20995,6 +20995,13 @@ endlocal & "%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %GRADLE_OPTS% "-Dorg.grad
 :exitWithErrorLevel
 @rem Use "%COMSPEC%" /c exit to allow operators to work properly in scripts
 "%COMSPEC%" /c exit %ERRORLEVEL%
+
+
+######################################################
+# FILE: scripts/run-and-logcat.sh
+######################################################
+
+[BINARY FILE - SKIPPED]
 
 
 ######################################################
