@@ -179,35 +179,29 @@ done
 
 # 5) Commit the edit
 #
-# Whether Play accepts `changesNotSentForReview` is a property of the app's
-# current state, not of this pipeline, and it flips over an app's lifetime:
+# Google Play API behavior has changed: it now automatically sends changes
+# for review and no longer accepts the changesNotSentForReview query parameter.
+# If the parameter is passed, Play rejects the request with HTTP 400 and a
+# message indicating the parameter must not be set.
 #
-#   * Without the flag, Play used to reject the commit (HTTP 400) for an edit
-#     that stages draft releases -- it wanted to auto-submit them for review,
-#     and the whole point of a draft here is that a human submits it from the
-#     console instead. That is why the flag was hard-coded.
-#   * With the flag, Play now rejects the commit for this app with
-#     "Changes are sent for review automatically. The query parameter
-#     changesNotSentForReview must not be set." -- review submission is no
-#     longer a choice, so passing the flag at all is an error.
-#
-# Hard-coding either answer therefore breaks the moment Play changes its mind,
-# and it broke exactly that way: a rejected commit throws the *entire* edit
-# away, so neither the completed rollout nor the drafts land. Try the flag,
-# and if Play objects specifically to the flag, drop it and commit again. The
-# first attempt's failure is not fatal -- a 400 on the query parameter means
-# the request was never processed, so the edit is still open and intact.
+# To handle both old and new API behavior, we:
+#   1. First try without the parameter (modern API)
+#   2. If that fails with a specific error mentioning the parameter, it means
+#      the app is on legacy API behavior that requires the parameter, so retry with it
 commit_out="$tmp/commit.json"
 commit_edit() {
   req POST "$api/edits/${edit_id}:commit${1}" "$commit_out"
 }
 
-http=$(commit_edit "?changesNotSentForReview=true")
-if [ "$http" != "200" ] && [ "$http" != "201" ] \
-   && grep -qi 'changesNotSentForReview' "$commit_out"; then
-  echo "::notice::Play refused changesNotSentForReview for this app (HTTP $http) — it submits changes for review automatically now. Retrying the commit without the flag."
-  cat "$commit_out"
-  http=$(commit_edit "")
+# Try without the parameter first (modern API behavior)
+http=$(commit_edit "")
+if [ "$http" != "200" ] && [ "$http" != "201" ]; then
+  # If it failed, check if it's because the parameter is required (legacy behavior)
+  if grep -qi 'changesNotSentForReview' "$commit_out" && grep -qi 'must.* be set' "$commit_out"; then
+    echo "::notice::Play requires changesNotSentForReview for this app (legacy API). Retrying with the parameter."
+    cat "$commit_out"
+    http=$(commit_edit "?changesNotSentForReview=false")
+  fi
 fi
 
 if [ "$http" != "200" ] && [ "$http" != "201" ]; then
