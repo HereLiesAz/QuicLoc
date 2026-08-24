@@ -151,6 +151,22 @@ jobs:
           path: ${{ env.APK_PATH }}
           if-no-files-found: error
 
+      # See the same step in release-play.yml for why this is not optional:
+      # without the mapping, an obfuscated crash from this build can never be
+      # read back to real class names. Only release builds are minified, so
+      # this is skipped for the debug/PR path.
+      - name: Upload R8 mapping (deobfuscation key)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: quicloc-mapping-${{ env.SAFE_BRANCH }}-${{ github.sha }}
+          path: |
+            app/build/outputs/mapping/release/mapping.txt
+            app/build/outputs/mapping/release/missingRules.txt
+            **/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Publish GitHub Release (signed APK)
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2

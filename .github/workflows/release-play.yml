@@ -279,6 +279,33 @@ jobs:
             app/version.properties
           if-no-files-found: error
 
+      # R8's mapping file is the ONLY thing that turns an obfuscated crash
+      # ("NoClassDefFoundError: Failed resolution of: Lwf2;") back into a real
+      # class name. It is written on the runner and, until now, died with it —
+      # so every crash report from a shipped build was permanently
+      # undiagnosable, and fixes for them could only ever be guesses.
+      #
+      # Retained for 90 days and named with the versionCode, because that is
+      # what a crash report identifies itself by. R8 also stamps a map id into
+      # every stack frame (r8-map-id-<hash>); the same id appears at the top of
+      # mapping.txt, so an old report can be matched to its exact build with no
+      # guessing about which release it came from.
+      #
+      # Play Console holds a copy too (AGP embeds the map in the .aab under
+      # BUNDLE-METADATA/, which is how Android vitals deobfuscates), but that
+      # only covers crashes Play sees. Anything reported out-of-band — a user
+      # pasting a stack trace, an in-app logger — needs this artifact.
+      - name: Upload R8 mapping (deobfuscation key)
+        uses: actions/upload-artifact@v4
+        with:
+          name: quicloc-mapping-${{ env.VERSION_NAME }}-vc${{ env.VERSION_CODE }}
+          path: |
+            app/build/outputs/mapping/release/mapping.txt
+            app/build/outputs/mapping/release/missingRules.txt
+            **/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: error
+          retention-days: 90
+
       # Minted here rather than reused from the preflight: tokens last 5 minutes
       # and the build sits in between.
       - name: Mint a Play API token (publish)
