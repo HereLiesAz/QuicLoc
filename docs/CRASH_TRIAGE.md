@@ -113,25 +113,43 @@ a cause). `MainActivity.autoDetectMyNumberOnFirstShow` calls
 first-launch screen shows with no number set yet — right after
 `unlock()` — which fit.
 
-Confirmed by pulling `play-services-auth`'s AAR directly from Google's Maven
-(`dl.google.com/android/maven2/...`) and disassembling its `classes.jar`
-with `javap`, no app build required: `SignInCredential` — part of the same
+Pulled `play-services-auth`'s AAR directly from Google's Maven
+(`dl.google.com/android/maven2/...`) and disassembled its `classes.jar` with
+`javap`, no app build required: `SignInCredential` — part of the same
 Identity API surface `getPhoneNumberHintIntent` belongs to — declares a
 field of type `com.google.android.gms.fido.fido2.api.common.PublicKeyCredential`,
-and its `<clinit>` builds that class's Parcelable `CREATOR`. This app never
-depended on `play-services-fido`, so that type is either absent from the
-dex or gets shrunk as apparently-unreachable — either way, exercising the
-Identity API can throw `NoClassDefFoundError` linking it, on whatever
-executor thread Play Services' client library runs on, which is fatal to
-the whole process by default since nothing on that thread can catch it.
-Matches every detail: `NoClassDefFoundError` at a `<clinit>` (not a
-reflective call site — no keep rule would have fixed this, consistent with
-Step 3's case 2), background thread, right after biometric unlock. Fixed by
-adding the `play-services-fido` dependency.
+and its `<clinit>` builds that class's Parcelable `CREATOR`. Concluded this
+app never depended on `play-services-fido`, so that type was absent, and
+shipped `implementation(libs.play.services.fido)` as the fix.
 
-The lesson isn't "the mapping doesn't matter" — it's that when the mapping
-truly can't be gotten, concrete circumstantial evidence (exact repro timing,
-what code path runs there) plus verifying the hypothesis against the actual
-dependency bytecode is a legitimate substitute for guessing blind. The two
-failed fixes this file exists because of were guesses with *no* such
-verification.
+**That conclusion was wrong, and a PR review (`chatgpt-codex-connector`)
+caught it before merge.** `play-services-auth-21.6.0.pom` itself declares
+`play-services-fido:20.0.1` as a plain `compile`-scope dependency —
+`play-services-fido` was already on the classpath, transitively, the whole
+time. Two things follow from that, and the disassembly above didn't rule
+either out:
+
+- If `PublicKeyCredential` were genuinely absent (never a program input to
+  R8), the reference to it in `SignInCredential`'s bytecode would still
+  carry its real, unrenamed name — R8 cannot rename a class it never saw.
+  The crash naming it `Leg2;`, an obfuscated short name, means R8 *did*
+  process a class there. A truly-missing dependency doesn't produce an
+  obfuscated name.
+- Finding that `SignInCredential` references FIDO2 doesn't establish that
+  `getPhoneNumberHintIntent` — the actual call site — ever loads it. Two
+  different entry points in the same API surface, never checked whether the
+  one the app calls touches the one whose bytecode was inspected.
+
+So the dependency add (in the reverted commit) was very likely a no-op:
+adding an explicit, newer version of something Gradle already resolved
+transitively. The `eg2`/`qb2` crash is **still unexplained** — back to
+needing the actual mapping (Step 1) or a repro that can be attached to a
+debugger, not another guess from a disassembly that was never checked
+against what was already on the classpath.
+
+The lesson isn't "the mapping doesn't matter" — it's that verifying a
+hypothesis against *some* real evidence (bytecode, in this case) is
+necessary but not sufficient; it still has to be checked against what the
+evidence actually rules out, not just what it's consistent with. This is
+now the third fix for this failure shape that didn't hold up. Don't write a
+fourth without the mapping or a real repro.
