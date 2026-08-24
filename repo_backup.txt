@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    17efd9f249921dbc33c0ff643b064aa219f450d3
-  Timestamp: 2026-08-24 04:14:04 UTC
+  Commit:    b727b6d130d9425c9ea8a9e7cab3a5a7aa8a9a51
+  Timestamp: 2026-08-24 04:46:20 UTC
 ======================================================
 
 
@@ -2365,6 +2365,27 @@ dependencies {
 # executor thread once a split-install response comes back.
 -keep class com.google.android.play.core.** { *; }
 -dontwarn com.google.android.play.core.**
+
+# ------------------------------------------------------------------
+# Additional safety: keep Parcelable implementations and their CREATOR
+# fields project-wide. Parcel.readParcelable() (and cross-process AIDL/Parcel
+# boundaries) use the runtime class name; if R8 renames/removes these classes
+# and their CREATORs, the platform can throw ClassNotFoundException/NoClassDef
+# (the stacktrace you reported referenced short obfuscated names like "wf2").
+# Keeping parcelable classes prevents R8 from obfuscating or removing them.
+# This is intentionally broad but safe for correctness of dynamic feature
+# delivery and any Parcelable crossing process/AIDL/Parcel boundaries.
+
+-keep class * implements android.os.Parcelable { public static final android.os.Parcelable$Creator CREATOR; }
+-keepclassmembers class * implements android.os.Parcelable { public static final android.os.Parcelable$Creator CREATOR; }
+-keepnames class * implements android.os.Parcelable { *; }
+
+# Also be explicit about Play Core's internal splitinstall model classes
+# (some past R8 failures required keeping the model packages by name).
+-keep class com.google.android.play.core.splitinstall.** { *; }
+-keep class com.google.android.play.core.splitinstall.model.** { *; }
+-keep class com.google.android.play.core.internal.** { *; }
+-keepnames class com.google.android.play.core.** { *; }
 
 
 ######################################################
@@ -16503,7 +16524,7 @@ class WhitelistManagerTest {
 VERSION_A=1
 VERSION_B=3
 VERSION_C=14
-VERSION_D=2015
+VERSION_D=2016
 
 
 ######################################################
