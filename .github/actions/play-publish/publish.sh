@@ -179,30 +179,12 @@ done
 
 # 5) Commit the edit
 #
-# Google Play API behavior has changed: it now automatically sends changes
-# for review and no longer accepts the changesNotSentForReview query parameter.
-# If the parameter is passed, Play rejects the request with HTTP 400 and a
-# message indicating the parameter must not be set.
-#
-# To handle both old and new API behavior, we:
-#   1. First try without the parameter (modern API)
-#   2. If that fails with a specific error mentioning the parameter, it means
-#      the app is on legacy API behavior that requires the parameter, so retry with it
+# Google Play API requires the changesNotSentForReview=true parameter to commit
+# without automatically sending changes for review. This parameter allows edits
+# to be staged and then promoted manually from the Play Console.
 commit_out="$tmp/commit.json"
-commit_edit() {
-  req POST "$api/edits/${edit_id}:commit${1}" "$commit_out"
-}
-
-# Try without the parameter first (modern API behavior)
-http=$(commit_edit "")
-if [ "$http" != "200" ] && [ "$http" != "201" ]; then
-  # If it failed, check if it's because the parameter is required (legacy behavior)
-  if grep -qi 'changesNotSentForReview' "$commit_out" && grep -qi 'must.* be set' "$commit_out"; then
-    echo "::notice::Play requires changesNotSentForReview for this app (legacy API). Retrying with the parameter."
-    cat "$commit_out"
-    http=$(commit_edit "?changesNotSentForReview=false")
-  fi
-fi
+commit_url="$api/edits/${edit_id}:commit?changesNotSentForReview=true"
+http=$(req POST "$commit_url" "$commit_out")
 
 if [ "$http" != "200" ] && [ "$http" != "201" ]; then
   echo "::error::Failed to commit edit (HTTP $http)"
