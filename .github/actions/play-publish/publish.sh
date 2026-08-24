@@ -179,11 +179,11 @@ done
 
 # 5) Commit the edit
 #
-# Google Play API requires the changesNotSentForReview=true parameter to commit
-# without automatically sending changes for review. This parameter allows edits
-# to be staged and then promoted manually from the Play Console.
+# Changes are sent for review automatically as required by the Play Store API.
+# The previous changesNotSentForReview=true parameter is no longer supported
+# for this app and caused HTTP 400 errors.
 commit_out="$tmp/commit.json"
-commit_url="$api/edits/${edit_id}:commit?changesNotSentForReview=true"
+commit_url="$api/edits/${edit_id}:commit"
 http=$(req POST "$commit_url" "$commit_out")
 
 if [ "$http" != "200" ] && [ "$http" != "201" ]; then
