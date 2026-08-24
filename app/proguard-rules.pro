@@ -44,3 +44,12 @@
 -keep class com.google.android.play.core.splitinstall.model.** { *; }
 -keep class com.google.android.play.core.internal.** { *; }
 -keepnames class com.google.android.play.core.** { *; }
+
+# Additional rules for Play Core 2.x and GMS Tasks to prevent NoClassDefFoundError
+# in R8 Full Mode (standard).
+-keep class com.google.android.play.core.common.** { *; }
+-keep class com.google.android.gms.tasks.** { *; }
+-keep class com.google.android.play.core.splitinstall.internal.** { *; }
+
+# Keep common Play Core dialog activities
+-keep class com.google.android.play.core.common.PlayCoreDialogWrapperActivity { *; }

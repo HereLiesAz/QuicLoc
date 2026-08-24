@@ -944,8 +944,9 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
                 if (!authenticated) {
                     val showPinEntry by pinGateState
+                    val canUseBiometrics = remember { BiometricHelper.canAuthenticate(this@MainActivity) }
                     BiometricGateScreen(
-                        canUseBiometrics = BiometricHelper.canAuthenticate(this@MainActivity),
+                        canUseBiometrics = canUseBiometrics,
                         appPinSet = hasAppPin(),
                         showPinEntry = showPinEntry,
                         onRetry = {
@@ -1158,10 +1159,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                         }
                     ) { innerPadding ->
                         when (val v = view) {
-                            MainView.History -> HistoryScreen(
-                                modifier = Modifier.padding(innerPadding),
-                                historyManager = RequestHistoryManager(this@MainActivity)
-                            )
+                            MainView.History -> {
+                                val historyManager = remember { RequestHistoryManager(this@MainActivity) }
+                                HistoryScreen(
+                                    modifier = Modifier.padding(innerPadding),
+                                    historyManager = historyManager
+                                )
+                            }
                             MainView.Diagnostics -> DiagnosticsScreen(
                                 modifier = Modifier.padding(innerPadding),
                                 notificationAccessGranted = notificationAccessGranted,
@@ -1518,6 +1522,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             unlock()
             return
         }
+        beginSystemFlow()
         BiometricHelper.authenticate(
             activity = this,
             onSuccess = { unlock() },
