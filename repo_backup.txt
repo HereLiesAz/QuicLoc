@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    bb16354573cf7d1eb726059ecf490dbad5ca9516
-  Timestamp: 2026-08-24 05:02:21 UTC
+  Commit:    c68503941733d80d05b7331b55250308c11ce0ad
+  Timestamp: 2026-08-24 05:37:07 UTC
 ======================================================
 
 
@@ -16520,11 +16520,11 @@ class WhitelistManagerTest {
 # FILE: app/version.properties
 ######################################################
 
-#Thu Aug 06 09:14:28 CDT 2026
+#Mon Aug 24 00:32:11 CDT 2026
 VERSION_A=1
 VERSION_B=3
-VERSION_C=14
-VERSION_D=2016
+VERSION_C=17
+VERSION_D=2020
 
 
 ######################################################
@@ -16532,9 +16532,24 @@ VERSION_D=2016
 ######################################################
 
 plugins {
-    id("com.android.application") version "9.2.1" apply false
+    id("com.android.application") version "9.3.2" apply false
     id("org.jetbrains.kotlin.android") version "2.4.0" apply false
     id("org.jetbrains.kotlin.plugin.compose") version "2.4.0" apply false
+}
+
+// This repo is synced by Google Drive for Desktop (G:\My Drive\...). Its
+// virtual filesystem driver intermittently rejects Gradle's build-output file
+// operations on Windows with "The parameter is incorrect" (e.g.
+// signingConfigWriterDebug writing signing-config-data.json). Redirect every
+// project's build directory to local disk so intermediates never round-trip
+// through the Drive sync driver. No-op on CI / non-Windows, where
+// LOCALAPPDATA isn't set.
+val localAppData = System.getenv("LOCALAPPDATA")
+if (localAppData != null) {
+    val localBuildRoot = file("$localAppData/GradleBuilds/${rootProject.name}")
+    allprojects {
+        layout.buildDirectory.set(localBuildRoot.resolve(if (this === rootProject) "_root" else name))
+    }
 }
 
 
