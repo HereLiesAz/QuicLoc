@@ -23,3 +23,24 @@
 # executor thread once a split-install response comes back.
 -keep class com.google.android.play.core.** { *; }
 -dontwarn com.google.android.play.core.**
+
+# ------------------------------------------------------------------
+# Additional safety: keep Parcelable implementations and their CREATOR
+# fields project-wide. Parcel.readParcelable() (and cross-process AIDL/Parcel
+# boundaries) use the runtime class name; if R8 renames/removes these classes
+# and their CREATORs, the platform can throw ClassNotFoundException/NoClassDef
+# (the stacktrace you reported referenced short obfuscated names like "wf2").
+# Keeping parcelable classes prevents R8 from obfuscating or removing them.
+# This is intentionally broad but safe for correctness of dynamic feature
+# delivery and any Parcelable crossing process/AIDL/Parcel boundaries.
+
+-keep class * implements android.os.Parcelable { public static final android.os.Parcelable$Creator CREATOR; }
+-keepclassmembers class * implements android.os.Parcelable { public static final android.os.Parcelable$Creator CREATOR; }
+-keepnames class * implements android.os.Parcelable { *; }
+
+# Also be explicit about Play Core's internal splitinstall model classes
+# (some past R8 failures required keeping the model packages by name).
+-keep class com.google.android.play.core.splitinstall.** { *; }
+-keep class com.google.android.play.core.splitinstall.model.** { *; }
+-keep class com.google.android.play.core.internal.** { *; }
+-keepnames class com.google.android.play.core.** { *; }
