@@ -1464,6 +1464,11 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         locNoticeEnabledState.value = AppSettings.isLocNoticeEnabled(this)
         geofenceEntriesState.value = geofenceStore.getAll()
         refreshPermissionStatuses()
+        // Proactively ask the system to re-bind the notification listener
+        // if it's enabled, to heal from "ghost" unbind errors.
+        if (isNotificationListenerEnabled()) {
+            NotificationListener.requestRebind(this)
+        }
     }
 
     override fun onPause() {

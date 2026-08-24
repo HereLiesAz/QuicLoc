@@ -1,6 +1,8 @@
 package com.hereliesaz.quicloc
 
 import android.app.Notification
+import android.content.ComponentName
+import android.content.Context
 import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -52,12 +54,35 @@ class NotificationListener : NotificationListenerService() {
          */
         private fun bodyLooksLikeTrigger(body: String): Boolean =
             body.contains(TRIGGER_PLAIN)
+
+        /**
+         * Proactively requests the system to re-bind this listener. Useful to
+         * recover from "ghost" states where the system thinks the service is
+         * bound but it isn't (common during app updates/re-installs).
+         */
+        fun requestRebind(context: Context) {
+            try {
+                requestRebind(ComponentName(context, NotificationListener::class.java))
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not request listener rebind", e)
+            }
+        }
     }
 
     private val whitelist by lazy { WhitelistManager(applicationContext) }
     private val history by lazy { RequestHistoryManager(applicationContext) }
     private val diag by lazy { DiagnosticLogManager(applicationContext) }
     private val recentlyProcessed = mutableMapOf<String, Long>()
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        Log.i(TAG, "Listener connected")
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        Log.i(TAG, "Listener disconnected")
+    }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val captureAll = AppSettings.isDiagCaptureAll(applicationContext)
