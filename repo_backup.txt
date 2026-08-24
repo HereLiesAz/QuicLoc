@@ -2,11 +2,83 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    claude/aab-google-play-publishing-klw5yq
-  Commit:    a5bff6e1829d5eb751e8251408a02d43a07f5db9
-  Timestamp: 2026-08-24 21:38:27 UTC
+  Branch:    main
+  Commit:    49eeb0c488eb71829d7a1575778e226ee074bdf4
+  Timestamp: 2026-08-24 21:44:25 UTC
 ======================================================
 
+
+######################################################
+# FILE: .claude-flow/harness-active-policy.json
+######################################################
+
+{
+  "championId": "sha256:6141a8ea990c5063b77e090ae8f37f9c539d8aa8f58dcceb30f3a82f97e57319",
+  "provenanceTier": "oracle:test-exec",
+  "layer": "framework/node-cli",
+  "appliedAt": 1787502015850,
+  "previous": "",
+  "params": {
+    "alpha": 0.3,
+    "subjectWeight": 1,
+    "mmrLambda": 0.5,
+    "bodyWeight": 1.5,
+    "typePenaltyFactor": 0.5
+  }
+}
+
+######################################################
+# FILE: .claude/.proven-config-version
+######################################################
+
+sha256:6141a8ea990c5063b77e090ae8f37f9c539d8aa8f58dcceb30f3a82f97e57319
+
+######################################################
+# FILE: .claude/proven-config.json
+######################################################
+
+{
+  "adoptedAt": 1787502015846,
+  "championId": "sha256:6141a8ea990c5063b77e090ae8f37f9c539d8aa8f58dcceb30f3a82f97e57319",
+  "manifest": {
+    "schema": "ruflo.proven-config/v1",
+    "policy": {
+      "ref": "sha256:6141a8ea990c5063b77e090ae8f37f9c539d8aa8f58dcceb30f3a82f97e57319",
+      "value": {
+        "alpha": 0.3,
+        "subjectWeight": 1,
+        "mmrLambda": 0.5,
+        "bodyWeight": 1.5,
+        "typePenaltyFactor": 0.5
+      }
+    },
+    "layer": "framework/node-cli",
+    "compatibility": {
+      "ruflo": ">=3.24.0"
+    },
+    "benchmark": {
+      "corpus": "ADR-081-labelled-v1",
+      "corpusHash": "sha256:2f700b5c363e20a3bd88ce2bc9b87bbbbaa61732c6177894c6ec37890f888982"
+    },
+    "receipt": {
+      "heldOutDelta": 0.07381404928570845,
+      "redblue": "PASS",
+      "drift": 0,
+      "canary": {
+        "rollbackRate": 0,
+        "latencyP95": 244.612458000076,
+        "costPerTask": 0
+      },
+      "receiptCoverage": 1
+    },
+    "platform": [
+      "linux",
+      "macOS",
+      "windows"
+    ]
+  },
+  "previous": ""
+}
 
 ######################################################
 # FILE: .github/actions/android-keystore/action.yml
@@ -1784,6 +1856,86 @@ google-services.json
 /app/release/baselineProfiles/1/app-release.dm
 /gradle/gradle-daemon-jvm.properties
 /.kotlin/sessions/kotlin-compiler-*.salive
+
+
+######################################################
+# FILE: AGENTS.jules.md
+######################################################
+
+# AGENTS.md
+
+Operating instructions for this repository. Read before planning.
+
+---
+
+## Voice & Output
+
+- Solution only. No preamble, no explanation unless asked.
+- No small talk, no pleasantries, no polite throat-clearing.
+- Concise, precise language. If it can be inferred, let it. Every word counts.
+- Silence beats repetition.
+- When knowledge runs out, get creative.
+
+---
+
+## Scope
+
+- Never make a change that wasn't explicitly requested.
+- If uncertain, or if something seems implied, raise it in the plan rather than acting on it.
+- One feature per task. Do not bundle unrelated fixes into the same branch.
+- Anything discovered mid-task that is out of scope goes in the PR description, not in the diff.
+
+---
+
+## Code Delivery
+
+- Maintain comprehensive KDocs and all documentation files. No regressions.
+- Markdown files use tildes for internal code blocks.
+- Every changed file appears in the PR description with a one-line reason.
+
+---
+
+## Verification
+
+- If a comment or doc asserts a behaviour, open the code and confirm it before relying on the assertion.
+- Before referencing any symbol, file, or config value not opened in this task, open it. No exceptions for things that "obviously" exist.
+- Before writing any new function, class, or file, grep for the behavior — by name, by call site, by the string it would produce. Kotlin duplication hides behind different names for the same thing.
+- Before marking a step complete, grep that the thing has a caller outside its own tests.
+- Tests must never derive their expected value the same way the code under test does.
+- Recompute every number before quoting it, including ones inherited from the plan. Never pass through a prior figure unverified.
+- On any inherited figure, name where it came from before reusing it.
+
+---
+
+## Drift Detection
+
+- When restating an architectural decision, state its original reason. If the reason has drifted from the original, stop and flag it in the PR.
+- Before opening a PR, quote each invariant from `ARCHITECTURE.md` and name the `file:line` that enforces it. If none can be named, say the invariant is unenforced.
+- The changed-file list comes from `git status`, never from recollection.
+- If the plan and the diff have diverged, say so explicitly rather than reconciling them silently.
+
+---
+
+## Build
+
+- Never modify or revert `version.properties`.
+- Gradle runs with `--no-daemon`.
+- On any build failure, state whether it was Kotlin or NDK before attempting a fix.
+- Do not add, remove, or bump a dependency to resolve a build error without flagging it as a scope change.
+- Never run a long-lived process (`gradlew --continuous`, any dev server) — it will hang the task.
+
+---
+
+## Out of Scope for This Environment
+
+- GLEE runs cold, outside this session, on the published branch. Do not simulate it, do not self-review in its place.
+- Do not open the PR as merge-ready. Every branch is reviewed before merge.
+
+---
+
+## Companion File
+
+`ARCHITECTURE.md` holds module boundaries, invariants, current version, and decisions with their reasons. Read it before proposing structural changes. Never recall it — open it.
 
 
 ######################################################
@@ -16563,11 +16715,11 @@ class WhitelistManagerTest {
 # FILE: app/version.properties
 ######################################################
 
-#Mon Aug 24 00:32:11 CDT 2026
+#Mon Aug 24 16:42:19 CDT 2026
 VERSION_A=1
 VERSION_B=3
-VERSION_C=17
-VERSION_D=2020
+VERSION_C=18
+VERSION_D=2021
 
 
 ######################################################
@@ -20995,6 +21147,13 @@ endlocal & "%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %GRADLE_OPTS% "-Dorg.grad
 :exitWithErrorLevel
 @rem Use "%COMSPEC%" /c exit to allow operators to work properly in scripts
 "%COMSPEC%" /c exit %ERRORLEVEL%
+
+
+######################################################
+# FILE: scripts/run-and-logcat.sh
+######################################################
+
+[BINARY FILE - SKIPPED]
 
 
 ######################################################
