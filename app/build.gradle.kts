@@ -182,6 +182,17 @@ dependencies {
     // from a system bottom sheet, no permissions required.
     implementation(libs.play.services.auth)
 
+    // play-services-auth's Identity API classes (e.g. SignInCredential, used
+    // by the SAME internal Parcelable machinery the phone-number-hint call
+    // above goes through) declare a field of type
+    // com.google.android.gms.fido.fido2.api.common.PublicKeyCredential —
+    // even though this app never touches sign-in/passkeys, not FIDO2 itself.
+    // Without this dependency that type is absent from the app, so touching
+    // Identity API at all can throw NoClassDefFoundError linking that class,
+    // on a background Play Services executor thread that crashes the whole
+    // process (see docs/CRASH_TRIAGE.md's Leg2/qb2 entry).
+    implementation(libs.play.services.fido)
+
     // Play Feature Delivery — SplitInstall (download the on-demand
     // :feature_findmyphone module) + SplitCompat (load it in-process). The
     // lockdown feature's heavy deps (CameraX, klinker MMS) live in the module,

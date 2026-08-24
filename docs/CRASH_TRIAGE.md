@@ -100,3 +100,38 @@ Explorer's per-versionCode download otherwise (Google keeps that copy for as
 long as the bundle exists, unlike this repo's 90-day CI artifact). Nobody
 added a third speculative keep rule for this one; do the same for the next
 report shaped like this until someone actually retraces it.
+
+### How it was actually found, without the mapping
+
+Play Console access wasn't available either, so instead of waiting, the
+reporter supplied context the trace itself didn't carry: the crash happens
+on or immediately after the biometric-unlock screen, on a background thread,
+with a logcat line showing `NotificationListener`'s connection dying
+alongside the rest of the process (a symptom of the whole process dying, not
+a cause). `MainActivity.autoDetectMyNumberOnFirstShow` calls
+`Identity.getSignInClient(...).getPhoneNumberHintIntent(...)` the moment the
+first-launch screen shows with no number set yet — right after
+`unlock()` — which fit.
+
+Confirmed by pulling `play-services-auth`'s AAR directly from Google's Maven
+(`dl.google.com/android/maven2/...`) and disassembling its `classes.jar`
+with `javap`, no app build required: `SignInCredential` — part of the same
+Identity API surface `getPhoneNumberHintIntent` belongs to — declares a
+field of type `com.google.android.gms.fido.fido2.api.common.PublicKeyCredential`,
+and its `<clinit>` builds that class's Parcelable `CREATOR`. This app never
+depended on `play-services-fido`, so that type is either absent from the
+dex or gets shrunk as apparently-unreachable — either way, exercising the
+Identity API can throw `NoClassDefFoundError` linking it, on whatever
+executor thread Play Services' client library runs on, which is fatal to
+the whole process by default since nothing on that thread can catch it.
+Matches every detail: `NoClassDefFoundError` at a `<clinit>` (not a
+reflective call site — no keep rule would have fixed this, consistent with
+Step 3's case 2), background thread, right after biometric unlock. Fixed by
+adding the `play-services-fido` dependency.
+
+The lesson isn't "the mapping doesn't matter" — it's that when the mapping
+truly can't be gotten, concrete circumstantial evidence (exact repro timing,
+what code path runs there) plus verifying the hypothesis against the actual
+dependency bytecode is a legitimate substitute for guessing blind. The two
+failed fixes this file exists because of were guesses with *no* such
+verification.
