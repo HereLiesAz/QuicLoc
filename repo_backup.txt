@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    5b2658f5781bbbd27983a77a8f19c9da9736afdb
-  Timestamp: 2026-08-24 15:48:29 UTC
+  Branch:    claude/classnotfound-eg2-error-hecspq
+  Commit:    8d2a5e12ce3beb3cd8a38c189b82cf1740832368
+  Timestamp: 2026-08-24 16:00:20 UTC
 ======================================================
 
 
@@ -2307,6 +2307,17 @@ dependencies {
     // Phone Number Hint API — lets the user one-tap-pick their own number
     // from a system bottom sheet, no permissions required.
     implementation(libs.play.services.auth)
+
+    // play-services-auth's Identity API classes (e.g. SignInCredential, used
+    // by the SAME internal Parcelable machinery the phone-number-hint call
+    // above goes through) declare a field of type
+    // com.google.android.gms.fido.fido2.api.common.PublicKeyCredential —
+    // even though this app never touches sign-in/passkeys, not FIDO2 itself.
+    // Without this dependency that type is absent from the app, so touching
+    // Identity API at all can throw NoClassDefFoundError linking that class,
+    // on a background Play Services executor thread that crashes the whole
+    // process (see docs/CRASH_TRIAGE.md's Leg2/qb2 entry).
+    implementation(libs.play.services.fido)
 
     // Play Feature Delivery — SplitInstall (download the on-demand
     // :feature_findmyphone module) + SplitCompat (load it in-process). The
@@ -17105,6 +17116,41 @@ long as the bundle exists, unlike this repo's 90-day CI artifact). Nobody
 added a third speculative keep rule for this one; do the same for the next
 report shaped like this until someone actually retraces it.
 
+### How it was actually found, without the mapping
+
+Play Console access wasn't available either, so instead of waiting, the
+reporter supplied context the trace itself didn't carry: the crash happens
+on or immediately after the biometric-unlock screen, on a background thread,
+with a logcat line showing `NotificationListener`'s connection dying
+alongside the rest of the process (a symptom of the whole process dying, not
+a cause). `MainActivity.autoDetectMyNumberOnFirstShow` calls
+`Identity.getSignInClient(...).getPhoneNumberHintIntent(...)` the moment the
+first-launch screen shows with no number set yet — right after
+`unlock()` — which fit.
+
+Confirmed by pulling `play-services-auth`'s AAR directly from Google's Maven
+(`dl.google.com/android/maven2/...`) and disassembling its `classes.jar`
+with `javap`, no app build required: `SignInCredential` — part of the same
+Identity API surface `getPhoneNumberHintIntent` belongs to — declares a
+field of type `com.google.android.gms.fido.fido2.api.common.PublicKeyCredential`,
+and its `<clinit>` builds that class's Parcelable `CREATOR`. This app never
+depended on `play-services-fido`, so that type is either absent from the
+dex or gets shrunk as apparently-unreachable — either way, exercising the
+Identity API can throw `NoClassDefFoundError` linking it, on whatever
+executor thread Play Services' client library runs on, which is fatal to
+the whole process by default since nothing on that thread can catch it.
+Matches every detail: `NoClassDefFoundError` at a `<clinit>` (not a
+reflective call site — no keep rule would have fixed this, consistent with
+Step 3's case 2), background thread, right after biometric unlock. Fixed by
+adding the `play-services-fido` dependency.
+
+The lesson isn't "the mapping doesn't matter" — it's that when the mapping
+truly can't be gotten, concrete circumstantial evidence (exact repro timing,
+what code path runs there) plus verifying the hypothesis against the actual
+dependency bytecode is a legitimate substitute for guessing blind. The two
+failed fixes this file exists because of were guesses with *no* such
+verification.
+
 
 ######################################################
 # FILE: docs/DECLARATIONS.md
@@ -20788,6 +20834,7 @@ security-crypto = "1.1.0"
 concurrent-futures = "1.3.0"
 guava-listenablefuture = "9999.0-empty-to-avoid-conflict-with-guava"
 playServicesAuth = "21.6.0"
+playServicesFido = "21.3.0"
 playFeatureDelivery = "2.1.0"
 androidx-tracing = "1.3.0"
 
@@ -20819,6 +20866,7 @@ guava-listenablefuture = { group = "com.google.guava", name = "listenablefuture"
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
+play-services-fido = { group = "com.google.android.gms", name = "play-services-fido", version.ref = "playServicesFido" }
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 play-feature-delivery = { group = "com.google.android.play", name = "feature-delivery", version.ref = "playFeatureDelivery" }
 androidx-tracing = { group = "androidx.tracing", name = "tracing", version.ref = "androidx-tracing" }
