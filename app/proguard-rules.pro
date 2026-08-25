@@ -51,5 +51,10 @@
 -keep class com.google.android.gms.tasks.** { *; }
 -keep class com.google.android.play.core.splitinstall.internal.** { *; }
 
+# Strengthen Play Core rules to prevent dynamic loading crashes on Google Play
+-keep class com.google.android.play.core.** { *; }
+-keep interface com.google.android.play.core.** { *; }
+-dontwarn com.google.android.play.core.**
+
 # Keep common Play Core dialog activities
 -keep class com.google.android.play.core.common.PlayCoreDialogWrapperActivity { *; }
