@@ -197,6 +197,12 @@ dependencies {
     // base's when both resolve to the identical version.
     implementation(libs.androidx.tracing)
 
+    // ProfileInstaller is initialized from the base app at process startup and
+    // ProfileVerifier owns a ResolvableFuture. Keep concurrent-futures in the
+    // base as well as :feature_findmyphone so split packaging can never leave
+    // the initializer pointing at a class owned only by the on-demand feature.
+    implementation(libs.androidx.concurrent.futures)
+
     // Forces the same empty-shim resolution :feature_findmyphone gets for
     // free from its full `guava` dependency (CameraX's ListenableFuture
     // support). Without this, the base transitively resolves the real,
