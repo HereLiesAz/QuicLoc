@@ -1,6 +1,6 @@
 name: Publish current main to Play
 
-# One-shot release trigger. Creating this file starts exactly one publish run.
+# One-shot release trigger. This retry includes the Play review-mode commit fix.
 # Ordinary source pushes do not match the path filter, and release-play's
 # versionCode convergence commit cannot retrigger it.
 on:
