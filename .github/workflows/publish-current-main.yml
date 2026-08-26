@@ -1,0 +1,26 @@
+name: Publish current main to Play
+
+# One-shot release trigger. Creating this file starts exactly one publish run.
+# Ordinary source pushes do not match the path filter, and release-play's
+# versionCode convergence commit cannot retrigger it.
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/publish-current-main.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  publish-play:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-play.yml
+    with:
+      publish: true
+      completed_tracks: internal
+      draft_tracks: alpha beta production
+      version_code_mode: auto
+      release_notes: 'Fix startup crash caused by AndroidX concurrent-futures packaging.'
+    secrets: inherit
