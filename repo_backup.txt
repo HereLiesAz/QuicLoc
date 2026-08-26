@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    a3cb8fcc71f3a143be3e8ef15eac1d46bf276afc
-  Timestamp: 2026-08-26 21:43:43 UTC
+  Commit:    3b36e51e5dc02698379f3d5c9459bd35e1c1ab70
+  Timestamp: 2026-08-26 21:51:06 UTC
 ======================================================
 
 
@@ -1408,7 +1408,7 @@ jobs:
 
 name: Publish current main to Play
 
-# One-shot release trigger. Creating this file starts exactly one publish run.
+# One-shot release trigger. This retry includes the Play review-mode commit fix.
 # Ordinary source pushes do not match the path filter, and release-play's
 # versionCode convergence commit cannot retrigger it.
 on:
