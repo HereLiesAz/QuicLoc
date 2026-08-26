@@ -1,31 +1,11 @@
 name: R8 mapping triage export
 
-# Temporary diagnostic bridge. The release workflow keeps mapping.txt as a
-# private Actions artifact; this workflow makes that artifact readable through
-# Actions logs without committing the deobfuscation map into Git history.
-# Remove this workflow after the current crash is diagnosed.
-
 on:
-  # Creating/updating this file kicks the bridge once immediately, so it can
-  # recover the newest successful Release-to-Play mapping that still exists.
   push:
     branches: [main]
     paths:
       - .github/workflows/r8-triage-export.yml
-
-  # Future Play builds are exported automatically while this bridge exists.
-  workflow_run:
-    workflows: ["Release to Play"]
-    types: [completed]
-
-  # Also allows a specific historical run to be selected from the Actions UI.
   workflow_dispatch:
-    inputs:
-      run_id:
-        description: "Release to Play run ID (blank = newest successful run)"
-        required: false
-        type: string
-        default: ""
 
 permissions:
   actions: read
@@ -33,72 +13,89 @@ permissions:
 
 jobs:
   export:
-    name: Emit mapping.txt into readable logs
-    if: >-
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
+    name: Locate exact mapping and deobfuscate crash symbols
     runs-on: ubuntu-latest
+    env:
+      TARGET_MAP_ID: e1d9e9c5088656e57dfae6fdbc10391819fc8a1d7e0ee04ab009f9a8953cc9de
     steps:
-      - name: Resolve source run
-        id: source
+      - name: Find exact R8 mapping
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT_NAME: ${{ github.event_name }}
-          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
-          REQUESTED_RUN_ID: ${{ inputs.run_id }}
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/candidates"
+          found=""
 
-          run_id=""
-          if [ "$EVENT_NAME" = "workflow_run" ]; then
-            run_id="$WORKFLOW_RUN_ID"
-          elif [ -n "${REQUESTED_RUN_ID:-}" ]; then
-            run_id="$REQUESTED_RUN_ID"
-          else
-            run_id=$(gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow release-play.yml \
-              --status success \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId')
-          fi
-
-          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
-            echo "::error::No successful Release to Play run was found."
-            exit 1
-          fi
-
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "Source Release to Play run: $run_id"
-
-      - name: Download R8 mapping artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ steps.source.outputs.run_id }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/r8"
-          gh run download "$RUN_ID" \
+          mapfile -t run_ids < <(gh run list \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern 'quicloc-mapping-*' \
-            --dir "$RUNNER_TEMP/r8"
+            --workflow release-play.yml \
+            --status success \
+            --limit 100 \
+            --json databaseId \
+            --jq '.[].databaseId')
 
-          map=$(find "$RUNNER_TEMP/r8" -type f -name mapping.txt -print -quit)
-          if [ -z "$map" ]; then
-            echo "::error::The selected run has no mapping.txt artifact."
-            find "$RUNNER_TEMP/r8" -maxdepth 4 -type f -print || true
+          for run_id in "${run_ids[@]}"; do
+            rm -rf "$RUNNER_TEMP/candidates"/*
+            if ! gh run download "$run_id" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern 'quicloc-mapping-*' \
+              --dir "$RUNNER_TEMP/candidates" >/dev/null 2>&1; then
+              continue
+            fi
+
+            while IFS= read -r map; do
+              map_id=$(grep -m1 '^# pg_map_id:' "$map" | sed -E 's/^# pg_map_id:[[:space:]]*//' || true)
+              echo "run=$run_id map_id=${map_id:-none}"
+              if [ "$map_id" = "$TARGET_MAP_ID" ]; then
+                cp "$map" "$RUNNER_TEMP/target-mapping.txt"
+                echo "MAP_PATH=$RUNNER_TEMP/target-mapping.txt" >> "$GITHUB_ENV"
+                echo "SOURCE_RUN_ID=$run_id" >> "$GITHUB_ENV"
+                found=1
+                break 2
+              fi
+            done < <(find "$RUNNER_TEMP/candidates" -type f -name mapping.txt -print)
+          done
+
+          if [ -z "$found" ]; then
+            echo "::error::Exact map id $TARGET_MAP_ID not found in the last 100 successful Release to Play runs."
             exit 1
           fi
 
-          echo "MAP_PATH=$map" >> "$GITHUB_ENV"
-          echo "Found mapping: $map"
-          grep -m1 '^# pg_map_id:' "$map" || true
+          echo "Found exact map in run $SOURCE_RUN_ID"
 
-      - name: Emit compressed mapping for ChatGPT triage
+      - name: Emit deobfuscation targets
         run: |
           set -euo pipefail
-          echo 'R8_MAPPING_GZIP_BASE64_BEGIN'
-          gzip -9c "$MAP_PATH" | base64 -w 120
-          echo
-          echo 'R8_MAPPING_GZIP_BASE64_END'
+          python3 - <<'PY'
+          import os, re
+
+          path = os.environ['MAP_PATH']
+          targets = {'cg2', 'qb2', 'id0', 'pl'}
+          with open(path, encoding='utf-8') as f:
+              lines = f.read().splitlines()
+
+          for line in lines:
+              if line.startswith('# pg_map_id:'):
+                  print(line)
+                  break
+
+          headers = []
+          rx = re.compile(r'^(\S.*) -> ([^:]+):$')
+          for i, line in enumerate(lines):
+              m = rx.match(line)
+              if m:
+                  headers.append((i, m.group(1), m.group(2)))
+
+          found = set()
+          for n, (start, original, obfuscated) in enumerate(headers):
+              if obfuscated not in targets:
+                  continue
+              end = headers[n + 1][0] if n + 1 < len(headers) else len(lines)
+              found.add(obfuscated)
+              print(f'R8_TARGET_{obfuscated}_BEGIN')
+              print('\n'.join(lines[start:end]))
+              print(f'R8_TARGET_{obfuscated}_END')
+
+          missing = sorted(targets - found)
+          print('R8_TARGETS_MISSING=' + ','.join(missing))
+          PY
