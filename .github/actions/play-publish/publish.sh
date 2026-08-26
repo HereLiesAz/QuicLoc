@@ -177,13 +177,14 @@ for tr in $completed_tracks; do
   rolled_out_arr+=("$tr")
 done
 
-# 5) Commit the edit
+# 5) Commit the edit.
 #
-# Changes are sent for review automatically as required by the Play Store API.
-# The previous changesNotSentForReview=true parameter is no longer supported
-# for this app and caused HTTP 400 errors.
+# This Play app is configured so API-created changes cannot be sent for review
+# automatically. Play returns HTTP 400 unless changesNotSentForReview=true is
+# supplied on edits.commit; the committed edit can then be sent for review from
+# Play Console when required.
 commit_out="$tmp/commit.json"
-commit_url="$api/edits/${edit_id}:commit"
+commit_url="$api/edits/${edit_id}:commit?changesNotSentForReview=true"
 http=$(req POST "$commit_url" "$commit_out")
 
 if [ "$http" != "200" ] && [ "$http" != "201" ]; then
@@ -201,14 +202,11 @@ fi
 #    effect. A 200 on step 5 only means Play *accepted the commit request* --
 #    it doesn't by itself prove the rollout is genuinely live, and this
 #    pipeline has already been burned twice by unverified assumptions about
-#    commit-time behaviour (see the comment on changesNotSentForReview above).
+#    commit-time behaviour.
 #
 #    Track state is only readable *inside* an edit -- there is no
-#    `applications/{pkg}/tracks/{track}` endpoint, and the previous code asked
-#    for one, so this check answered 404 on every single run and silently
-#    degraded to a warning. It has therefore never actually verified anything.
-#    A fresh throwaway edit reads the committed state; it is deleted, never
-#    committed, so it changes nothing.
+#    `applications/{pkg}/tracks/{track}` endpoint. A fresh throwaway edit reads
+#    the committed state; it is deleted, never committed, so it changes nothing.
 verify_edit=""
 verify_ins="$tmp/verify-edit.json"
 http=$(req POST "$api/edits" "$verify_ins")
