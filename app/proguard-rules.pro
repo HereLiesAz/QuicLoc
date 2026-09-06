@@ -58,3 +58,15 @@
 
 # Keep common Play Core dialog activities
 -keep class com.google.android.play.core.common.PlayCoreDialogWrapperActivity { *; }
+
+# androidx.profileinstaller's background installer (androidx.profileinstaller.c,
+# run from a ThreadPoolExecutor at process startup) does reflective
+# Class.forName lookups by hardcoded, unobfuscated name — e.g. probing for
+# androidx.tracing.Trace to decide whether to emit trace sections. Without a
+# keep rule R8 renames/strips those targets and the lookup throws
+# NoClassDefFoundError / "ClassNotFoundException: <short obfuscated name>" on
+# that background thread, same failure class as the Play Core rules above.
+-keep class androidx.profileinstaller.** { *; }
+-dontwarn androidx.profileinstaller.**
+-keep class androidx.tracing.** { *; }
+-dontwarn androidx.tracing.**
