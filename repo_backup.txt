@@ -2,9 +2,9 @@
   REPOSITORY BACKUP
 ======================================================
   Repo:      HereLiesAz/QuicLoc
-  Branch:    main
-  Commit:    3b36e51e5dc02698379f3d5c9459bd35e1c1ab70
-  Timestamp: 2026-08-26 21:51:06 UTC
+  Branch:    claude/evolution-x-paste-a6qg3s
+  Commit:    935a09cc6ee4dc12109e8a152ca2aa873a8502a9
+  Timestamp: 2026-09-06 07:49:45 UTC
 ======================================================
 
 
@@ -2759,6 +2759,18 @@ dependencies {
 
 # Keep common Play Core dialog activities
 -keep class com.google.android.play.core.common.PlayCoreDialogWrapperActivity { *; }
+
+# androidx.profileinstaller's background installer (androidx.profileinstaller.c,
+# run from a ThreadPoolExecutor at process startup) does reflective
+# Class.forName lookups by hardcoded, unobfuscated name — e.g. probing for
+# androidx.tracing.Trace to decide whether to emit trace sections. Without a
+# keep rule R8 renames/strips those targets and the lookup throws
+# NoClassDefFoundError / "ClassNotFoundException: <short obfuscated name>" on
+# that background thread, same failure class as the Play Core rules above.
+-keep class androidx.profileinstaller.** { *; }
+-dontwarn androidx.profileinstaller.**
+-keep class androidx.tracing.** { *; }
+-dontwarn androidx.tracing.**
 
 
 ######################################################
@@ -16932,7 +16944,7 @@ class WhitelistManagerTest {
 VERSION_A=1
 VERSION_B=3
 VERSION_C=24
-VERSION_D=2029
+VERSION_D=2030
 
 
 ######################################################
