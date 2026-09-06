@@ -1,6 +1,6 @@
-# :feature_findmyphone's components are addressed by ComponentName string
+﻿# :feature_findmyphone's components are addressed by ComponentName string
 # from the base (FindMyPhone.kt), not a compile-time class reference, so R8
-# has no call site to infer keep rules from — same reasoning for klinker's
+# has no call site to infer keep rules from â€” same reasoning for klinker's
 # android-smsmms, which drives MMS sending via reflection internally.
 -keep class com.hereliesaz.quicloc.lockdown.** { *; }
 -keep class com.klinker.android.send_message.** { *; }
@@ -14,7 +14,7 @@
 # its internal Parcelable counterparts) crosses the SplitInstallService AIDL
 # boundary via Parcel.readParcelable(), which resolves the class by the
 # fully-qualified name the (un-obfuscated) Play Store process wrote into the
-# Parcel — a Class.forName() lookup R8 can't see and so can't protect by
+# Parcel â€” a Class.forName() lookup R8 can't see and so can't protect by
 # default. play-services-basement ships its own consumer rules to keep
 # names for the equivalent GMS SafeParcelable/ReflectedParcelable classes;
 # the feature-delivery AAR ships no consumer rules at all, so without this,
@@ -61,7 +61,7 @@
 
 # androidx.profileinstaller's background installer (androidx.profileinstaller.c,
 # run from a ThreadPoolExecutor at process startup) does reflective
-# Class.forName lookups by hardcoded, unobfuscated name — e.g. probing for
+# Class.forName lookups by hardcoded, unobfuscated name â€” e.g. probing for
 # androidx.tracing.Trace to decide whether to emit trace sections. Without a
 # keep rule R8 renames/strips those targets and the lookup throws
 # NoClassDefFoundError / "ClassNotFoundException: <short obfuscated name>" on
@@ -70,3 +70,7 @@
 -dontwarn androidx.profileinstaller.**
 -keep class androidx.tracing.** { *; }
 -dontwarn androidx.tracing.**
+-keep class com.google.common.util.concurrent.** { *; }
+-keep class androidx.concurrent.futures.** { *; }
+
+-keep class androidx.startup.** { *; }
