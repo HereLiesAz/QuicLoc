@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    a253f9c854b23c4795c15a3e5ee344c02e44fb62
-  Timestamp: 2026-09-06 18:34:17 UTC
+  Commit:    337b2acc2c31d8b4e3f8fae87e5af402acbb77cc
+  Timestamp: 2026-09-07 05:22:57 UTC
 ======================================================
 
 
@@ -2840,6 +2840,23 @@ dependencies {
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.QuicLoc">
+
+        <!--
+            ProfileInstaller is only a startup optimization, not app functionality.
+            Its initializer has repeatedly crashed release installs when dynamic
+            feature/R8 packaging leaves its hidden concurrent-futures implementation
+            unavailable in the base split. Do not execute that optional code at
+            process startup; normal ART compilation remains available.
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+                tools:node="remove" />
+        </provider>
 
         <activity
             android:name=".MainActivity"
