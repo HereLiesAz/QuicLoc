@@ -8,8 +8,6 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-
-
 android {
     namespace = "com.hereliesaz.quicloc"
     compileSdk = 37
@@ -34,10 +32,6 @@ android {
     var vC = versionProps["VERSION_C"].toString().toInt()
     var vD = versionProps["VERSION_D"].toString().toInt()
 
-    // versionCode and versionName are driven SOLELY by version.properties
-    // (A.B.C.D) — it is the single source of truth. On an assemble/bundle build
-    // the counter auto-increments and is written back, so each build bumps the
-    // version. There is no CI override: CI uses whatever version.properties says.
     if (isBuilding) {
         vD += 1
         vC += 1
@@ -48,10 +42,6 @@ android {
     val finalVersionCode = vD
     val finalVersionName = "${vA}.${vB}.${vC}.${vD}"
 
-    // ---- Release signing -------------------------------------------------
-    // Reads a git-ignored keystore.properties (local dev) or environment
-    // variables (CI). Signing is only wired in when material is present, so an
-    // unsigned `assembleRelease` (e.g. a PR build with no secrets) still builds.
     val keystorePropsFile = rootProject.file("keystore.properties")
     val keystoreProps = Properties().apply {
         if (keystorePropsFile.canRead()) FileInputStream(keystorePropsFile).use { load(it) }
@@ -62,19 +52,10 @@ android {
     val releaseStorePassword = signingProp("storePassword", "QUICLOC_KEYSTORE_PASSWORD")
     val releaseKeyAlias = signingProp("keyAlias", "QUICLOC_KEY_ALIAS")
     val releaseKeyPassword = signingProp("keyPassword", "QUICLOC_KEY_PASSWORD")
-    // JKS, JCEKS or PKCS12. Only needed when the keystore was assembled from
-    // key + certificate secrets (PKCS12); a .jks is detected automatically.
     val releaseStoreType = signingProp("storeType", "QUICLOC_KEYSTORE_TYPE")
-    // Only sign when every credential is present; otherwise fall back to an
-    // unsigned release build rather than failing with a half-configured config.
     val hasReleaseSigning = releaseStoreFile != null && releaseStorePassword != null &&
         releaseKeyAlias != null && releaseKeyPassword != null
 
-    // An unsigned release build is the right outcome for PR CI (no secrets, and
-    // fork PRs can't have them) but a silent disaster for a publish job — an
-    // unsigned APK attached to a Release installs on nobody's phone. Publish
-    // workflows set QUICLOC_REQUIRE_SIGNING=true so a missing or half-configured
-    // secret fails the build here instead of producing something unusable.
     val requireSigning = System.getenv("QUICLOC_REQUIRE_SIGNING")?.equals("true", ignoreCase = true) == true
     if (requireSigning && !hasReleaseSigning) {
         val missing = buildList {
@@ -85,8 +66,7 @@ android {
         }
         throw GradleException(
             "QUICLOC_REQUIRE_SIGNING is set but the release signing config is incomplete — " +
-                "missing: ${missing.joinToString(", ")}. Refusing to produce an unsigned release " +
-                "artifact. Check that the repository secrets are set and are readable by this job."
+                "missing: ${missing.joinToString(", ")}. Refusing to produce an unsigned release artifact."
         )
     }
 
@@ -96,27 +76,19 @@ android {
         targetSdk = 37
         versionCode = finalVersionCode
         versionName = finalVersionName
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // The ENTIRE find-my-phone / lockdown feature (tracking service, lock
-    // screen, Device Admin receiver, intruder camera) lives in the
-    // :feature_findmyphone dynamic feature module — see docs/LOCKDOWN.md.
     dynamicFeatures += setOf(":feature_findmyphone")
 
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
-                // Resolve relative paths against the repo root, where
-                // keystore.properties lives (CI passes an absolute path).
                 storeFile = rootProject.file(releaseStoreFile!!)
                 storePassword = releaseStorePassword
                 keyAlias = releaseKeyAlias
                 keyPassword = releaseKeyPassword
                 if (releaseStoreType != null) storeType = releaseStoreType
-                // Both signature schemes: v1 keeps API 26-23 installs working,
-                // v2/v3 are what modern Android verifies (and what Play expects).
                 enableV1Signing = true
                 enableV2Signing = true
             }
@@ -127,11 +99,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-            // Only signed when keystore material is supplied (see signingConfigs).
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
         }
     }
@@ -144,33 +112,18 @@ android {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
         }
     }
-    buildFeatures {
-        compose = true
-    }
-    testOptions {
-        unitTests.isIncludeAndroidResources = true
-    }
+    buildFeatures { compose = true }
+    testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
 tasks.register("printVersionName") {
-    doLast {
-        println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.versionName)
-    }
+    doLast { println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.versionName) }
 }
-
-// The versionCode that was (or would be) built, for CI to compare against what
-// Google Play already holds. Reading it from Gradle rather than parsing
-// version.properties keeps the two from drifting.
 tasks.register("printVersionCode") {
-    doLast {
-        println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.versionCode)
-    }
+    doLast { println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.versionCode) }
 }
-
 tasks.register("printApplicationId") {
-    doLast {
-        println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.applicationId)
-    }
+    doLast { println(project.extensions.getByType<com.android.build.api.dsl.ApplicationExtension>().defaultConfig.applicationId) }
 }
 
 dependencies {
@@ -178,77 +131,32 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation(libs.play.services.location)
-    // Phone Number Hint API — lets the user one-tap-pick their own number
-    // from a system bottom sheet, no permissions required.
     implementation(libs.play.services.auth)
-
-    // Play Feature Delivery — SplitInstall (download the on-demand
-    // :feature_findmyphone module) + SplitCompat (load it in-process). The
-    // lockdown feature's heavy deps (CameraX, klinker MMS) live in the module,
-    // not the base.
     implementation(libs.play.feature.delivery)
-
-    // Pinned to match :feature_findmyphone's CameraX-driven transitive
-    // version. Without this, the base resolves an older androidx.tracing
-    // (pulled in transitively at a lower version) than the module does, and
-    // R8 sees two different-version copies of androidx/tracing/R at
-    // :app:minifyReleaseWithR8 ("Type ... is defined multiple times") because
-    // AGP only dedupes a feature module's copy of a library against the
-    // base's when both resolve to the identical version.
     implementation(libs.androidx.tracing)
 
-    // ProfileInstaller is initialized from the base app at process startup and
-    // ProfileVerifier owns a ResolvableFuture. Keep concurrent-futures in the
-    // base as well as :feature_findmyphone so split packaging can never leave
-    // the initializer pointing at a class owned only by the on-demand feature.
-    implementation(libs.androidx.concurrent.futures)
+    // ProfileInstaller/ProfileVerifier is base-process startup code. Force the
+    // implementation into the base APK rather than allowing dynamic-feature
+    // dependency ownership/deduplication to strand AbstractResolvableFuture in
+    // an on-demand split. The direct coordinate deliberately avoids catalog
+    // alias ambiguity while resolving this packaging failure.
+    implementation("androidx.concurrent:concurrent-futures:1.3.0")
 
-    // Forces the same empty-shim resolution :feature_findmyphone gets for
-    // free from its full `guava` dependency (CameraX's ListenableFuture
-    // support). Without this, the base transitively resolves the real,
-    // class-carrying `com.google.guava:listenablefuture:1.0` artifact while
-    // the module resolves the empty "9999.0-empty-to-avoid-conflict"
-    // artifact real Guava supersedes it with — two different-content
-    // ListenableFuture.class copies, another R8 "defined multiple times".
     implementation(libs.guava.listenablefuture)
-
-    // Material Icons
     implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.compose.material.icons.extended)
-
-    // Encrypted SharedPreferences — keys managed by Android Keystore
     implementation(libs.androidx.security.crypto)
-
-    // Biometric authentication
     implementation(libs.androidx.biometric)
 
     val composeBom = platform(libs.androidx.compose.bom)
     implementation(composeBom)
     androidTestImplementation(composeBom)
-
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
-
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-
-    // MMS — TrackingService (in :feature_findmyphone) uses this to send the
-    // panic-mode intruder photo. The dependency must ALSO live here in the
-    // base, even though only the on-demand module calls into it: the AAR's
-    // own manifest declares a <provider> (MmsFileProvider), and Android
-    // instantiates every declared provider unconditionally at process start
-    // — content providers aren't supported in on-demand dynamic feature
-    // modules (see Play Feature Delivery docs). Declaring it only in
-    // :feature_findmyphone merged that provider into the app's manifest
-    // without its dex ever being guaranteed present, so every launch before
-    // the module was installed crashed with
-    // "ClassNotFoundException: ...MmsFileProvider" at handleBindApplication.
-    // Duplicated (not moved) in :feature_findmyphone's own build.gradle.kts
-    // so TrackingService.kt still compiles there — same pinned version via
-    // the version catalog, so R8 sees one class, not a version-skewed dupe
-    // (see the androidx.tracing/guava precedent below and in that module).
     implementation(libs.android.smsmms)
 
     testImplementation(libs.junit)
