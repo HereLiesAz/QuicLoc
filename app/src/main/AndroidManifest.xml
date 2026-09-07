@@ -58,6 +58,23 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.QuicLoc">
 
+        <!--
+            ProfileInstaller is only a startup optimization, not app functionality.
+            Its initializer has repeatedly crashed release installs when dynamic
+            feature/R8 packaging leaves its hidden concurrent-futures implementation
+            unavailable in the base split. Do not execute that optional code at
+            process startup; normal ART compilation remains available.
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+                tools:node="remove" />
+        </provider>
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
