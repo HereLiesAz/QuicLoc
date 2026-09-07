@@ -1,21 +1,5 @@
 name: CI/CD
 
-# Two shapes, deliberately separated by whether this run can produce something
-# a human installs:
-#
-#   • push to main / pull_request -> test + build, nothing published. The
-#     release build here is UNSIGNED on purpose: fork PRs can't read secrets,
-#     and building it still exercises packaging/bundletool.
-#   • push of a v* tag            -> test + build a SIGNED release APK and AAB,
-#     verify the signature, then attach them to a GitHub Release, and — once
-#     that release is out — publish to Google Play automatically. If the
-#     keystore secrets are missing or wrong, the job fails; it never falls back
-#     to publishing an unsigned artifact.
-#
-# Signing secrets (see docs/PLAY_PUBLISHING.md): KEYSTORE_RAW, KEYSTORE_PASSWORD,
-# KEY_ALIAS, KEY_PASSWORD, plus the optional KEYSTORE_SHA256 / KEYSTORE_SHA1 /
-# KEYSTORE_OWNER identity checks.
-
 on:
   push:
     branches: [ main ]
@@ -23,22 +7,9 @@ on:
   pull_request:
     branches: [ main ]
 
-# Least-privilege default for every job in this workflow — CodeQL's Actions
-# query flags jobs with no explicit permissions block, since the implicit
-# default GITHUB_TOKEN scope depends on a repo-level setting that can be
-# read-write. Only `release` and `publish-play` need more (contents: write,
-# to create the GitHub Release / commit the version bump); they already
-# declare their own permissions block, which overrides this default for
-# just those jobs.
 permissions:
   contents: read
 
-# Serializes runs on the same ref so two close-together pushes to main (or
-# two tag pushes) can't race each other through the versionCode-dependent
-# release/publish path. Non-tag runs cancel their predecessor (a superseded
-# main-branch CI run is safe to drop); tag runs never do — a real release
-# build in flight should run to completion, not be cancelled by whatever
-# triggered next.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
@@ -72,21 +43,13 @@ jobs:
       - name: Build Debug APK
         run: ./gradlew assembleDebug
 
-      # ---- Non-tag runs: unsigned, never published ------------------------
-      - name: Build Release APK + Bundle (unsigned CI check)
-        if: github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/v')
+      - name: Build Release APK + Bundle (unsigned PR check)
+        if: github.event_name == 'pull_request'
         run: ./gradlew assembleRelease bundleRelease
-        # Unsigned by design — no keystore secrets are wired in here, and fork
-        # PRs couldn't read them anyway. This still exercises
-        # :app:packageReleaseBundle / bundletool, so dynamic-feature
-        # bundle-merge conflicts (e.g. clashing META-INF/*.version metadata
-        # between :app and :feature_findmyphone) are caught in PR CI rather
-        # than at release time. Nothing from this step is ever published.
 
-      # ---- Tag runs: signed, and proven signed before publishing ----------
       - name: Prepare signing keystore
         id: keystore
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push'
         uses: ./.github/actions/android-keystore
         with:
           keystore-raw: ${{ secrets.KEYSTORE_RAW }}
@@ -102,7 +65,7 @@ jobs:
           expected-owner: ${{ secrets.KEYSTORE_OWNER }}
 
       - name: Build signed Release Bundle
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push'
         env:
           QUICLOC_KEYSTORE_FILE: ${{ steps.keystore.outputs.keystore-path }}
           QUICLOC_KEYSTORE_TYPE: ${{ steps.keystore.outputs.store-type }}
@@ -110,15 +73,10 @@ jobs:
           QUICLOC_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           QUICLOC_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           QUICLOC_REQUIRE_SIGNING: 'true'
-        # Only the AAB, not assembleRelease's plain base-module APK: that APK
-        # never contained :feature_findmyphone (AGP doesn't fold dynamic
-        # feature modules into `assembleRelease`, only bundletool reads
-        # dist:fusing — see the build-universal-apk action below), so it was
-        # the wrong artifact to publish as the sideload download.
         run: ./gradlew bundleRelease
 
       - name: Collect signed AAB
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push'
         id: collect-aab
         run: |
           set -euo pipefail
@@ -126,7 +84,6 @@ jobs:
           aab=$(find app/build/outputs/bundle/release -name "*.aab" | head -n1)
           if [ -z "$aab" ]; then
             echo "::error::Expected a signed AAB. Found none."
-            find app/build/outputs -name "*.aab" || true
             exit 1
           fi
           version=$(./gradlew -q :app:printVersionName)
@@ -134,11 +91,8 @@ jobs:
           echo "SIGNED_AAB=signed/QuicLoc-v${version}.aab" >> "$GITHUB_ENV"
           echo "VERSION_NAME=$version" >> "$GITHUB_ENV"
 
-      # The sideload APK attached to the GitHub Release must actually contain
-      # find-my-phone (fused via dist:fusing), which assembleRelease alone
-      # cannot produce — see the action's own header comment.
       - name: Build fused universal APK (sideload download)
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push'
         id: universal-apk
         uses: ./.github/actions/build-universal-apk
         with:
@@ -150,14 +104,14 @@ jobs:
           output-path: signed/QuicLoc-v${{ env.VERSION_NAME }}.apk
 
       - name: Verify APK signature
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push'
         uses: ./.github/actions/verify-android-signature
         with:
           artifact: ${{ steps.universal-apk.outputs.apk-path }}
           expected-sha256: ${{ steps.keystore.outputs.sha256 }}
 
       - name: Verify bundle signature
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push'
         uses: ./.github/actions/verify-android-signature
         with:
           artifact: ${{ env.SIGNED_AAB }}
@@ -169,12 +123,8 @@ jobs:
           name: apks
           path: app/build/outputs/apk/debug/*.apk
 
-      # Only the verified, signed artifacts reach the release job — the debug
-      # APK is deliberately not among them. It carries Android's shared debug
-      # signature, so shipping it alongside a real release gives users an APK
-      # they can install but never upgrade from.
       - name: Upload signed release artifacts
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: signed-release
@@ -199,12 +149,23 @@ jobs:
           files: signed/*
           fail_on_unmatched_files: true
 
-  # Play publish is tag-only, same as `release` above, and genuinely follows
-  # it (needs: [build, release], not just build) rather than racing it: a
-  # plain push to main only builds and tests, it was never meant to burn a
-  # versionCode and roll out a release with no corresponding GitHub Release
-  # to point back to. See the header comment at the top of this file.
-  publish-play:
+  # Every successful push to main now publishes automatically. Internal gets
+  # the live rollout; alpha, beta and production receive the identical bundle
+  # as drafts. Tag pushes wait for the GitHub Release first, then do the same.
+  publish-play-main:
+    if: github.ref == 'refs/heads/main'
+    needs: [ test, build ]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-play.yml
+    with:
+      publish: true
+      completed_tracks: internal
+      draft_tracks: alpha beta production
+      version_code_mode: auto
+    secrets: inherit
+
+  publish-play-tag:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [ build, release ]
     permissions:
@@ -212,5 +173,7 @@ jobs:
     uses: ./.github/workflows/release-play.yml
     with:
       publish: true
+      completed_tracks: internal
+      draft_tracks: alpha beta production
       version_code_mode: auto
     secrets: inherit
