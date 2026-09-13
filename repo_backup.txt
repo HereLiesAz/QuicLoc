@@ -3,8 +3,8 @@
 ======================================================
   Repo:      HereLiesAz/QuicLoc
   Branch:    main
-  Commit:    ddc67b794b177b6c945785a517c9ace81a91cd5d
-  Timestamp: 2026-09-07 10:55:26 UTC
+  Commit:    e4ac0bec0d7c29d94193c73fadff84a5b0974e6f
+  Timestamp: 2026-09-13 18:10:40 UTC
 ======================================================
 
 
@@ -1363,6 +1363,31 @@ jobs:
             -p "$PORT" \
             -e "$SET_KNOWN_HOSTS set sftp:auto-confirm $AUTO_CONFIRM; mirror -R --verbose ./docs/ $REMOTE_DIR; quit" \
             sftp://"$HOST"
+
+
+######################################################
+# FILE: .github/workflows/jules-glee.yml
+######################################################
+
+name: '😈 Glee Audit'
+
+# Audits each newly opened PR exactly once. All audit logic is centralized in
+# HereLiesAz/workflows-starter-template and Jules automation is disabled there.
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  glee:
+    uses: HereLiesAz/workflows-starter-template/.github/workflows/jules-glee-reusable.yml@main
+    secrets:
+      JULES_API_KEY: ${{ secrets.JULES_API_KEY }}
 
 
 ######################################################
@@ -16836,7 +16861,7 @@ class WhitelistManagerTest {
 VERSION_A=1
 VERSION_B=3
 VERSION_C=25
-VERSION_D=2031
+VERSION_D=2033
 
 
 ######################################################
