@@ -1,16 +1,8 @@
-name: Build and Publish QuicLoc APK
-
-# Two modes:
-#   • push / pull_request  -> build a DEBUG APK and upload it as a workflow
-#     artifact (CI sanity + a quick downloadable build). No release is created.
-#   • workflow_dispatch     -> "Run workflow" button. Builds a SIGNED RELEASE APK
-#     (same keystore secrets as the Play workflow) and publishes it to a GitHub
-#     Release tagged v<versionName>. Requires the KEYSTORE_RAW / KEYSTORE_PASSWORD
-#     / KEY_ALIAS / KEY_PASSWORD secrets (see docs/PLAY_PUBLISHING.md); the job
-#     fails rather than publishing anything unsigned if they're missing.
-#     Once that release is out, the Play publish runs automatically — see the
-#     publish-play job at the bottom.
-
+# centralized-by: HereLiesAz/workflows
+# central-source-path: .github/workflows/build-apk.yml
+# central-source-sha256: 59ff381a4bb1504eb61fd5da89c1670dc91eeca4ac1b5a7e417689509eedef9f
+# This file intentionally contains no repository secrets.
+name: Build and Publish QuicLoc APK [central proxy]
 on:
   push:
     branches:
@@ -29,170 +21,19 @@ on:
 # GITHUB_TOKEN is read-only on many repos, which is why publishing a release
 # could fail with a 403 before.
 permissions:
-  contents: write
-
+  contents: read
+  id-token: write
 jobs:
-  build:
-    name: Build APK
+  central-dispatch:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   # full history so versionCode = commit count is correct
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: gradle
-
-      - name: Grant Execute Permission to Gradle Wrapper
-        run: chmod +x gradlew
-
-      # ---- Manual publish path: signed RELEASE APK -------------------------
-      - name: Prepare signing keystore
-        id: keystore
-        if: github.event_name == 'workflow_dispatch'
-        uses: ./.github/actions/android-keystore
-        with:
-          keystore-raw: ${{ secrets.KEYSTORE_RAW }}
-          keystore-private: ${{ secrets.KEYSTORE_PRIVATE }}
-          keystore-rsa: ${{ secrets.KEYSTORE_RSA }}
-          keystore-public: ${{ secrets.KEYSTORE_PUBLIC }}
-          keystore-chain: ${{ secrets.KEYSTORE_CHAIN }}
-          keystore-password: ${{ secrets.KEYSTORE_PASSWORD }}
-          key-alias: ${{ secrets.KEY_ALIAS }}
-          key-password: ${{ secrets.KEY_PASSWORD }}
-          expected-sha256: ${{ secrets.KEYSTORE_SHA256 }}
-          expected-sha1: ${{ secrets.KEYSTORE_SHA1 }}
-          expected-owner: ${{ secrets.KEYSTORE_OWNER }}
-
-      # Only the AAB, not assembleRelease's plain base-module APK: AGP does
-      # not fold dynamic-feature modules (:feature_findmyphone) into
-      # assembleRelease's output, only bundletool (reading dist:fusing) does
-      # — see .github/actions/build-universal-apk's header comment. Building
-      # assembleRelease here used to silently ship the GitHub-Release APK
-      # with zero find-my-phone code.
-      - name: Build signed Release Bundle
-        if: github.event_name == 'workflow_dispatch'
+      - name: Dispatch to HereLiesAz/workflows
         env:
-          QUICLOC_KEYSTORE_FILE: ${{ steps.keystore.outputs.keystore-path }}
-          QUICLOC_KEYSTORE_TYPE: ${{ steps.keystore.outputs.store-type }}
-          QUICLOC_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          QUICLOC_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          QUICLOC_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          # Fail the build rather than emit app-release-unsigned.aab.
-          QUICLOC_REQUIRE_SIGNING: 'true'
-        run: ./gradlew bundleRelease
-
-      # ---- CI path (push / pull_request): DEBUG APK artifact only ----------
-      - name: Build Debug APK
-        if: github.event_name != 'workflow_dispatch'
-        run: ./gradlew assembleDebug
-
-      # printVersionName runs AFTER the build, so it reads the version.properties
-      # value the build just incremented (i.e. it matches the built APK).
-      - name: Get App Version
-        run: echo "VERSION_NAME=$(./gradlew -q :app:printVersionName)" >> "$GITHUB_ENV"
-
-      # Fuse :feature_findmyphone into a single installable APK via
-      # bundletool's universal mode, so sideload users get the same feature
-      # set a Play install would download on demand.
-      - name: Build fused universal APK
-        if: github.event_name == 'workflow_dispatch'
-        id: universal-apk
-        uses: ./.github/actions/build-universal-apk
-        with:
-          aab-path: app/build/outputs/bundle/release/app-release.aab
-          keystore-path: ${{ steps.keystore.outputs.keystore-path }}
-          keystore-password: ${{ secrets.KEYSTORE_PASSWORD }}
-          key-alias: ${{ secrets.KEY_ALIAS }}
-          key-password: ${{ secrets.KEY_PASSWORD }}
-          output-path: app/build/outputs/QuicLoc-v${{ env.VERSION_NAME }}.apk
-
-      - name: Locate & rename APK
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            SRC="${{ steps.universal-apk.outputs.apk-path }}"
-            if [ -z "$SRC" ] || [ ! -f "$SRC" ]; then
-              echo "::error::No fused universal APK was produced at '$SRC'."
-              exit 1
-            fi
-            echo "APK_PATH=$SRC" >> "$GITHUB_ENV"
-          else
-            SRC=app/build/outputs/apk/debug/app-debug.apk
-            if [ ! -f "$SRC" ]; then
-              echo "::error::No APK found to publish ($SRC)"; exit 1
-            fi
-            OUT="app/build/outputs/QuicLoc-v${VERSION_NAME}.apk"
-            mv "$SRC" "$OUT"
-            echo "APK_PATH=$OUT" >> "$GITHUB_ENV"
-          fi
-
-      - name: Verify the APK is signed by the expected key
-        if: github.event_name == 'workflow_dispatch'
-        uses: ./.github/actions/verify-android-signature
-        with:
-          artifact: ${{ env.APK_PATH }}
-          expected-sha256: ${{ steps.keystore.outputs.sha256 }}
-
-      - name: Sanitize branch name
-        run: |
-          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
-          echo "SAFE_BRANCH=$SAFE_BRANCH" >> "$GITHUB_ENV"
-
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: quicloc-apk-${{ env.SAFE_BRANCH }}-${{ github.sha }}
-          path: ${{ env.APK_PATH }}
-          if-no-files-found: error
-
-      # See the same step in release-play.yml for why this is not optional:
-      # without the mapping, an obfuscated crash from this build can never be
-      # read back to real class names. Only release builds are minified, so
-      # this is skipped for the debug/PR path.
-      - name: Upload R8 mapping (deobfuscation key)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
-        with:
-          name: quicloc-mapping-${{ env.SAFE_BRANCH }}-${{ github.sha }}
-          path: |
-            app/build/outputs/mapping/release/mapping.txt
-            app/build/outputs/mapping/release/missingRules.txt
-            **/build/outputs/mapping/release/mapping.txt
-          if-no-files-found: error
-          retention-days: 90
-
-      - name: Publish GitHub Release (signed APK)
-        if: github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ env.VERSION_NAME }}
-          name: QuicLoc v${{ env.VERSION_NAME }}
-          files: ${{ env.APK_PATH }}
-          prerelease: ${{ inputs.prerelease }}
-          fail_on_unmatched_files: true
-
-  # Automatic Play publish, gated on the GitHub release having actually gone
-  # out: `needs: build` means this only starts once the release-publishing job
-  # succeeded. Sideload first, Play second, one button.
-  #
-  # version_code_mode: auto because nothing commits the version bump before this
-  # runs — the code is taken from whatever Play already holds, so a stale
-  # version.properties can't block the release. The Play workflow commits the
-  # number back afterwards.
-  publish-play:
-    name: Publish to Google Play
-    needs: build
-    if: github.event_name == 'workflow_dispatch'
-    permissions:
-      contents: write
-    uses: ./.github/workflows/release-play.yml
-    with:
-      publish: true
-      version_code_mode: auto
-    secrets: inherit
+          WORKFLOWS_GATEWAY_URL: ${{ vars.WORKFLOWS_GATEWAY_URL }}
+          EVENT_JSON: ${{ toJSON(github.event) }}
+          INPUTS_JSON: ${{ toJSON(inputs) }}
+          VARS_JSON: ${{ toJSON(vars) }}
+          SOURCE_WORKFLOW_PATH: .github/workflows/build-apk.yml
+          SOURCE_SHA256: 59ff381a4bb1504eb61fd5da89c1670dc91eeca4ac1b5a7e417689509eedef9f
+        shell: bash
+        run: "set -euo pipefail\n[[ -n \"${WORKFLOWS_GATEWAY_URL:-}\" ]] || { echo \"Repository variable WORKFLOWS_GATEWAY_URL is not configured.\" >&2; exit 1; }\noidc_response=\"$(curl --fail-with-body --silent --show-error -H \"Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}\" \"${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=hereliesaz-workflows\")\"\noidc_token=\"$(jq -r '.value // empty' <<<\"$oidc_response\")\"\n[[ -n \"$oidc_token\" ]] || { echo \"GitHub did not issue an OIDC token.\" >&2; exit 1; }\necho \"::add-mask::$oidc_token\"\npayload=\"$(jq -n   --arg repository \"$GITHUB_REPOSITORY\" --arg repository_id \"$GITHUB_REPOSITORY_ID\"   --arg repository_owner \"$GITHUB_REPOSITORY_OWNER\" --arg repository_owner_id \"$GITHUB_REPOSITORY_OWNER_ID\"   --arg sha \"$GITHUB_SHA\" --arg ref \"$GITHUB_REF\" --arg ref_name \"$GITHUB_REF_NAME\" --arg ref_type \"$GITHUB_REF_TYPE\"   --arg head_ref \"$GITHUB_HEAD_REF\" --arg base_ref \"$GITHUB_BASE_REF\" --arg actor \"$GITHUB_ACTOR\" --arg actor_id \"$GITHUB_ACTOR_ID\"   --arg event_name \"$GITHUB_EVENT_NAME\" --arg run_id \"$GITHUB_RUN_ID\" --arg run_number \"$GITHUB_RUN_NUMBER\" --arg run_attempt \"$GITHUB_RUN_ATTEMPT\"   --arg workflow_ref \"$GITHUB_WORKFLOW_REF\" --arg workflow_name \"$GITHUB_WORKFLOW\" --arg source_workflow_path \"$SOURCE_WORKFLOW_PATH\"   --arg source_sha256 \"$SOURCE_SHA256\" --argjson event \"$EVENT_JSON\" --argjson inputs \"$INPUTS_JSON\" --argjson vars \"$VARS_JSON\"   '{repository:$repository,repository_id:$repository_id,repository_owner:$repository_owner,repository_owner_id:$repository_owner_id,sha:$sha,check_sha:($event.pull_request.head.sha // $sha),ref:$ref,ref_name:$ref_name,ref_type:$ref_type,head_ref:$head_ref,base_ref:$base_ref,actor:$actor,actor_id:$actor_id,event_name:$event_name,event:$event,inputs:$inputs,vars:$vars,run_id:$run_id,run_number:$run_number,run_attempt:$run_attempt,workflow_ref:$workflow_ref,workflow_name:$workflow_name,source_workflow_path:$source_workflow_path,source_sha256:$source_sha256}')\"\ncurl --fail-with-body --silent --show-error -X POST \"${WORKFLOWS_GATEWAY_URL%/}/dispatch\" -H \"Authorization: Bearer ${oidc_token}\" -H \"Content-Type: application/json\" --data-binary \"$payload\""
