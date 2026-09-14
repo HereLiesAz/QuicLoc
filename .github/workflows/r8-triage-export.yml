@@ -1,120 +1,28 @@
-name: R8 mapping triage export
-
+# centralized-by: HereLiesAz/workflows
+# central-source-path: .github/workflows/r8-triage-export.yml
+# central-source-sha256: 6be6144379e7333734fd96c173335449f0cfcffbc41b8cf386f28f5c3105fac4
+# This file intentionally contains no repository secrets.
+name: R8 mapping triage export [central proxy]
 on:
   push:
     branches: [main]
     paths:
       - .github/workflows/r8-triage-export.yml
   workflow_dispatch:
-
 permissions:
-  actions: read
   contents: read
-
+  id-token: write
 jobs:
-  export:
-    name: Locate exact mapping and deobfuscate crash symbols
+  central-dispatch:
     runs-on: ubuntu-latest
-    env:
-      TARGET_MAP_ID: e1d9e9c5088656e57dfae6fdbc10391819fc8a1d7e0ee04ab009f9a8953cc9de
     steps:
-      - name: Find exact R8 mapping
+      - name: Dispatch to HereLiesAz/workflows
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/candidates"
-          found=""
-          source_run_id=""
-
-          mapfile -t run_ids < <(gh run list \
-            --repo "$GITHUB_REPOSITORY" \
-            --workflow release-play.yml \
-            --status success \
-            --limit 100 \
-            --json databaseId \
-            --jq '.[].databaseId')
-
-          for run_id in "${run_ids[@]}"; do
-            rm -rf "$RUNNER_TEMP/candidates"/*
-            if ! gh run download "$run_id" \
-              --repo "$GITHUB_REPOSITORY" \
-              --pattern 'quicloc-mapping-*' \
-              --dir "$RUNNER_TEMP/candidates" >/dev/null 2>&1; then
-              continue
-            fi
-
-            while IFS= read -r map; do
-              map_id=$(grep -m1 '^# pg_map_id:' "$map" | sed -E 's/^# pg_map_id:[[:space:]]*//' || true)
-              echo "run=$run_id map_id=${map_id:-none}"
-              if [ "$map_id" = "$TARGET_MAP_ID" ]; then
-                cp "$map" "$RUNNER_TEMP/target-mapping.txt"
-                source_run_id="$run_id"
-                found=1
-                break 2
-              fi
-            done < <(find "$RUNNER_TEMP/candidates" -type f -name mapping.txt -print)
-          done
-
-          if [ -z "$found" ]; then
-            echo "::error::Exact map id $TARGET_MAP_ID not found in the last 100 successful Release to Play runs."
-            exit 1
-          fi
-
-          echo "MAP_PATH=$RUNNER_TEMP/target-mapping.txt" >> "$GITHUB_ENV"
-          echo "SOURCE_RUN_ID=$source_run_id" >> "$GITHUB_ENV"
-          echo "Found exact map in run $source_run_id"
-
-      - name: Emit deobfuscation targets
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import os, re
-
-          path = os.environ['MAP_PATH']
-          out_path = os.path.join(os.environ['RUNNER_TEMP'], 'deobfuscation.txt')
-          targets = {'cg2', 'qb2', 'id0', 'pl'}
-          with open(path, encoding='utf-8') as f:
-              lines = f.read().splitlines()
-
-          output = []
-          for line in lines:
-              if line.startswith('# pg_map_id:'):
-                  output.append(line)
-                  break
-          output.append(f"source_run_id={os.environ['SOURCE_RUN_ID']}")
-
-          headers = []
-          rx = re.compile(r'^(\S.*) -> ([^:]+):$')
-          for i, line in enumerate(lines):
-              m = rx.match(line)
-              if m:
-                  headers.append((i, m.group(1), m.group(2)))
-
-          found = set()
-          for n, (start, original, obfuscated) in enumerate(headers):
-              if obfuscated not in targets:
-                  continue
-              end = headers[n + 1][0] if n + 1 < len(headers) else len(lines)
-              found.add(obfuscated)
-              output.append(f'R8_TARGET_{obfuscated}_BEGIN')
-              output.extend(lines[start:end])
-              output.append(f'R8_TARGET_{obfuscated}_END')
-
-          missing = sorted(targets - found)
-          output.append('R8_TARGETS_MISSING=' + ','.join(missing))
-          text = '\n'.join(output) + '\n'
-          print(text, end='')
-          with open(out_path, 'w', encoding='utf-8') as f:
-              f.write(text)
-          PY
-
-      - name: Upload exact mapping and symbol report
-        uses: actions/upload-artifact@v4
-        with:
-          name: r8-triage-${{ env.TARGET_MAP_ID }}
-          path: |
-            ${{ env.MAP_PATH }}
-            ${{ runner.temp }}/deobfuscation.txt
-          if-no-files-found: error
-          retention-days: 7
+          WORKFLOWS_GATEWAY_URL: ${{ vars.WORKFLOWS_GATEWAY_URL }}
+          EVENT_JSON: ${{ toJSON(github.event) }}
+          INPUTS_JSON: ${{ toJSON(inputs) }}
+          VARS_JSON: ${{ toJSON(vars) }}
+          SOURCE_WORKFLOW_PATH: .github/workflows/r8-triage-export.yml
+          SOURCE_SHA256: 6be6144379e7333734fd96c173335449f0cfcffbc41b8cf386f28f5c3105fac4
+        shell: bash
+        run: "set -euo pipefail\n[[ -n \"${WORKFLOWS_GATEWAY_URL:-}\" ]] || { echo \"Repository variable WORKFLOWS_GATEWAY_URL is not configured.\" >&2; exit 1; }\noidc_response=\"$(curl --fail-with-body --silent --show-error -H \"Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}\" \"${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=hereliesaz-workflows\")\"\noidc_token=\"$(jq -r '.value // empty' <<<\"$oidc_response\")\"\n[[ -n \"$oidc_token\" ]] || { echo \"GitHub did not issue an OIDC token.\" >&2; exit 1; }\necho \"::add-mask::$oidc_token\"\npayload=\"$(jq -n   --arg repository \"$GITHUB_REPOSITORY\" --arg repository_id \"$GITHUB_REPOSITORY_ID\"   --arg repository_owner \"$GITHUB_REPOSITORY_OWNER\" --arg repository_owner_id \"$GITHUB_REPOSITORY_OWNER_ID\"   --arg sha \"$GITHUB_SHA\" --arg ref \"$GITHUB_REF\" --arg ref_name \"$GITHUB_REF_NAME\" --arg ref_type \"$GITHUB_REF_TYPE\"   --arg head_ref \"$GITHUB_HEAD_REF\" --arg base_ref \"$GITHUB_BASE_REF\" --arg actor \"$GITHUB_ACTOR\" --arg actor_id \"$GITHUB_ACTOR_ID\"   --arg event_name \"$GITHUB_EVENT_NAME\" --arg run_id \"$GITHUB_RUN_ID\" --arg run_number \"$GITHUB_RUN_NUMBER\" --arg run_attempt \"$GITHUB_RUN_ATTEMPT\"   --arg workflow_ref \"$GITHUB_WORKFLOW_REF\" --arg workflow_name \"$GITHUB_WORKFLOW\" --arg source_workflow_path \"$SOURCE_WORKFLOW_PATH\"   --arg source_sha256 \"$SOURCE_SHA256\" --argjson event \"$EVENT_JSON\" --argjson inputs \"$INPUTS_JSON\" --argjson vars \"$VARS_JSON\"   '{repository:$repository,repository_id:$repository_id,repository_owner:$repository_owner,repository_owner_id:$repository_owner_id,sha:$sha,check_sha:($event.pull_request.head.sha // $sha),ref:$ref,ref_name:$ref_name,ref_type:$ref_type,head_ref:$head_ref,base_ref:$base_ref,actor:$actor,actor_id:$actor_id,event_name:$event_name,event:$event,inputs:$inputs,vars:$vars,run_id:$run_id,run_number:$run_number,run_attempt:$run_attempt,workflow_ref:$workflow_ref,workflow_name:$workflow_name,source_workflow_path:$source_workflow_path,source_sha256:$source_sha256}')\"\ncurl --fail-with-body --silent --show-error -X POST \"${WORKFLOWS_GATEWAY_URL%/}/dispatch\" -H \"Authorization: Bearer ${oidc_token}\" -H \"Content-Type: application/json\" --data-binary \"$payload\""
