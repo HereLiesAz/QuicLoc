@@ -8,6 +8,10 @@ inputs:
   aab:
     description: "Path to the built .aab (glob allowed)"
     required: true
+  mapping-file:
+    description: "Path to the R8 mapping.txt for this build (glob allowed), e.g. app/build/outputs/mapping/release/mapping.txt. When set, it is uploaded to Play as the deobfuscation file for the uploaded bundle's versionCode, in the same edit; a missing file or failed upload aborts the publish. Leave empty to skip."
+    required: false
+    default: ''
   token-file:
     description: "Path to a file containing a short-lived Play API token (created by play-api-token action)"
     required: true
@@ -55,6 +59,7 @@ runs:
       env:
         PACKAGE_NAME: ${{ inputs.package-name }}
         AAB: ${{ inputs.aab }}
+        MAPPING_FILE: ${{ inputs.mapping-file }}
         TOKEN_FILE: ${{ inputs.token-file }}
         EXPECTED_VERSION_CODE: ${{ inputs.expected-version-code }}
         COMPLETED_TRACKS: ${{ inputs.completed-tracks }}

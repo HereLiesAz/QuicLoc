@@ -21,6 +21,25 @@ if [ -z "$aab" ]; then
   exit 1
 fi
 
+# Resolve the optional R8 mapping file (glob). Resolved before any edit is
+# opened: if the caller asked for a mapping upload and none exists, fail now
+# rather than ship a bundle whose crashes can never be deobfuscated.
+mapping_glob="${MAPPING_FILE:-}"
+mapping=""
+if [ -n "$mapping_glob" ]; then
+  for f in $mapping_glob; do
+    if [ -f "$f" ]; then mapping="$f"; break; fi
+  done
+  if [ -z "$mapping" ]; then
+    echo "::error::mapping-file set but not found (tried glob: $mapping_glob)"
+    exit 1
+  fi
+  if [ ! -s "$mapping" ]; then
+    echo "::error::mapping file is empty: $mapping"
+    exit 1
+  fi
+fi
+
 if [ ! -f "$token_file" ]; then
   echo "::error::Token file not found: $token_file"
   exit 1
@@ -114,6 +133,26 @@ if [ -n "$expected_vc" ] && [ "$expected_vc" != "$version_code" ]; then
   echo "::error::Expected VERSION_CODE $expected_vc but upload produced $version_code"
   abandon_edit
   exit 1
+fi
+
+# 2b) Upload the R8 mapping as the deobfuscation file for this versionCode,
+#     inside the same edit so it commits (or is abandoned) with the bundle.
+if [ -n "$mapping" ]; then
+  mapping_resp="$tmp/mapping.json"
+  mapping_url="$upload_base/edits/${edit_id}/apks/${version_code}/deobfuscationFiles/proguard?uploadType=media"
+  http=$(curl -sS -w "%{http_code}" -o "$mapping_resp" -X POST \
+    -H "Authorization: Bearer $token" \
+    -H "Content-Type: application/octet-stream" \
+    --data-binary @"$mapping" \
+    "$mapping_url")
+  if [ "$http" != "200" ] && [ "$http" != "201" ]; then
+    echo "::error::Mapping upload -> HTTP $http"
+    echo "Response:"
+    cat "$mapping_resp"
+    abandon_edit
+    exit 1
+  fi
+  echo "Uploaded mapping ($mapping) for versionCode $version_code"
 fi
 
 # Build release JSON helper (status = completed/draft).
