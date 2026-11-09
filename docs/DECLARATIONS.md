@@ -8,32 +8,22 @@ each section below.
 
 ## 1. SMS or Call Log Permissions Declaration
 
-**Location in Play Console:**
-> App content → Sensitive app permissions → SMS or Call Log
+**Location in Play Console:** App content → Sensitive app permissions → SMS or Call Log.
 
-**Core functionalities:**
-Select **ONLY**: `Physical safety / emergency alert apps (e.g., senior safety)`
-*(Do NOT select Device Automation or any other checkboxes, as checking multiple unaligned use cases will cause a rejection).*
+**Policy eligibility warning (2026-11-09):** Do not submit the earlier claim that the **Physical safety / emergency alerts** exception authorizes both permissions. Google's permitted-use table allows **SEND_SMS** for that exception, but **not RECEIVE_SMS**. It also explicitly lists *family or device locator* and *remote control of user phone* as invalid use cases. Choosing another exception solely to obtain approval would be inaccurate. Neither this document nor a better demo can establish eligibility for RECEIVE_SMS.
 
-**Is your app's core functionality an SMS/MMS app, or does it require SMS access for a reason not available through the SMS Intent API?**
-Select: **No — SMS access is needed but it is not a messaging app**
+**What the code actually does:**
+- `RECEIVE_SMS`: `SmsReceiver` receives carrier SMS, tests configured trigger/passphrase paths and identifies allowed senders for ordinary location requests.
+- `SEND_SMS`: `SmsSender` sends location replies and opt-in alerts (including widget and Loc Notice sends); find-my-phone also uses SMS for tracking responses.
+- The app is **not** the default SMS handler. Passive request handling while the phone is unattended cannot be reproduced by a user-initiated SMS intent.
 
-**Describe why your app needs SMS permissions:**
+**Submission decision:** Confirm eligibility for the requested permissions with Google Play policy support *before* submitting a new declaration. In particular, there is no verified permitted-use category covering QuicLoc's passive location-triggered `RECEIVE_SMS` behavior. If Play determines this usage ineligible, ship a separate Play-compliant distribution that removes ineligible manifest permissions and the corresponding functionality; preserve the existing implementation for distribution where permitted. Never describe the app as a default SMS handler or as supporting an approved use case it does not actually implement.
 
-> QuicLoc is a physical-safety / emergency-alert app. Its core mechanism is the home-screen widget: the user taps it to send a safety-check or emergency alert with their GPS location to their chosen emergency contacts — this requires no SMS access at all. RECEIVE_SMS and SEND_SMS extend that same safety mechanism in two ways. First, they let a subset of those emergency contacts (the ones the user has explicitly marked as allowed to ask, not merely added to the emergency list) request the location themselves by texting a trigger word, which the app answers with the same GPS-coordinate reply the widget sends. Second, they power a separate opt-in anti-theft feature: the user sets a private passphrase in the app, and if an incoming text's body is exactly `loc <passphrase>` or `quicloc <passphrase>`, QuicLoc locks the device and begins texting its location back to whoever sent that message every few minutes. This second check is deliberately not limited to the emergency-contact list — the phone's owner may be locked out and texting from a stranger's borrowed phone, so the passphrase itself, not the sender's number, is the credential. The SMS Retriever API cannot be used because it requires messages to contain an 11-character app hash, which is impossible for natural texts sent by human contacts. Intents cannot be used as the device may be unattended. No data is stored.
+**If Google authorizes an eligible use case**, the declaration and supporting video must precisely describe and demonstrate that approved use case, including actual permission prompts and a request/reply test on physical devices. Do not upload a scripted demonstration that conceals the remote-trigger or anti-theft behavior.
 
-**Video instructions:**
-> **CRITICAL:** You MUST provide a video link here, even though the form says it's optional. Google Play will automatically reject the declaration without one.
-> Record a short screen recording showing, in this order:
-> 1. Opening QuicLoc, adding an emergency contact, and demonstrating the home-screen widget itself — tap it 3 times for the safety-check alert and 4 times for the emergency alert, so the reviewer sees the app's core safety function working with no SMS involved at all.
-> 2. Adding a phone number as a contact who can also request the location by text (the "can ask" toggle in the emergency contacts list).
-> 3. Sending "loc" from that contact's device via SMS to trigger a response.
-> 4. The automatic GPS location SMS reply arriving on the sending device.
->
-> Leading with the widget matters: it shows RECEIVE_SMS/SEND_SMS are an optional extension of an already-complete safety-alert app, not the app's entire reason for existing.
-> Upload this to YouTube (unlisted) and paste the link in the "Video instructions" field.
+Official policy: https://support.google.com/googleplay/android-developer/answer/10208820
 
-
+---
 
 ## 2. Notification Listener Permission Declaration
 
@@ -51,34 +41,21 @@ Select: **Yes**
 
 ## 3. Background Location Declaration (Location permissions)
 
-**Location in Play Console:**
-> App content → Sensitive app permissions → Background location
+**Location in Play Console:** App content → Sensitive app permissions → Background location.
 
-**Does your app access location in the background?**
-Select: **Yes**
+**Does your app access location in the background?** Yes.
 
-**Describe why your app needs background location access:**
+**One feature to enter in the background-location declaration** (subject to the actual app behavior and Play review):
 
-> QuicLoc uses background location for three distinct, user-visible and user-controlled, safety functions:
->
-> 1. **Request-reply (always available).** When a trigger message is received from a whitelisted contact, including when the screen is off and the app is not in the foreground, QuicLoc obtains the device's current GPS coordinates to send a location reply. Location is read only at the moment of replying to a request, never on a schedule.
-> 2. **Loc Notice (opt-in, off by default, separate switch from the rest of the app).** The user names a place, picks contacts, and chooses to be alerted on arrival and/or departure. While this feature is on, Android's Geofencing API (Google Play services) continuously monitors location in the background to detect boundary crossings for the user's saved places, and QuicLoc automatically texts the chosen contacts when one occurs. This is genuine ongoing background location use — the feature cannot work otherwise — and is fully disclosed to the user in-app before they turn it on, with its own on/off switch independent of every other function in the app.
-> 3. **Find-my-phone / anti-theft tracking (opt-in — inert until the user sets a passphrase in the app).** When a text or chat-app notification arrives whose body matches `loc <passphrase>` or `quicloc <passphrase>` against the user's own configured passphrase, QuicLoc locks the device and starts fetching its current GPS location every 5 minutes (every 1 minute after 3 incorrect PIN attempts on the lock screen, alongside a one-time photo sent to the same recipient — see the Camera declaration), texting each fix back to whoever sent the triggering message. **This check runs against every incoming trigger-shaped message, not just whitelisted contacts** — the design assumption is that the phone was stolen and its owner is texting from a number or app QuicLoc has never seen before, so the passphrase itself, not the sender's identity, is what QuicLoc trusts. Tracking continues — surviving the app being killed, and a device reboot once the device has been unlocked at least once afterward — until the correct QuicLoc PIN is entered on the device itself.
->
-> In all cases, location is used only to (1) generate the Google Maps link, arrival/departure text, or find-my-phone location update sent to the relevant recipient, and (2) evaluate geofence boundaries on-device via the Android platform's Geofencing API. It is never obtained for any other purpose, never stored beyond what's needed for the feature to function (Loc Notice's place definitions — name, coordinates, radius — are stored locally, encrypted, so the app knows what to monitor; no location *fix* itself is ever logged or stored), and never transmitted to QuicLoc's developer or any server QuicLoc operates — QuicLoc has none.
+> QuicLoc lets a user respond automatically to an incoming location request from a trusted, explicitly authorized contact while QuicLoc is closed or the phone screen is off. When the authorized contact texts the configured request word, QuicLoc obtains the phone's current location and sends a map link back by SMS without requiring the phone's owner to open QuicLoc. This background location access is essential to unattended location replies; granting only while-in-use access would not support that use case. The user configures the trusted contacts and can disable the feature. Location is requested in response to a trigger, not continuously for this feature.
 
-**Provide a video demonstrating the background location use:**
-> Record a short screen recording showing, in this order:
-> 1. Opening QuicLoc, adding an emergency contact, and demonstrating the widget's safety-check (3 taps) and emergency (4 taps) alerts.
-> 2. Adding a phone number as a contact who can also request the location by text.
-> 3. Locking the device / closing the app.
-> 4. Sending "loc" from that contact's device to trigger a response while the device is locked.
-> 5. The automatic GPS reply arriving on the sending device.
-> 6. Turning on Loc Notice, adding a place (walking through the address → Maps → paste-coordinates flow), picking a contact, and turning on "notify when I arrive."
-> 7. Leaving and re-entering that place's radius (or using a location-simulation tool) and showing the automatic arrival text arrive on the contact's device, with no request sent and the app not open.
-> 8. Setting a find-my-phone passphrase and PIN in the app, then sending `loc <passphrase>` from a phone number that is **not** on the whitelist, and showing the device lock and the location reply arriving on that same, non-whitelisted number.
->
-> Upload this to YouTube (unlisted) and paste the link in the Play Console form. Steps 6-8 are not optional padding — a reviewer who only sees the request-reply demo has no way to verify the *other* declared uses of background location, and a mismatch between the written declaration and the demo video is a documented rejection reason.
+**Important:** That description is about *one* background-location feature. It does not erase other background-location uses that must be transparently disclosed to users and documented in the privacy policy: **Loc Notice** uses geofences for optional arrival/departure messages; **find-my-phone** performs periodic background fixes during an active, passphrase-triggered tracking session. Approval for background location does not establish permission to use restricted SMS APIs.
+
+**Prominent in-app disclosure and video:** Record an actual Android device showing the app's in-app background-location disclosure, the runtime/system permission flow, a trusted-contact request arriving while QuicLoc is closed, and the resulting reply. Google recommends 30 seconds or less, and requires the video to demonstrate the **single feature entered in the form**. The in-app disclosure must still name *all* background-location uses, including find-my-phone. Confirm the shipped build matches the recording.
+
+**Review checklist:** Check the published privacy-policy URL, in-app privacy-policy link, store listing description, accessible video link, and *every active track* before resubmitting. Google Play may reject an ineligible underlying use case regardless of disclosure quality.
+
+Official guidance: https://support.google.com/googleplay/android-developer/answer/9799150
 
 ---
 

@@ -160,8 +160,9 @@ object Readiness {
         steps += SetupStep(
             id = "location",
             title = "Allow location",
-            detail = "The location that gets sent back as a Google Maps link. Only read while " +
-                "answering a request — never in the background, never stored.",
+            detail = "Location is used for request replies, optional Loc Notice " +
+                "geofence alerts, and active find-my-phone tracking. Background access " +
+                "requires a separate permission.",
             state = if (locationMissing) StepState.TODO else StepState.DONE,
             required = true,
             actionKey = if (!granted(PERM_FINE_LOCATION)) PERM_FINE_LOCATION else PERM_COARSE_LOCATION,
