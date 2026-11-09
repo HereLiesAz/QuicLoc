@@ -160,8 +160,9 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             whatFor = "Gets a GPS fix accurate enough to be worth putting on a map.",
             ifSkipped = "QuicLoc has nothing useful to send. This is the one permission the app " +
                 "cannot work without.",
-            limits = "Read only in the seconds it takes to answer a request, then discarded. " +
-                "No background tracking, no history, no server.",
+            limits = "Request replies use a short location fix. Optional Loc Notice monitors " +
+                "geofence crossings, and active find-my-phone sessions obtain periodic " +
+                "location fixes in the background. QuicLoc has no developer-run server.",
         ),
         PermissionRationale(
             permission = Manifest.permission.ACCESS_COARSE_LOCATION,
@@ -1687,13 +1688,11 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 "closed. This is the whole point of the app.",
             ifSkipped = "QuicLoc can only answer while you happen to have it open on screen. " +
                 "Every other request goes unanswered.",
-            limits = "\"All the time\" is about *when it may ask*, not how often it does. For " +
-                "replying to requests, location is only read in the seconds it takes to answer " +
-                "one. The one exception is Loc Notice, a separate opt-in feature (off by " +
-                "default, its own switch) that watches your location continuously in the " +
-                "background while it's turned on, to alert your contacts when you arrive or " +
-                "leave a place you've configured — you'll see that disclosed again, on its own, " +
-                "before you turn it on.",
+            limits = "QuicLoc uses location in the background when the app is closed or not in use " +
+                "to reply to authorized location requests, detect optional Loc Notice " +
+                "arrival/departure events, and send periodic location updates during an " +
+                "active opt-in find-my-phone session. Location replies and alerts are sent " +
+                "to the relevant recipient, not to a QuicLoc server.",
             nextStep = "Android won't let apps ask for this directly. The next screen is the " +
                 "system Location page for QuicLoc — tap \"Allow all the time\" there.",
             confirmLabel = "Open Settings",
