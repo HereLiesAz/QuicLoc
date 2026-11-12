@@ -23,7 +23,7 @@ What QuicLoc explicitly does **not** defend against:
 | Background work (receivers, services) | None — runs without app auth | N/A by design — must work when phone is locked |
 | Find-my-phone unlock | The same QuicLoc PIN | 3 wrong attempts → photo capture + panic mode |
 
-The background components (`SmsReceiver`, `NotificationListener`, `LocationReplyService`) do *not* require app auth. This is deliberate: the entire point is to answer location requests while the device is locked. Authentication only gates the **configuration UI**.
+The background components (`NotificationListener`, `LocationReplyService`) do *not* require app auth. This is deliberate: the entire point is to answer location requests while the device is locked. Authentication only gates the **configuration UI**.
 
 ### The QuicLoc PIN as a second unlock method
 
@@ -115,8 +115,7 @@ accumulation of photo files from repeated wrong PINs or repeated ticks.
 
 ## Code paths reviewed for security
 
-- **`SmsReceiver`** — no parsing of attacker-controlled content beyond a case-insensitive equality check against the trigger word. No SQL, no `exec`, no reflection on input.
-- **`NotificationListener`** — same. Sender name and message body are matched against the whitelist with simple string comparison + `PhoneNumberUtils.compare`.
+- **`NotificationListener`** — same. Sender name and message body are matched against the whitelist with simple string comparison + `PhoneNumbers.match`.
 - **`LocationHelper.sendSms`** — caller-supplied phone number flows into `SmsManager.sendTextMessage` which is parameterized; no template injection risk.
 - **`BackupVault`** — only deserializes data the user previously serialized. JSON parsing is bounded by `JSONObject.optString` etc.; no class-loading from input.
 - **PIN comparison** — currently uses `==` on `String`. Not constant-time. The threat is timing-side-channel attacks against the unlock screen; given the activity also captures a photo after 3 wrong PINs, this is acceptable.
