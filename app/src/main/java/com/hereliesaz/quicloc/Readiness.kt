@@ -86,7 +86,6 @@ data class SetupStep(
  */
 object Readiness {
 
-    const val PERM_RECEIVE_SMS = "android.permission.RECEIVE_SMS"
     const val PERM_SEND_SMS = "android.permission.SEND_SMS"
     const val PERM_FINE_LOCATION = "android.permission.ACCESS_FINE_LOCATION"
     const val PERM_COARSE_LOCATION = "android.permission.ACCESS_COARSE_LOCATION"
@@ -142,17 +141,16 @@ object Readiness {
             actionLabel = "Turn on",
         )
 
-        // Text messages — both halves are needed: one to hear the request, one
-        // to answer it. Reported as a single step because half of it is useless.
-        val smsMissing = listOf(PERM_RECEIVE_SMS, PERM_SEND_SMS).firstOrNull { !granted(it) }
+        // Incoming messages are read through the user-enabled notification listener.
+        // SEND_SMS remains necessary for widget and location-alert texts.
         steps += SetupStep(
             id = "sms",
-            title = "Allow text messages",
-            detail = "QuicLoc reads incoming texts to spot the word \"loc\", and sends the reply " +
-                "back by text. Without both, a texted request can't be heard or answered.",
-            state = if (smsMissing == null) StepState.DONE else StepState.TODO,
+            title = "Allow sending text messages",
+            detail = "QuicLoc sends location links and alerts by SMS. Incoming requests are " +
+                "detected through Notification Access, not the restricted RECEIVE_SMS permission.",
+            state = if (granted(PERM_SEND_SMS)) StepState.DONE else StepState.TODO,
             required = true,
-            actionKey = smsMissing ?: PERM_RECEIVE_SMS,
+            actionKey = PERM_SEND_SMS,
             actionLabel = "Allow",
         )
 
@@ -254,10 +252,10 @@ object Readiness {
         steps += SetupStep(
             id = "notification-access",
             title = "Turn on Notification Access",
-            detail = "Optional. Adds WhatsApp, Telegram, Signal, Messenger and friends. " +
-                "Skip it and only plain text messages work.",
+            detail = "Required to detect incoming SMS and chat-app requests through posted " +
+                "notifications. Enable message previews and notification access in Android settings.",
             state = if (granted(PermKeys.NOTIF_LISTENER)) StepState.DONE else StepState.TODO,
-            required = false,
+            required = true,
             actionKey = PermKeys.NOTIF_LISTENER,
             actionLabel = "Turn on",
         )
