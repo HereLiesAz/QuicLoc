@@ -24,7 +24,7 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 
 | Permission | Why | When requested |
 |---|---|---|
-| `RECEIVE_SMS` | `SmsReceiver` parses incoming SMS for the trigger word | After biometric auth on first launch |
+| Incoming SMS | Detected via the existing NotificationListener when the messaging app posts message content; no `RECEIVE_SMS` permission | Notification Access in system settings |
 | `SEND_SMS` | `LocationHelper.sendSms` replies via `SmsManager` | Same |
 | `ACCESS_FINE_LOCATION` | `LocationHelper.fetchLocation` GPS fix | Same |
 | `ACCESS_COARSE_LOCATION` | Fallback when fine location unavailable | Same |
@@ -86,7 +86,7 @@ Requested from `MainActivity.autoDetectMyNumber`, through the same rationale dia
 `android.permission.BIND_NOTIFICATION_LISTENER_SERVICE` is system-only; the user grants it via Settings → Apps → Special access → Notification access. We:
 
 - Detect grant state via `Settings.Secure.getString(contentResolver, "enabled_notification_listeners")`.
-- Show a "Chat apps are off" card inside settings section 2 (The trigger word) with a "Turn on Notification Access" button that routes through the rationale dialog and then opens `Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS`. The same grant is offered as a Recommended row on the setup checklist and from the Diagnostics screen.
+- Show an "Incoming requests are off" card inside settings section 2 (The trigger word) with a "Turn on Notification Access" button that routes through the rationale dialog and then opens `Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS`. The same grant is offered as a required row on the setup checklist and from the Diagnostics screen.
 
 Without this grant, the app still works for SMS but doesn't trigger from any chat app.
 
@@ -128,10 +128,10 @@ The battery optimization exemption requires a Play Console disclosure — see [D
 
 | Path | Required runtime permissions | Required special access |
 |---|---|---|
-| SMS trigger | RECEIVE_SMS, SEND_SMS, *_LOCATION, ACCESS_BACKGROUND_LOCATION | — |
+| SMS notification trigger | SEND_SMS, *_LOCATION, ACCESS_BACKGROUND_LOCATION | Notification Access and visible message notification |
 | Notification trigger | SEND_SMS *(implicit dependency through fallbacks)*, *_LOCATION, ACCESS_BACKGROUND_LOCATION | Notification Access |
 | Widget tap | SEND_SMS, *_LOCATION, ACCESS_BACKGROUND_LOCATION, POST_NOTIFICATIONS | — |
-| Passphrase / find-my-phone | RECEIVE_SMS, SEND_SMS, *_LOCATION, BACKGROUND_LOCATION, CAMERA | — for cover-screen mode; Device Admin for real lock |
+| Passphrase / find-my-phone | SEND_SMS, *_LOCATION, BACKGROUND_LOCATION, CAMERA | Notification Access for incoming trigger; Device Admin for real lock |
 | MMS panic photo | SEND_SMS, CAMERA | The `android-smsmms` library also pulls in `ACCESS_NETWORK_STATE`, already declared by the base for Play Services — not a new permission surface introduced by this path |
 
 ## Permissions explicitly NOT requested
