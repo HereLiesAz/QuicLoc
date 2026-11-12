@@ -1,0 +1,188 @@
+package com.hereliesaz.quicloc
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.provider.Telephony
+import android.util.Log
+
+/**
+ * Optional direct carrier-SMS path. Active only when RECEIVE_SMS is granted;
+ * NotificationListener remains the preferred no-RECEIVE_SMS setup.
+ *
+ * Responsibilities:
+ *
+ *   1. Master-toggle gate ([AppSettings.isEnabled]) — short-circuit if off.
+ *   2. Reassemble multipart SMS by sender (long messages arrive as multiple
+ *      `SmsMessage` parts).
+ *   3. Match against either:
+ *        - the single-use passphrase → hand off to [TrackingService]
+ *        - the trigger word `loc` / `quicloc` + whitelist match
+ *          → hand off to [LocationReplyService]
+ *   4. For passphrase matches, clear the passphrase synchronously
+ *      ([WhitelistManager.clearPassphraseSync]) so a crash between trigger
+ *      and reboot can't leave it reusable.
+ *
+ * No `goAsync()` — we don't need it. Everything heavy (GPS, SMS send) is
+ * delegated to a foreground service. The receiver itself returns in
+ * milliseconds.
+ *
+ * Background foreground-service starts remain subject to Android platform
+ * restrictions; verify SMS wakeups on supported device versions.
+ */
+class SmsReceiver : BroadcastReceiver() {
+
+    companion object {
+        private const val TAG = "QuicLoc.SmsReceiver"
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
+        // Permission is user-optional; never act on a manually delivered intent
+        // after the user has revoked direct SMS access.
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.RECEIVE_SMS
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
+
+        val captureAll = AppSettings.isDiagCaptureAll(context)
+        // Lazy so the EncryptedSharedPreferences / Keystore init only happens
+        // when we actually record a diagnostic — not for every passing SMS.
+        val diag by lazy { DiagnosticLogManager(context) }
+
+        if (!AppSettings.isEnabled(context)) {
+            Log.d(TAG, "Ignoring incoming SMS — QuicLoc disabled")
+            if (captureAll) diag.record(buildEvent("", "", DiagOutcome.APP_DISABLED,
+                "QuicLoc master toggle is off"))
+            return
+        }
+
+        val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
+        if (messages.isNullOrEmpty()) {
+            if (captureAll) diag.record(buildEvent("", "", DiagOutcome.NO_MESSAGES_EXTRACTED,
+                "No SMS messages in intent"))
+            return
+        }
+
+        // Reassemble multi-part SMS by sender
+        val messagesBySender = mutableMapOf<String, StringBuilder>()
+        for (smsMessage in messages) {
+            val sender = smsMessage.displayOriginatingAddress ?: continue
+            messagesBySender.getOrPut(sender) { StringBuilder() }
+                .append(smsMessage.messageBody)
+        }
+
+        val whitelistManager = WhitelistManager(context)
+
+        for ((sender, bodyBuilder) in messagesBySender) {
+            val body = bodyBuilder.toString().trim().lowercase()
+            val looksLikeTrigger = body.contains("loc")
+
+            // The entire find-my-phone feature (and thus the passphrase)
+            // lives in the on-demand :feature_findmyphone module — skip this
+            // check entirely rather than decrypting/consuming a passphrase
+            // for a feature that isn't shipped in this build (matches
+            // NotificationListener's identical guard).
+            val passphrase = if (FindMyPhone.ENABLED) whitelistManager.getPassphrase() else null
+            val isPassphraseTrigger = !passphrase.isNullOrEmpty() &&
+                (body == "loc ${passphrase.lowercase()}" || body == "quicloc ${passphrase.lowercase()}")
+
+            // Never log the raw body of a passphrase match — it's the secret
+            // itself, and Log.d output ends up in logcat/bugreports. Every
+            // other body (trigger or not) is fine to log as before.
+            if (looksLikeTrigger) Log.d(TAG, "Trigger-like carrier SMS evaluated")
+
+            if (isPassphraseTrigger) {
+                // Tracking lives in the on-demand :feature_findmyphone
+                // module; returns false if it was never downloaded (or the
+                // download is still pending). Only burn the single-use
+                // passphrase once tracking has actually started — a phone
+                // that hasn't finished setup, or where the module install
+                // failed, would otherwise permanently disarm itself for no
+                // protection gained: nothing was intercepted-and-replayed to
+                // guard against if the trigger never took effect.
+                val started = FindMyPhone.trigger(context, sender, "SMS")
+                if (started) {
+                    Log.d(TAG, "Passphrase trigger from $sender — starting find-my-phone")
+                    diag.record(buildEvent(sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
+                        "Find-my-phone passphrase matched — starting tracking", triggerMatched = true))
+                    // Commit synchronously so a crash between now and the next
+                    // boot can't leave the single-use passphrase usable a
+                    // second time now that tracking has genuinely begun.
+                    whitelistManager.clearPassphraseSync()
+                } else {
+                    Log.w(TAG, "Passphrase trigger from $sender — module not installed yet, requesting install")
+                    diag.record(buildEvent(sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
+                        "Find-my-phone passphrase matched, but the feature module isn't installed yet — " +
+                            "requesting install now. Passphrase left armed so the same text can retry.",
+                        triggerMatched = true))
+                    // Best-effort: get the module downloaded so a retry (or a
+                    // resend of the same "loc <passphrase>" text) can succeed
+                    // without the user having to redo setup from a stolen phone.
+                    FindMyPhone.requestInstall(context)
+                }
+                continue
+            }
+
+            if (!whitelistManager.isWhitelisted(sender)) {
+                Log.d(TAG, "Sender $sender not whitelisted, ignoring.")
+                if (looksLikeTrigger) diag.record(buildEvent(sender, body,
+                    DiagOutcome.WHITELIST_NO_MATCH_BY_NUMBER,
+                    "Trigger '$body' from $sender, but number not in whitelist. " +
+                        "Contacts who can request: [${whitelistManager.getSharingNumbers().joinToString(", ")}]",
+                    triggerMatched = true, whitelistMatched = false))
+                continue
+            }
+
+            if (body == "loc" || body == "quicloc") {
+                // The same carrier SMS also reaches NotificationListener via the
+                // default SMS app's notification; dedupe so we only reply once.
+                if (TriggerDedupe.wasRecentlyHandled(listOf(sender))) {
+                    Log.d(TAG, "Duplicate trigger from $sender — already handled, skipping")
+                    diag.record(buildEvent(sender, body, DiagOutcome.DUPLICATE_SUPPRESSED,
+                        "Already handled this request via the notification path — not replying twice",
+                        triggerMatched = true, whitelistMatched = true))
+                    continue
+                }
+                TriggerDedupe.markHandled(sender)
+                // Also record a number-independent signal so the default SMS
+                // app's notification echo of this same SMS gets suppressed even
+                // when it surfaces only a contact name we can't resolve.
+                TriggerDedupe.markCarrierTriggerHandled()
+                Log.d(TAG, "Trigger from $sender — starting LocationReplyService")
+                val diagId = java.util.UUID.randomUUID().toString()
+                diag.record(buildEvent(sender, body, DiagOutcome.DISPATCHED,
+                    "Trigger matched, sender whitelisted — fetching location to reply",
+                    id = diagId, triggerMatched = true, whitelistMatched = true))
+                // Hand off to the foreground service. The receiver returns in
+                // milliseconds; the service does the GPS wait + reply.
+                LocationReplyService.startForSms(context, sender, diagId = diagId)
+            } else if (captureAll) {
+                diag.record(buildEvent(sender, body, DiagOutcome.NOT_A_TRIGGER,
+                    "Whitelisted sender, but message isn't a trigger word"))
+            }
+        }
+    }
+
+    /** Builds an SMS-channel diagnostic event with the common fields filled. */
+    private fun buildEvent(
+        sender: String,
+        body: String,
+        outcome: DiagOutcome,
+        reason: String,
+        id: String = java.util.UUID.randomUUID().toString(),
+        triggerMatched: Boolean = false,
+        whitelistMatched: Boolean? = null,
+    ): DiagnosticEvent = DiagnosticEvent(
+        id = id,
+        timestamp = System.currentTimeMillis(),
+        channel = DiagChannel.SMS,
+        source = "SMS",
+        rawSender = sender,
+        rawBody = body.take(80),
+        triggerMatched = triggerMatched,
+        whitelistMatched = whitelistMatched,
+        extractionPath = null,
+        outcome = outcome,
+        reason = reason,
+    )
+}

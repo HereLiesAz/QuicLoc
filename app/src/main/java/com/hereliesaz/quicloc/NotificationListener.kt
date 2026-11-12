@@ -27,8 +27,9 @@ import androidx.core.app.NotificationCompat
  * Drops duplicates (apps re-post notifications when state changes; we only
  * want to fire once per real new message).
  *
- * Requires Notification Access; does not request RECEIVE_SMS. If no message
- * notification appears or its content is hidden, no trigger is detected.
+ * Requires Notification Access for this intake path. Direct carrier SMS
+ * broadcasts may also be enabled by the optional RECEIVE_SMS permission.
+ * Both paths share deduplication to avoid duplicate location replies.
  */
 class NotificationListener : NotificationListenerService() {
 
@@ -227,9 +228,29 @@ class NotificationListener : NotificationListenerService() {
             return
         }
 
-        // Default SMS notifications are the only incoming SMS path. Use the
-        // existing SMS sender when exactly one trusted dialable number matches.
+        // The SMS broadcast receiver can optionally handle the same carrier
+        // message. Its number may appear here as a contact name, so compare
+        // against all known numbers for that name before sending a second reply.
+        // Only check the shared guard for the default SMS app; other chat apps
+        // (including RCS providers) must not be suppressed on SMS alone.
         if (isDefaultSmsApp) {
+            val candidates = buildList {
+                add(sender)
+                if (latest.verifiedContact) addAll(whitelist.numbersForName(sender))
+            }
+            val duplicate = TriggerDedupe.wasRecentlyHandled(candidates) ||
+                (candidates.none { it.any(Char::isDigit) } &&
+                    TriggerDedupe.carrierTriggerHandledWithin(10_000L))
+            if (duplicate) {
+                recordDiag(pkg, sender, body, DiagOutcome.DUPLICATE_SUPPRESSED,
+                    "Carrier SMS already handled by direct receiver or listener",
+                    triggerMatched = true, whitelistMatched = true,
+                    extractionPath = extraction.path)
+                return
+            }
+
+            // Prefer SMS replies when exactly one trusted dialable number matches.
+
             val eligible = whitelist.getContacts().filter { it.canRequestLocation && it.number.isNotEmpty() }
             val byNumber = eligible.filter { PhoneNumbers.match(sender, it.number) }
                 .map { it.number }.distinct()
@@ -245,6 +266,7 @@ class NotificationListener : NotificationListenerService() {
                     "Trusted SMS notification — replying by SMS",
                     id = diagId, triggerMatched = true, whitelistMatched = true,
                     extractionPath = extraction.path)
+                TriggerDedupe.markHandled(phone)
                 LocationReplyService.startForSms(applicationContext, phone, diagId)
                 return
             }
@@ -266,6 +288,11 @@ class NotificationListener : NotificationListenerService() {
             "Trigger matched, sender whitelisted — fetching location to reply",
             id = diagId, triggerMatched = true, whitelistMatched = true,
             extractionPath = extraction.path)
+        if (isDefaultSmsApp) {
+            val candidate = if (latest.verifiedContact)
+                whitelist.numbersForName(sender).distinct().singleOrNull() else null
+            TriggerDedupe.markHandled(candidate ?: sender)
+        }
         LocationReplyService.startForNotification(
             applicationContext,
             sender = sender,

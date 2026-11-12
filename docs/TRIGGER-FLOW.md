@@ -6,12 +6,18 @@ How a single "loc" turns into a Google Maps link in the requester's hand, broken
 
 Before any path runs, `AppSettings.isEnabled(context)` is checked. When disabled:
 
-- Without direct SMS broadcasts, no incoming SMS is observed independently of `NotificationListener`.
+- `SmsReceiver` and `NotificationListener` ignore inbound requests; the widget still respects the master switch.
 - `NotificationListener` ignores notifications.
 - `LocationReplyService` aborts non-widget intents on start.
 - Widget taps still vibrate (user-initiated) but don't send.
 
-## Path 1: SMS or chat notification (requires Notification Access)
+## Path 1: Incoming carrier SMS or chat notifications
+
+### Direct SMS (optional `RECEIVE_SMS` grant)
+
+`SmsReceiver.onReceive` handles `SMS_RECEIVED` broadcasts only when the user has granted `RECEIVE_SMS`. It reassembles multipart SMS, checks the master switch and trigger/passphrase, gates ordinary requests by the phone-number whitelist, and delegates to `LocationReplyService.startForSms` (or `FindMyPhone.trigger` for an armed passphrase). This path does not need Notification Access or readable SMS notifications.
+
+### Notifications (optional for SMS; required for chat apps)
 
 ```
 SMS/chat app posts a notification containing a message
@@ -36,11 +42,11 @@ NotificationListener.onNotificationPosted
         └─ otherwise ignore / record diagnostic failure
 ```
 
-No SMS broadcast receiver is registered. `RECEIVE_SMS` is not requested. `SEND_SMS` remains for outgoing replies, widget alerts, Loc Notice and find-my-phone. A notification-only SMS request may be missed if the default messaging app suppresses notifications, hides the text, or does not expose a reliably identified sender. For unknown contact names without a reliable phone number, QuicLoc does not guess the recipient.
+The SMS broadcast receiver is registered, but its runtime permission is optional. `RECEIVE_SMS` is never forced in setup: the user can instead grant Notification Access. `SEND_SMS` remains for outgoing replies, widget alerts, Loc Notice and find-my-phone. A notification-only SMS request may be missed if the default messaging app suppresses notifications, hides the text, or does not expose a reliably identified sender. For unknown contact names without a reliable phone number, notification-only intake does not guess the recipient; direct SMS does not have this limitation.
 
 **Identity and safety:** For default-SMS-app notifications, number matching uses `PhoneNumbers.match`; a trusted contact name is considered only when the default SMS app supplies it and that name maps to exactly one whitelisted dialable number. For chat apps, an arbitrary display name is not sufficient to authorize a reply without a verified contact identity. A passphrase-triggered find-my-phone request still needs a usable sender phone number.
 
-**Duplicate prevention:** The listener drops reposts with the same notification key, sender and body within 60 seconds. The former cross-intake SMS broadcast deduplicator is gone because there is only one inbound path.
+**Duplicate prevention:** The listener drops reposts with the same notification key, sender and body within 60 seconds. When both paths are enabled, `TriggerDedupe` also suppresses cross-intake duplicate SMS replies using phone-number matching (and a short fallback for unresolved sender names).
 
 **Reply transport:** With a unique trusted number from the default SMS app, reply using `SmsManager`; otherwise use a real `RemoteInput` inline-reply action where available. Missing both yields a diagnostic failure, never an invented phone number.
 

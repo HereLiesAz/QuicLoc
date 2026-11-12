@@ -15,7 +15,7 @@ All unit tests live in `app/src/test/java/com/hereliesaz/quicloc/`. Most use Rob
 | [AppSettingsTest](../app/src/test/java/com/hereliesaz/quicloc/AppSettingsTest.kt) | All defaults (`isEnabled=true`, `reminderNotificationEnabled=false`, all "prompted" flags = false), all setter round-trips, prompted flags are independent |
 | [RequestHistoryManagerTest](../app/src/test/java/com/hereliesaz/quicloc/RequestHistoryManagerTest.kt) | Empty default, newest-first ordering, 100-entry cap with correct eviction (sender0…sender19 evicted, sender20…sender119 kept), `clearHistory`, `formattedTime` renders, cross-instance persistence |
 | [TutorialsTest](../app/src/test/java/com/hereliesaz/quicloc/TutorialsTest.kt) | `MAIN_ID` resolvable, `byId` unknown returns null, every tutorial has non-empty title/summary/body, IDs are unique + kebab-case, the catalog contains the expected 12 tutorials, the find-my-phone/real-lockdown tutorials (and the Camera/Device Admin/Full-Screen-Intent sections of the permissions tutorial) are present when `FindMyPhone.ENABLED` and absent when it isn't — both directions asserted |
-| [ManifestRegistrationTest](../app/src/test/java/com/hereliesaz/quicloc/ManifestRegistrationTest.kt) | Every **base-manifest** receiver (widget, toggle, boot), service (location reply, notification listener), and activity (main, widget-help) is declared, exported correctly, and where needed declares the right `permission`. Backup XML is wired up in the application tag. **Does not cover `QuicLocDeviceAdmin`, `TrackingService`, or `TrackingLockActivity`** — those live in the on-demand `:feature_findmyphone` module, so they're absent from the base merged manifest Robolectric reads here; the test file has explicit comments marking each as intentionally skipped for that reason. There is currently no manifest-registration test running against the module's own (merged-in) manifest — see "What's NOT automated" below. |
+| [ManifestRegistrationTest](../app/src/test/java/com/hereliesaz/quicloc/ManifestRegistrationTest.kt) | Every **base-manifest** receiver (widget, SMS, toggle, boot), service (location reply, notification listener), and activity (main, widget-help) is declared, exported correctly, and where needed declares the right `permission`. Backup XML is wired up in the application tag. **Does not cover `QuicLocDeviceAdmin`, `TrackingService`, or `TrackingLockActivity`** — those live in the on-demand `:feature_findmyphone` module, so they're absent from the base merged manifest Robolectric reads here; the test file has explicit comments marking each as intentionally skipped for that reason. There is currently no manifest-registration test running against the module's own (merged-in) manifest — see "What's NOT automated" below. |
 
 When a unit test fails, that's the first thing to check before assuming the underlying behavior changed.
 
@@ -39,7 +39,7 @@ Everything below has to be exercised on a real device or emulator.
 - Foreground service lifecycle (start, foreground transition, stop)
 - Location fetch (Fused Location Provider behavior)
 - Notification listener (depends on a real `NotificationManager` + chat apps)
-- SMS notifications and outgoing SMS delivery (depends on a SIM and the default SMS app's notification settings)
+- Direct SMS reception, SMS notifications, outgoing SMS delivery and dual-path duplicate suppression (requires physical SMS-capable devices)
 - MMS send (depends on carrier APN)
 - Device Admin grant + `lockNow()`
 - CameraX capture
@@ -50,7 +50,7 @@ Everything below has to be exercised on a real device or emulator.
 
 ### 1. SMS trigger (smoke test)
 
-**Pre:** Phone A has QuicLoc installed, Notification Access enabled, the default SMS app's notifications and message previews turned on, and Phone B's number whitelisted. Both phones have SMS. The app must not declare `RECEIVE_SMS`.
+**Pre:** Phone A has QuicLoc installed with Phone B whitelisted. Both phones have SMS. Confirm the merged manifest declares both `RECEIVE_SMS` and `SEND_SMS`; QuicLoc setup must allow either Receive SMS or Notification Access to satisfy SMS listening.
 
 | Step | Expected |
 |---|---|
@@ -59,8 +59,12 @@ Everything below has to be exercised on a real device or emulator.
 | Send `loc me` (extra text) | No reply (must be exact match) |
 | Send `loc` from a number NOT whitelisted | No reply |
 | Phone A: disable master toggle, repeat | No reply, log line says "QuicLoc disabled" |
-| Disable SMS message notifications on Phone A, repeat | No reply: direct SMS broadcasts are not registered |
-| Turn notifications back on but hide previews, repeat | No reply if the trigger word is not exposed in notification content |
+| Receive SMS granted, Notification Access denied, SMS notifications disabled | Exactly one direct SMS reply |
+| Receive SMS denied, Notification Access granted, SMS notifications with previews enabled | Exactly one notification-triggered reply |
+| Receive SMS denied, Notification Access granted, SMS notifications hidden or disabled | No reply if the trigger word never appears in a readable notification |
+| Both granted and notifications enabled | Exactly one reply per SMS; cross-path deduplication |
+| Both denied | No incoming SMS reply; setup shows one required listening step and both choices |
+| Receive SMS granted, Notification Access denied, WhatsApp sends `loc` | No chat-app reply; Notification Access is required for non-SMS services |
 | Test saved name with two matching numbers and no inline-reply action | No guessed SMS recipient; diagnostic failure rather than sending to an arbitrary number |
 
 ### 2. Notification trigger (chat apps)
@@ -95,8 +99,9 @@ Everything below has to be exercised on a real device or emulator.
 
 | Step | Expected |
 |---|---|
-| From a phone whose number appears in the SMS notification, send `loc <passphrase>` | With Notification Access enabled and visible message text, tracking starts; if the notification supplies only an unresolvable name, it does not start |
-| Same trigger from a WhatsApp message (with Notification Access) | Cover screen DOES appear (Notification Listener grants BAL) |
+| From any number, send `loc <passphrase>` with Receive SMS granted | Tracking starts via direct SMS even without Notification Access |
+| With Receive SMS denied, send a passphrase in a readable SMS notification | Tracking starts through Notification Access if the sender can be resolved to a reply number |
+| Same trigger from a WhatsApp message (with Notification Access) | Notification listener attempts cover-screen presentation subject to Android background-activity restrictions |
 | Send the same passphrase again from anywhere | No effect (single-use, was cleared once tracking started on first fire) |
 | Send `loc <passphrase>` before find-my-phone setup finished installing the module | No tracking starts; passphrase stays armed (check Diagnostics for the "module not installed yet" row); resend the same text after setup finishes and it should work |
 | Enter wrong PIN 3× | Photo captured, sent via MMS to the triggering number once, tracking interval shortens to 1 min |
