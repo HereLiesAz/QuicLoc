@@ -89,7 +89,7 @@ If nothing comes back, open Diagnostics (in Help & troubleshooting). It shows th
 
 Worth doing next:
 
-• Notification Access, if your people use WhatsApp / Telegram / Signal / Messenger rather than plain texts.
+• Notification Access, preferred for SMS and WhatsApp / Telegram / Signal / Messenger. Optional Receive SMS covers carrier texts only.
 • Battery optimisation exemption, so a request at 3am isn't slept through.
 • Your own phone number and the home-screen widget, if you want the parking / safety-check / emergency shortcuts.
 """.trim(),
@@ -309,9 +309,9 @@ QuicLoc asks for several sensitive permissions. Each one is tied to a specific f
 
 Messaging
 
-• Receive SMS: the SmsReceiver inspects incoming texts for the trigger word. Without it, SMS-based requests can't be detected at all.
+• Receive SMS (optional): direct carrier-text backup for hidden or unavailable SMS notifications. Grant it under Permissions only if needed. Notification Access detects incoming SMS without it when message previews and inline reply are available.
 • Send SMS: the reply with your Maps link is sent through SmsManager. Without it, QuicLoc can detect a request but can't answer.
-• Notification Access (special access, granted in Settings): reads only the title and body of incoming notifications so the trigger works inside WhatsApp, Telegram, Signal, etc. QuicLoc ignores everything not from a whitelisted sender containing the exact trigger word.
+• Notification Access (preferred, granted in Settings): detects incoming SMS and chat requests from visible notifications and replies using the app's inline reply action. Without it, carrier SMS works only with separately granted Receive SMS; chat apps do not.
 
 Location
 
@@ -398,7 +398,7 @@ If location is set to "While using the app", QuicLoc can only answer while the a
 
 4. Notification Access is off, and they used a chat app.
 
-Plain texts work without it. WhatsApp, Telegram, Signal, Messenger and the rest do not — that path exists only through Notification Access.
+Plain texts work without Notification Access only if optional Receive SMS was granted. WhatsApp, Telegram, Signal, Messenger and similar apps require Notification Access.
 
 Some apps can't work even with it: anything that hides message text in its notifications (Signal in private-notification mode, Telegram secret chats) never shows QuicLoc the message to begin with.
 

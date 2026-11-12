@@ -35,7 +35,7 @@ Then **test it**: have someone on your list text you `loc`. A Google Maps link s
 
 ### Worth doing next
 
-- **Notification Access** — extends the trigger to WhatsApp, Telegram, Signal, Messenger and Google Messages. Without it, only plain text messages work.
+- **Notification Access (preferred)** — watches visible SMS and chat notifications. **Receive SMS (optional backup)** — detects carrier texts directly when message notifications are hidden or unavailable. It is not required for notification-based requests.
 - **Battery optimisation exemption** — so a request at 3am isn't slept through. QuicLoc does no background work, so this costs no battery.
 - **Your own number + the home-screen widget** — for the safety-check / emergency / parking shortcuts below.
 
@@ -68,7 +68,7 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 
 - **Answers automatically** — no prompt, no ring, no tap. Works with the screen off and the app closed.
 - **Emergency contacts only** — anyone not on your list is ignored silently; they're never told the app exists. Every contact gets the widget's safety-check and emergency alerts; you separately choose which of them, if any, can also request your location themselves by texting the trigger word.
-- **Works across messaging apps** — SMS always; WhatsApp, Telegram, Signal, Google Messages, Messenger and any app with an inline notification reply once Notification Access is granted.
+- **Works across messaging apps** — SMS and supported chat requests via Notification Access and visible message notifications; optionally grant Receive SMS for carrier texts when notifications are unavailable. Inline reply must be supported by the messaging app.
 - **Home screen widget** — tap it three times for a safety check to up to 3 starred contacts (`#SafetyCheck`), four times for an emergency alert to everyone on your list (`#Emergency`), or twice to just text your own location to yourself, e.g. to find a parked car (`#Parking`). One tap opens a help screen showing which of those are ready to use. Taps must land within about half a second of each other.
 - **Master on/off switch** — pauses every trigger without uninstalling. Optionally mirrored in a persistent notification with a one-tap toggle.
 - **Loc Notice** — passive, Life360-style place alerts: name a location, pick who gets told, and chosen contacts get a text the moment you arrive or leave — no request needed. A separate master switch from the one above, since passive background watching is a different privacy trade-off from answering when asked. Defining a place never touches a Maps/Places API or needs a billing account — you type an address, confirm it in the Maps app, and copy its coordinates back.
@@ -102,7 +102,7 @@ Every permission maps to one feature, and the app shows its live status with a G
 
 | Permission | Purpose |
 |---|---|
-| `RECEIVE_SMS` | Detect the trigger word in incoming SMS |
+| `RECEIVE_SMS` | Optional direct carrier-SMS backup, granted manually in Permissions; not requested during initial setup |
 | `SEND_SMS` | Send the location reply |
 | `ACCESS_FINE_LOCATION` | Obtain a precise GPS location |
 | `ACCESS_COARSE_LOCATION` | Fallback when GPS is unavailable |
@@ -110,7 +110,7 @@ Every permission maps to one feature, and the app shows its live status with a G
 | `POST_NOTIFICATIONS` | Show the foreground-service notification while a reply is in flight (Android 13+) |
 | `USE_BIOMETRIC` / `USE_FINGERPRINT` | Lock the settings screen (a QuicLoc PIN works as an alternative) |
 | `READ_PHONE_NUMBERS` | Only to auto-fill your own number for the parking widget — optional |
-| `BIND_NOTIFICATION_LISTENER_SERVICE` | Detect the trigger in non-SMS messaging apps |
+| `BIND_NOTIFICATION_LISTENER_SERVICE` | Preferred incoming SMS and chat-app trigger detection through notifications |
 
 Full reasoning for each, including the Android 13 "restricted settings" trap for sideloaded installs: [docs/PERMISSIONS.md](docs/PERMISSIONS.md), or the Permissions tutorial in the app.
 
@@ -128,7 +128,7 @@ QuicLoc does not collect, store, transmit, or share any user data with the devel
 
 Kotlin + Jetpack Compose, single activity, no backend.
 
-- **`SmsReceiver`** — `BroadcastReceiver` for incoming SMS; matches trigger word against the whitelist, hands off to a foreground service.
+- **`SmsReceiver`** — optional direct carrier-SMS receiver, enabled only after the user explicitly grants `RECEIVE_SMS`. Replies use the same location service.
 - **`NotificationListener`** — `NotificationListenerService` that watches messaging-app notifications and replies through their inline reply action.
 - **`LocationHelper`** — Fused Location Provider with a four-stage fallback: `getCurrentLocation()` → `lastLocation` → `requestLocationUpdates()`, racing a network/cell fix once GPS is slow — within a 60-second timeout.
 - **`WhitelistManager`** — trusted contacts in `EncryptedSharedPreferences` (AES-256-GCM, Android Keystore), with migration of any legacy plaintext data.
@@ -163,7 +163,7 @@ GitHub Actions builds and tests every push to `main`. Pushing a version tag (`v1
 
 ### Google Play
 
-Sensitive permissions (`NotificationListenerService`, background location, SMS) require manual Play review — declaration text and Data Safety guidance in [docs/DECLARATIONS.md](docs/DECLARATIONS.md).
+Sensitive permissions (`NotificationListenerService`, background location, `SEND_SMS` and optional `RECEIVE_SMS`) require Google Play review. An optional runtime grant does **not** exempt `RECEIVE_SMS` from Play policy. See [docs/DECLARATIONS.md](docs/DECLARATIONS.md).
 
 Play publishing follows the GitHub release automatically — the Play job is chained onto the release job, so the sideload APK goes out first and Play follows. It uploads the bundle once and puts that same `versionCode` in every track: **rolled out on internal testing, staged as a draft** on closed testing, open testing and production — so promoting a draft later ships the exact artifact internal testers used. Setup and failure modes in [docs/PLAY_PUBLISHING.md](docs/PLAY_PUBLISHING.md).
 
