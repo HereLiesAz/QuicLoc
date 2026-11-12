@@ -39,7 +39,7 @@ Everything below has to be exercised on a real device or emulator.
 - Foreground service lifecycle (start, foreground transition, stop)
 - Location fetch (Fused Location Provider behavior)
 - Notification listener (depends on a real `NotificationManager` + chat apps)
-- SMS receive / send (depends on a SIM)
+- Direct SMS reception, SMS notifications, outgoing SMS delivery and dual-path duplicate suppression (requires physical SMS-capable devices)
 - MMS send (depends on carrier APN)
 - Device Admin grant + `lockNow()`
 - CameraX capture
@@ -48,24 +48,24 @@ Everything below has to be exercised on a real device or emulator.
 
 ## Manual test plan
 
-**Permission regression:** the merged manifest declares optional `RECEIVE_SMS` and registers `SmsReceiver`, but first-launch onboarding does not request it. Check that either inbound grant can satisfy readiness; neither grant cannot.
-
 ### 1. SMS trigger (smoke test)
 
-**Pre:** Phone A has QuicLoc installed, Phone B whitelisted, and `SEND_SMS` granted. For the preferred SMS-notification path, grant Notification Access and show previews/inline reply in the SMS app. For direct carrier fallback, explicitly grant Receive SMS under QuicLoc → Permissions.
+**Pre:** Phone A has QuicLoc installed with Phone B whitelisted. Both phones have SMS. Confirm the merged manifest declares both `RECEIVE_SMS` and `SEND_SMS`; QuicLoc setup must allow either Receive SMS or Notification Access to satisfy SMS listening.
 
 | Step | Expected |
 |---|---|
 | From Phone B, send `loc` to Phone A | Phone A replies within ~10–30 s with `QuicLoc Location:\nhttps://maps.google.com/?q=…` |
-| Revoke optional Receive SMS, keep Notification Access + SMS notification previews | SMS request still works through notification inline reply |
-| Revoke Notification Access, grant optional Receive SMS | Carrier SMS request works via `SmsReceiver` and outgoing SMS; chat triggers do not |
-| Revoke both incoming grants | No incoming requests; outgoing widget alerts still work |
-| Grant both incoming paths | One SMS request yields one reply; verify cross-intake deduplication |
-| SMS notification has readable text but no inline Reply action, with optional Receive SMS granted | Direct SMS fallback still replies; notification path does not consume cross-path dedupe state |
 | Send `LOC`, `Loc`, `quicloc` | All trigger (case-insensitive, both keywords) |
 | Send `loc me` (extra text) | No reply (must be exact match) |
 | Send `loc` from a number NOT whitelisted | No reply |
 | Phone A: disable master toggle, repeat | No reply, log line says "QuicLoc disabled" |
+| Receive SMS granted, Notification Access denied, SMS notifications disabled | Exactly one direct SMS reply |
+| Receive SMS denied, Notification Access granted, SMS notifications with previews enabled | Exactly one notification-triggered reply |
+| Receive SMS denied, Notification Access granted, SMS notifications hidden or disabled | No reply if the trigger word never appears in a readable notification |
+| Both granted and notifications enabled | Exactly one reply per SMS; cross-path deduplication |
+| Both denied | No incoming SMS reply; setup shows one required listening step and both choices |
+| Receive SMS granted, Notification Access denied, WhatsApp sends `loc` | No chat-app reply; Notification Access is required for non-SMS services |
+| Test saved name with two matching numbers and no inline-reply action | No guessed SMS recipient; diagnostic failure rather than sending to an arbitrary number |
 
 ### 2. Notification trigger (chat apps)
 
@@ -74,7 +74,8 @@ Everything below has to be exercised on a real device or emulator.
 | Step | Expected |
 |---|---|
 | From Phone B's WhatsApp, send `loc` to Phone A | Phone A replies in WhatsApp via inline reply with `QuicLoc: https://maps.google.com/?q=…` |
-| Repeat with Telegram, Signal, Google Messages | Same |
+| Repeat with Telegram and Signal | Same when the app supplies a usable inline reply |
+| Repeat via Google Messages SMS (not RCS) | SMS sent through `SEND_SMS` for a unique trusted number; inline reply if no safe number can be resolved |
 | From a non-whitelisted contact, send `loc` | No reply |
 | In a group chat where Phone B is whitelisted, B sends `loc` | Should still reply (group title may be group name but message sender is B) |
 | Send the same `loc` again within 60 s | No duplicate reply (dedupe) |
@@ -98,8 +99,9 @@ Everything below has to be exercised on a real device or emulator.
 
 | Step | Expected |
 |---|---|
-| From any phone, send `loc <passphrase>` | Tracking starts, cover-screen lock activity attempts to appear (may not on Android 10+ from SMS trigger — known limitation) |
-| Same trigger from a WhatsApp message (with Notification Access) | Cover screen DOES appear (Notification Listener grants BAL) |
+| From any number, send `loc <passphrase>` with Receive SMS granted | Tracking starts via direct SMS even without Notification Access |
+| With Receive SMS denied, send a passphrase in a readable SMS notification | Tracking starts through Notification Access if the sender can be resolved to a reply number |
+| Same trigger from a WhatsApp message (with Notification Access) | Notification listener attempts cover-screen presentation subject to Android background-activity restrictions |
 | Send the same passphrase again from anywhere | No effect (single-use, was cleared once tracking started on first fire) |
 | Send `loc <passphrase>` before find-my-phone setup finished installing the module | No tracking starts; passphrase stays armed (check Diagnostics for the "module not installed yet" row); resend the same text after setup finishes and it should work |
 | Enter wrong PIN 3× | Photo captured, sent via MMS to the triggering number once, tracking interval shortens to 1 min |
@@ -180,7 +182,7 @@ Everything below has to be exercised on a real device or emulator.
 Filter by these tags:
 
 ```
-adb logcat -s QuicLoc.SmsReceiver QuicLoc.NotifListener QuicLoc.ReplyService \
+adb logcat -s QuicLoc.NotifListener QuicLoc.ReplyService \
            QuicLoc.TrackingService QuicLoc.LocationHelper QuicLoc.Whitelist \
            QuicLoc.History QuicLoc.Lockdown QuicLoc.Backup QuicLoc.TrackingLockActivity
 ```

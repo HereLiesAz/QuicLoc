@@ -115,8 +115,8 @@ accumulation of photo files from repeated wrong PINs or repeated ticks.
 
 ## Code paths reviewed for security
 
-- **`SmsReceiver`** — no parsing of attacker-controlled content beyond a case-insensitive equality check against the trigger word. No SQL, no `exec`, no reflection on input.
-- **`NotificationListener`** — same. Sender name and message body are matched against the whitelist with simple string comparison + `PhoneNumberUtils.compare`.
+- **`SmsReceiver`** — optional direct carrier-SMS intake; applies the master switch, exact trigger and authorized phone-number match before dispatching, with cross-path deduplication.
+- **`NotificationListener`** — notification-based SMS/chat intake; checks message sender and body against configured trigger words and trusted identity using `PhoneNumbers.match` and local contact metadata.
 - **`LocationHelper.sendSms`** — caller-supplied phone number flows into `SmsManager.sendTextMessage` which is parameterized; no template injection risk.
 - **`BackupVault`** — only deserializes data the user previously serialized. JSON parsing is bounded by `JSONObject.optString` etc.; no class-loading from input.
 - **PIN comparison** — currently uses `==` on `String`. Not constant-time. The threat is timing-side-channel attacks against the unlock screen; given the activity also captures a photo after 3 wrong PINs, this is acceptable.

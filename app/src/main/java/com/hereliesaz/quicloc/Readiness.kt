@@ -33,6 +33,7 @@ data class PermissionStatus(
  */
 object PermKeys {
     const val NOTIF_LISTENER = "special.notif_listener"
+    const val INCOMING_MESSAGES = "setup.incoming_messages"
     const val DEVICE_ADMIN = "special.device_admin"
     const val FSI = "special.full_screen_intent"
     const val BATTERY = "protected.battery"
@@ -104,8 +105,7 @@ object Readiness {
      *   phone number. Defaults to [whitelistCount] for callers (and tests)
      *   that don't distinguish, but real callers should pass the true count:
      *   a whitelist made up entirely of name-only entries can never satisfy
-     *   a direct SMS trigger (SmsReceiver only number-matches) or the widget's SMS
-     *   fan-out, so it should not be reported as "done".
+     *   a direct SMS request or the widget's SMS fan-out, so it should not be reported as "done".
      * @param locNoticeEnabled Whether the separate Loc Notice master toggle
      *   is on. Loc Notice gets no "turn it on" row of its own — like
      *   find-my-phone, it's an opt-in feature that isn't penalized for being
@@ -142,17 +142,28 @@ object Readiness {
             actionLabel = "Turn on",
         )
 
-        // Incoming messages are read through the user-enabled notification listener.
-        // SEND_SMS remains necessary for widget and location-alert texts.
+        // SEND_SMS is separate from the two interchangeable listening methods.
         steps += SetupStep(
             id = "sms",
             title = "Allow sending text messages",
-            detail = "QuicLoc sends location links and alerts by SMS. Incoming requests are " +
-                "normally detected through Notification Access; direct Receive SMS is optional.",
+            detail = "QuicLoc sends location links and alerts by SMS. Incoming SMS can be " +
+                "detected using either Receive SMS or Notification Access.",
             state = if (granted(PERM_SEND_SMS)) StepState.DONE else StepState.TODO,
             required = true,
             actionKey = PERM_SEND_SMS,
             actionLabel = "Allow",
+        )
+
+        steps += SetupStep(
+            id = "incoming-messages",
+            title = "Choose an incoming-message listening method",
+            detail = "Incoming SMS needs Receive SMS OR Notification Access. " +
+                "WhatsApp, Signal, Telegram and other chat services need Notification Access.",
+            state = if (granted(PERM_RECEIVE_SMS) || granted(PermKeys.NOTIF_LISTENER))
+                StepState.DONE else StepState.TODO,
+            required = true,
+            actionKey = PermKeys.INCOMING_MESSAGES,
+            actionLabel = "Choose",
         )
 
         val locationMissing = !granted(PERM_FINE_LOCATION) && !granted(PERM_COARSE_LOCATION)
@@ -222,9 +233,8 @@ object Readiness {
         steps += SetupStep(
             id = "battery",
             title = "Exempt QuicLoc from battery optimisation",
-            detail = "Android puts sleeping apps on ice; a request that arrives while QuicLoc is " +
-                "asleep can be missed entirely. QuicLoc does no background work of its own, so " +
-                "the exemption costs you nothing.",
+            detail = "Background restrictions can delay request handling. Optional " +
+                "Loc Notice and find-my-phone use additional background work when enabled.",
             state = if (granted(PermKeys.BATTERY)) StepState.DONE else StepState.TODO,
             required = true,
             actionKey = PermKeys.BATTERY,
@@ -248,32 +258,30 @@ object Readiness {
             )
         }
 
-        // ---- Recommended, not required -------------------------------------
+        // These are alternatives for SMS; each is independently selectable.
+        // Neither one alone is required. The required aggregate row above
+        // ensures missing both counts as ONE remaining setup step.
+        steps += SetupStep(
+            id = "receive-sms",
+            title = "Receive SMS directly",
+            detail = "Optional alternative to Notification Access for ordinary SMS. " +
+                "Does not enable WhatsApp, Signal, Telegram or other chat apps.",
+            state = if (granted(PERM_RECEIVE_SMS)) StepState.DONE else StepState.TODO,
+            required = false,
+            actionKey = PERM_RECEIVE_SMS,
+            actionLabel = "Allow",
+        )
 
-        val directSms = granted(PERM_RECEIVE_SMS)
         steps += SetupStep(
             id = "notification-access",
-            title = "Turn on Notification Access",
-            detail = "Preferred for incoming SMS and chat requests. Carrier texts can still " +
-                "work without it if optional Receive SMS is granted, but chat apps cannot.",
+            title = "Enable Notification Access",
+            detail = "Handles SMS and is required for requests through WhatsApp, Signal, " +
+                "Telegram and other messaging apps. Message previews must be visible.",
             state = if (granted(PermKeys.NOTIF_LISTENER)) StepState.DONE else StepState.TODO,
-            required = !directSms,
+            required = false,
             actionKey = PermKeys.NOTIF_LISTENER,
             actionLabel = "Turn on",
         )
-
-        if (byKey.containsKey(PERM_RECEIVE_SMS)) {
-            steps += SetupStep(
-                id = "receive-sms",
-                title = "Allow direct SMS detection (optional)",
-                detail = "Backup for carrier texts when notification previews are hidden or " +
-                    "Notification Access is unavailable. Not needed for notification replies.",
-                state = if (directSms) StepState.DONE else StepState.TODO,
-                required = false,
-                actionKey = PERM_RECEIVE_SMS,
-                actionLabel = "Allow",
-            )
-        }
 
         steps += SetupStep(
             id = "app-pin",

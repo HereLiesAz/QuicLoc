@@ -10,11 +10,10 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 
 /**
- * Preferred incoming SMS/chat path: listens for posted messaging notifications
- * and replies using the notification's inline-reply action when a trusted
- * contact sends "loc" or "quicloc". A user may independently grant optional
- * `RECEIVE_SMS` for [SmsReceiver] to catch carrier texts whose notification
- * is unreadable or has no usable reply action.
+ * Listens for SMS and chat-app notifications, replying via SMS to a
+ * uniquely identified trusted number or through an inline-reply action
+ * when a whitelisted contact sends the
+ * trigger word "loc" or "quicloc".
  *
  * Handles three notification shapes:
  *   1. [Notification.MessagingStyle] — the preferred shape used by WhatsApp,
@@ -28,7 +27,9 @@ import androidx.core.app.NotificationCompat
  * Drops duplicates (apps re-post notifications when state changes; we only
  * want to fire once per real new message).
  *
- * Requires "Notification Access" granted in system settings.
+ * Requires Notification Access for this intake path. Direct carrier SMS
+ * broadcasts may also be enabled by the optional RECEIVE_SMS permission.
+ * Both paths share deduplication to avoid duplicate location replies.
  */
 class NotificationListener : NotificationListenerService() {
 
@@ -40,12 +41,6 @@ class NotificationListener : NotificationListenerService() {
         // Notifications get re-posted constantly. Drop anything we've already
         // processed for the same key+content within this window.
         private const val DEDUPE_WINDOW_MS = 60_000L
-
-        // How long after SmsReceiver handles a carrier trigger we treat the
-        // default SMS app's matching notification as that same (already-answered)
-        // message, when we can't number-match it. Comfortably covers the ~1-2s
-        // SMS→notification gap without spanning unrelated later messages.
-        private const val SMS_NOTIF_DEDUPE_WINDOW_MS = 10_000L
 
         /**
          * Whether a (lowercased) body is worth logging by default — i.e. it
@@ -163,9 +158,10 @@ class NotificationListener : NotificationListenerService() {
             (body == "$TRIGGER_PLAIN ${passphrase.lowercase()}" ||
              body == "$TRIGGER_PREFIXED ${passphrase.lowercase()}")
 
-        // Never log the raw body of a passphrase match — it's the secret
-        // itself, and Log.d output ends up in logcat/bugreports.
-        Log.d(TAG, if (isPassphraseTrigger) "msg from $sender via $pkg: '[passphrase redacted]'" else "msg from $sender via $pkg: '$body'")
+        // Never put message bodies (including incorrect passphrase attempts)
+        // or sender identities in logcat. Optional local diagnostics may
+        // record a limited preview when the user enables capture-all.
+        if (looksLikeTrigger) Log.d(TAG, "Trigger-like notification evaluated via $pkg")
 
         if (isPassphraseTrigger) {
             // TrackingService replies over SMS, so it needs an actual phone
@@ -173,29 +169,36 @@ class NotificationListener : NotificationListenerService() {
             // display name (no digits) with no number this app can resolve.
             // Starting tracking anyway would lock the device and burn the
             // passphrase for a reply that silently goes nowhere.
-            if (!sender.any { it.isDigit() }) {
-                Log.w(TAG, "Passphrase trigger from '$sender' via $pkg — sender has no resolvable phone number, ignoring")
+            val rawDialable = sender.matches(Regex("[+0-9() .-]+")) &&
+                PhoneNumbers.clean(sender).count { it.isDigit() } >= 7
+            // A default SMS app may display a saved contact name rather than a
+            // number. Only a unique locally configured contact number is safe.
+            val knownNumber = if (isDefaultSmsApp && latest.verifiedContact) {
+                whitelist.numbersForName(sender).distinct().singleOrNull()
+            } else null
+            val trackingRecipient = if (rawDialable) sender else knownNumber
+            if (trackingRecipient == null) {
+                Log.w(TAG, "Passphrase matched via $pkg but no dialable sender can be identified")
                 recordDiag(pkg, sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
-                    "Find-my-phone passphrase matched, but the sender \"$sender\" is a name with no " +
-                        "phone number this app can reply to — not starting tracking. Trigger from " +
-                        "SMS instead, or from an app that surfaces the sender's number.",
+                    "Find-my-phone passphrase matched but no unique reply number was available. " +
+                        "The messaging app must expose a number, or for SMS a configured unique contact.",
                     triggerMatched = true, extractionPath = extraction.path)
                 return
             }
             // Tracking lives in the on-demand :feature_findmyphone module;
             // returns false if it was never downloaded (or the download is
             // still pending). Only burn the single-use passphrase once
-            // tracking has actually started — see SmsReceiver's identical
-            // reasoning for why burning it on a no-op trigger is a pure loss.
-            val started = FindMyPhone.trigger(applicationContext, sender = sender, source = pkg)
+            // tracking has actually started, not on a failed attempt that
+            // would leave the phone unlocked but the recovery token gone.
+            val started = FindMyPhone.trigger(applicationContext, sender = trackingRecipient, source = pkg)
             if (started) {
-                Log.d(TAG, "Passphrase trigger from '$sender' via $pkg")
+                Log.d(TAG, "Passphrase trigger accepted via $pkg")
                 recordDiag(pkg, sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
                     "Find-my-phone passphrase matched — starting tracking",
                     triggerMatched = true, extractionPath = extraction.path)
                 whitelist.clearPassphraseSync()
             } else {
-                Log.w(TAG, "Passphrase trigger from '$sender' via $pkg — module not installed yet, requesting install")
+                Log.w(TAG, "Passphrase trigger via $pkg — feature module not installed; requesting install")
                 recordDiag(pkg, sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
                     "Find-my-phone passphrase matched, but the feature module isn't installed yet — " +
                         "requesting install now. Passphrase left armed so the same message can retry.",
@@ -225,38 +228,46 @@ class NotificationListener : NotificationListenerService() {
             return
         }
 
-        // A carrier SMS is handled by SmsReceiver too. The default SMS app's
-        // notification is the duplicate of that SMS — dedupe against it. (RCS
-        // and chat apps never fire SmsReceiver, so they fall through and reply
-        // as normal; only the default SMS app's package is checked here.)
+        // The SMS broadcast receiver can optionally handle the same carrier
+        // message. Its number may appear here as a contact name, so compare
+        // against all known numbers for that name before sending a second reply.
+        // Only check the shared guard for the default SMS app; other chat apps
+        // (including RCS providers) must not be suppressed on SMS alone.
         if (isDefaultSmsApp) {
             val candidates = buildList {
                 add(sender)
-                addAll(whitelist.numbersForName(sender))
+                if (latest.verifiedContact) addAll(whitelist.numbersForName(sender))
             }
-            // Base this on the notification's sender identifier itself: when the
-            // sender is a contact *name* (no digits) we can't reliably
-            // number-match it, so the time fallback must apply even if contact
-            // resolution happened to add numbers that didn't match the SMS.
-            val hasNumber = sender.any { it.isDigit() }
-            // The coarse "did SmsReceiver handle ANY carrier trigger recently"
-            // fallback is only safe to use when there's exactly one contact
-            // *able to trigger an SMS in the first place* — otherwise "a"
-            // recent carrier trigger might belong to a DIFFERENT contact than
-            // this notification's, and we'd silently drop this sender's
-            // legitimate reply instead of just double-texting (the much safer
-            // failure mode for a safety app). Alerts-only contacts can't
-            // cause a carrier trigger at all (SmsReceiver's isWhitelisted
-            // check excludes them), so they don't count toward the ambiguity.
-            val onlyOneWhitelistedContact = whitelist.getContacts().count { it.canRequestLocation } == 1
-            val alreadyHandledViaSms = TriggerDedupe.wasRecentlyHandled(candidates) ||
-                (!hasNumber && onlyOneWhitelistedContact &&
-                    TriggerDedupe.carrierTriggerHandledWithin(SMS_NOTIF_DEDUPE_WINDOW_MS))
-            if (alreadyHandledViaSms) {
-                Log.d(TAG, "Duplicate of an SMS already handled — skipping notification from $pkg")
+            val duplicate = TriggerDedupe.wasRecentlyHandled(candidates) ||
+                (candidates.none { it.any(Char::isDigit) } &&
+                    TriggerDedupe.carrierTriggerHandledWithin(10_000L))
+            if (duplicate) {
                 recordDiag(pkg, sender, body, DiagOutcome.DUPLICATE_SUPPRESSED,
-                    "Same request already handled via SMS — not replying twice",
-                    triggerMatched = true, whitelistMatched = true, extractionPath = extraction.path)
+                    "Carrier SMS already handled by direct receiver or listener",
+                    triggerMatched = true, whitelistMatched = true,
+                    extractionPath = extraction.path)
+                return
+            }
+
+            // Prefer SMS replies when exactly one trusted dialable number matches.
+
+            val eligible = whitelist.getContacts().filter { it.canRequestLocation && it.number.isNotEmpty() }
+            val byNumber = eligible.filter { PhoneNumbers.match(sender, it.number) }
+                .map { it.number }.distinct()
+            val byName = if (latest.verifiedContact) {
+                val knownNames = whitelist.numbersForName(sender)
+                eligible.filter { entry -> knownNames.any { PhoneNumbers.match(it, entry.number) } }
+                    .map { it.number }.distinct()
+            } else emptyList()
+            val phone = (if (byNumber.isNotEmpty()) byNumber else byName).singleOrNull()
+            if (phone != null) {
+                val diagId = java.util.UUID.randomUUID().toString()
+                recordDiag(pkg, sender, body, DiagOutcome.DISPATCHED,
+                    "Trusted SMS notification — replying by SMS",
+                    id = diagId, triggerMatched = true, whitelistMatched = true,
+                    extractionPath = extraction.path)
+                TriggerDedupe.markHandled(phone)
+                LocationReplyService.startForSms(applicationContext, phone, diagId)
                 return
             }
         }
@@ -272,19 +283,16 @@ class NotificationListener : NotificationListenerService() {
             return
         }
 
-        // A notification without inline reply is not handled. Do not reserve its
-        // dedupe key before this check: the optional direct SmsReceiver must
-        // remain free to answer carrier SMS when notifications are unusable.
-        if (isDefaultSmsApp) {
-            TriggerDedupe.markHandled(sender)
-            whitelist.numbersForName(sender).forEach { TriggerDedupe.markHandled(it) }
-        }
-
         val diagId = java.util.UUID.randomUUID().toString()
         recordDiag(pkg, sender, body, DiagOutcome.DISPATCHED,
             "Trigger matched, sender whitelisted — fetching location to reply",
             id = diagId, triggerMatched = true, whitelistMatched = true,
             extractionPath = extraction.path)
+        if (isDefaultSmsApp) {
+            val candidate = if (latest.verifiedContact)
+                whitelist.numbersForName(sender).distinct().singleOrNull() else null
+            TriggerDedupe.markHandled(candidate ?: sender)
+        }
         LocationReplyService.startForNotification(
             applicationContext,
             sender = sender,
@@ -404,7 +412,7 @@ class NotificationListener : NotificationListenerService() {
                         // app itself vouches this message came from a saved
                         // contact, not an arbitrary self-declared display name
                         // an attacker could set to impersonate a whitelist entry.
-                        val verified = personName.isNotEmpty() && m.person?.uri != null
+                        val verified = personName.isNotEmpty() && (m.person?.uri != null || isDefaultSmsApp)
                         IncomingMessage(
                             sender = sender,
                             body = m.text?.toString().orEmpty(),

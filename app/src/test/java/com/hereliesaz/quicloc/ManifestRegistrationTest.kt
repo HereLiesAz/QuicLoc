@@ -62,16 +62,20 @@ class ManifestRegistrationTest {
     }
 
     @Test
-    fun `optional SMS receiver is registered and permission is declared`() {
+    fun `optional RECEIVE_SMS and SEND_SMS both declared and SMS receiver registered`() {
         val declared = pm.getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)
             .requestedPermissions?.toList().orEmpty()
-        assertTrue("Optional RECEIVE_SMS must be declared for the direct fallback",
+        assertTrue("Receive SMS is an optional user grant, not removed from the manifest",
             "android.permission.RECEIVE_SMS" in declared)
+        assertTrue("Send SMS is required for outgoing replies",
+            "android.permission.SEND_SMS" in declared)
         val info = pm.getReceiverInfo(ComponentName(context, SmsReceiver::class.java), 0)
-        assertTrue("SMS broadcast receiver must be exported", info.exported)
-        assertTrue("SMS receiver must handle carrier SMS broadcasts",
-            pm.queryBroadcastReceivers(Intent("android.provider.Telephony.SMS_RECEIVED"), 0)
-                .any { it.activityInfo.name == SmsReceiver::class.java.name })
+        assertTrue("System SMS receiver must be exported", info.exported)
+        val smsReceivers = pm.queryBroadcastReceivers(
+            Intent("android.provider.Telephony.SMS_RECEIVED"), 0
+        )
+        assertTrue("SMS broadcast receiver must be registered",
+            smsReceivers.any { it.activityInfo.name == SmsReceiver::class.java.name })
     }
 
     @Test

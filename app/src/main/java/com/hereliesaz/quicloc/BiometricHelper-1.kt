@@ -49,7 +49,7 @@ object BiometricHelper {
      *
      * This is a UI gate on the settings screen, not an unlock of a stored
      * secret — the whitelist/PIN data it protects also has to be readable by
-     * SmsReceiver/NotificationListener with no UI and no biometric session,
+     * NotificationListener with no UI and no biometric session,
      * to answer a trigger while the screen is off, so the gate can't be the
      * *only* thing standing between an attacker and that data the way a
      * CryptoObject normally implies. What a bare `authenticate(promptInfo)`

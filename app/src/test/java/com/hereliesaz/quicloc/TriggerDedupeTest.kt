@@ -38,6 +38,18 @@ class TriggerDedupeTest {
     }
 
     @Test
+    fun `carrier broadcast signal covers an unresolved SMS notification name`() {
+        TriggerDedupe.markCarrierTriggerHandled()
+        assertTrue(TriggerDedupe.carrierTriggerHandledWithin(10_000L))
+    }
+
+    @Test
+    fun `display names do not become phone-number dedupe keys`() {
+        TriggerDedupe.markHandled("trusted contact")
+        assertFalse(TriggerDedupe.wasRecentlyHandled(listOf("trusted contact")))
+    }
+
+    @Test
     fun `does not collapse two different numbers sharing only a 7-digit suffix`() {
         TriggerDedupe.markHandled("+12125550001")
         assertFalse(TriggerDedupe.wasRecentlyHandled(listOf("+17185550001")))

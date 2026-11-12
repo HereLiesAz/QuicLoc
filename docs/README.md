@@ -1,6 +1,6 @@
 # QuicLoc Documentation
 
-QuicLoc is an Android utility that lets pre-approved contacts request your GPS location by sending a trigger word over SMS or any messaging app's notifications. It responds automatically, even when the screen is off.
+QuicLoc is an Android utility that lets pre-approved contacts request your GPS location by sending a trigger word. It detects carrier SMS through optional Receive SMS or via the Notification Listener; other messaging apps require Notification Access. Replies may work with the screen off, subject to the messaging app's notification settings and Android background limits.
 
 This directory is the engineering reference. The user-facing README at the project root is the place to point users; the docs here are for anyone working on the code.
 

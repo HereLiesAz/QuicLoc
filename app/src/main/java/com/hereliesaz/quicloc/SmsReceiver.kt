@@ -7,11 +7,8 @@ import android.provider.Telephony
 import android.util.Log
 
 /**
- * Optional direct carrier-SMS fallback for `SMS_RECEIVED`.
- *
- * The preferred inbound path is [NotificationListener]. Android dispatches to
- * this receiver only after the user separately grants `RECEIVE_SMS`; that
- * permission is never requested during initial onboarding.
+ * Optional direct carrier-SMS path. Active only when RECEIVE_SMS is granted;
+ * NotificationListener remains the preferred no-RECEIVE_SMS setup.
  *
  * Responsibilities:
  *
@@ -30,8 +27,8 @@ import android.util.Log
  * delegated to a foreground service. The receiver itself returns in
  * milliseconds.
  *
- * Calling `startForegroundService` from a `BroadcastReceiver` is exempt
- * from the Android 12+ FGS background-start restrictions.
+ * Background foreground-service starts remain subject to Android platform
+ * restrictions; verify SMS wakeups on supported device versions.
  */
 class SmsReceiver : BroadcastReceiver() {
 
@@ -41,6 +38,11 @@ class SmsReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
+        // Permission is user-optional; never act on a manually delivered intent
+        // after the user has revoked direct SMS access.
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.RECEIVE_SMS
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
 
         val captureAll = AppSettings.isDiagCaptureAll(context)
         // Lazy so the EncryptedSharedPreferences / Keystore init only happens
@@ -87,7 +89,7 @@ class SmsReceiver : BroadcastReceiver() {
             // Never log the raw body of a passphrase match — it's the secret
             // itself, and Log.d output ends up in logcat/bugreports. Every
             // other body (trigger or not) is fine to log as before.
-            Log.d(TAG, if (isPassphraseTrigger) "SMS from $sender: '[passphrase redacted]'" else "SMS from $sender: '$body'")
+            if (looksLikeTrigger) Log.d(TAG, "Trigger-like carrier SMS evaluated")
 
             if (isPassphraseTrigger) {
                 // Tracking lives in the on-demand :feature_findmyphone

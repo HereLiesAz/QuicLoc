@@ -92,7 +92,7 @@ sealed class MainView {
  * Responsibilities:
  *
  *   - Biometric gate on resume ([BiometricHelper]). The background
- *     components (`SmsReceiver`, `NotificationListener`, foreground
+ *     components (`NotificationListener`, foreground
  *     services) are NOT gated — only the configuration UI.
  *   - First-launch tutorial flow (auto-shows the "Why QuicLoc?" tutorial
  *     when [WhitelistManager.isOnboardingCompleted] is false).
@@ -138,14 +138,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     private val RATIONALES: Map<String, PermissionRationale> = listOf(
         PermissionRationale(
             permission = Manifest.permission.RECEIVE_SMS,
-            title = "Receive SMS (optional backup)",
-            whatFor = "Lets QuicLoc detect incoming carrier texts directly when message " +
-                "notifications are unavailable or hide their contents.",
-            ifSkipped = "Nothing changes for requests visible through Notification Access. " +
-                "Hidden or disabled SMS notifications may prevent those requests from arriving.",
-            limits = "This access is optional and is never requested during initial setup. " +
-                "QuicLoc checks new texts for your trigger or find-my-phone passphrase; " +
-                "it does not read SMS history.",
+            title = "Receive incoming SMS",
+            whatFor = "Optional direct SMS trigger detection, without relying on your " +
+                "messaging app's notifications.",
+            ifSkipped = "You can still detect SMS with Notification Access. " +
+                "Chat apps require Notification Access regardless.",
+            limits = "Checks incoming SMS for the exact request word or armed " +
+                "find-my-phone passphrase. Does not access SMS history.",
         ),
         PermissionRationale(
             permission = Manifest.permission.SEND_SMS,
@@ -281,6 +280,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         val nextStep: String? = null,
         val confirmLabel: String,
         val skipLabel: String = "Not now",
+        val alternateLabel: String? = null,
+        val onAlternative: (() -> Unit)? = null,
         val onContinue: () -> Unit,
         val onSkip: () -> Unit,
     )
@@ -431,9 +432,9 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
         val list = mutableListOf<PermissionStatus>()
 
-        // Runtime — user-prompted on first use
+        // Both inbound options are available, but neither is forced.
+        list += runtime(Manifest.permission.RECEIVE_SMS, "Receive SMS")
         list += runtime(Manifest.permission.SEND_SMS, "Send SMS")
-        list += runtime(Manifest.permission.RECEIVE_SMS, "Receive SMS (optional backup)")
         list += runtime(Manifest.permission.ACCESS_FINE_LOCATION, "Precise Location")
         list += runtime(Manifest.permission.ACCESS_COARSE_LOCATION, "Approximate Location")
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
@@ -539,6 +540,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                     promptRuntimePermission(key) { refreshPermissionStatuses() }
                 }
             }
+            PermKeys.INCOMING_MESSAGES -> checkNotificationListenerPermission(showSmsAlternative = true)
             PermKeys.NOTIF_LISTENER -> {
                 if (isNotificationListenerEnabled()) {
                     openAppDetailsSettings()
@@ -1085,7 +1087,14 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                 }
                             },
                             confirmButton = {
-                                Button(onClick = state.onContinue) { Text(state.confirmLabel) }
+                                Row {
+                                    state.onAlternative?.let { alternative ->
+                                        TextButton(onClick = alternative) {
+                                            Text(state.alternateLabel.orEmpty())
+                                        }
+                                    }
+                                    Button(onClick = state.onContinue) { Text(state.confirmLabel) }
+                                }
                             },
                             dismissButton = {
                                 TextButton(onClick = state.onSkip) { Text(state.skipLabel) }
@@ -1638,8 +1647,9 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
     /**
      * Walks the user through every still-missing permission, one rationale
      * dialog → one system dialog at a time, in the order defined by
-     * [FIRST_LAUNCH_FLOW]. Then checks background location, then notification
-     * access. Each step is independently skippable.
+     * [FIRST_LAUNCH_FLOW]. Then checks background location, then offers
+     * the Receive SMS / Notification Access listening alternatives.
+     * Each step is independently skippable.
      */
     private fun checkPermissions() {
         val missing = FIRST_LAUNCH_FLOW.filter {
@@ -1665,12 +1675,11 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
      * Background location is requested *after* foreground location is granted,
      * via its own rationale dialog. Android 11+ sends the user to the system
      * Location Settings screen to flip "Allow all the time" — the launcher
-     * can't ask directly. Returns to [checkNotificationListenerPermission]
-     * once the result comes back, whether granted or not.
+     * can't ask directly. Then offers both incoming-message listening methods.
      */
     private fun checkBackgroundLocationPermission() {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
-            checkNotificationListenerPermission()
+            checkNotificationListenerPermission(showSmsAlternative = true)
             return
         }
         if (ContextCompat.checkSelfPermission(
@@ -1678,7 +1687,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                 Manifest.permission.ACCESS_BACKGROUND_LOCATION
             ) == PackageManager.PERMISSION_GRANTED
         ) {
-            checkNotificationListenerPermission()
+            checkNotificationListenerPermission(showSmsAlternative = true)
             return
         }
         pendingRationaleState.value = RationaleDialogState(
@@ -1705,14 +1714,14 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                             Toast.LENGTH_LONG
                         ).show()
                     }
-                    checkNotificationListenerPermission()
+                    checkNotificationListenerPermission(showSmsAlternative = true)
                 }
                 beginSystemFlow()
                 launchPermissionRequest(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
             },
             onSkip = {
                 pendingRationaleState.value = null
-                checkNotificationListenerPermission()
+                checkNotificationListenerPermission(showSmsAlternative = true)
             }
         )
     }
@@ -1724,29 +1733,57 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
      * directly — we re-check in onResume. Chains to the Full-Screen Intent
      * check after either branch.
      */
-    private fun checkNotificationListenerPermission() {
-        if (isNotificationListenerEnabled()) {
+    private fun checkNotificationListenerPermission(showSmsAlternative: Boolean = false) {
+        val notificationGranted = isNotificationListenerEnabled()
+        val receiveGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.RECEIVE_SMS
+        ) == PackageManager.PERMISSION_GRANTED
+        if ((!showSmsAlternative && notificationGranted) ||
+            (showSmsAlternative && notificationGranted && receiveGranted)) {
             checkFullScreenIntentPermission()
             return
         }
         pendingRationaleState.value = RationaleDialogState(
-            title = "Notification Access",
-            whatFor = "Extends the trigger word to WhatsApp, Telegram, Signal, Messenger and " +
-                "Google Messages — QuicLoc replies through the notification's own reply box.",
-            ifSkipped = "Chat-app requests cannot be detected. Incoming carrier SMS may still " +
-                "work if you separately granted the optional Receive SMS permission.",
-            limits = "QuicLoc reads the sender and text of incoming notifications and acts only " +
-                "when the sender is on your trusted list AND the message is exactly the trigger " +
-                "word. Nothing is logged or sent anywhere.",
-            nextStep = "The next screen is Android's Notification Access list — find QuicLoc and " +
-                "switch it on.",
-            confirmLabel = "Open Settings",
+            title = if (showSmsAlternative) "Choose how to listen for messages" else "Notification Access",
+            whatFor = if (showSmsAlternative)
+                "For incoming SMS, grant either Receive SMS or Notification Access. " +
+                    "To receive requests from WhatsApp, Signal, Telegram, Messenger and " +
+                    "other chat apps, Notification Access is required."
+            else
+                "Detects SMS and chat-app requests from visible message notifications.",
+            ifSkipped = if (receiveGranted)
+                "Incoming SMS remains available through Receive SMS. Other messaging " +
+                    "services won't work without Notification Access."
+            else if (notificationGranted)
+                "Notification Access already handles SMS and chat-app requests."
+            else
+                "Without either listening method, incoming messages cannot trigger QuicLoc.",
+            limits = "The app checks the sender and message for the exact request word or " +
+                "armed find-my-phone passphrase. Only authorized requests send location.",
+            nextStep = if (showSmsAlternative)
+                "Receive SMS opens a one-time Android permission prompt. Notification " +
+                    "Access opens Android's special-access settings. You can enable both."
+            else
+                "Android's Notification Access settings will open.",
+            confirmLabel = if (showSmsAlternative) "Notification Access" else "Open Settings",
+            alternateLabel = if (showSmsAlternative) "Receive SMS" else null,
+            onAlternative = if (showSmsAlternative) {
+                {
+                    pendingRationaleState.value = null
+                    promptRuntimePermission(Manifest.permission.RECEIVE_SMS) {
+                        checkFullScreenIntentPermission()
+                    }
+                }
+            } else null,
             onContinue = {
                 pendingRationaleState.value = null
-                beginSystemFlow()
-                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                // Queue the next dialog so it surfaces on return from Settings.
-                checkFullScreenIntentPermission()
+                if (notificationGranted) {
+                    checkFullScreenIntentPermission()
+                } else {
+                    beginSystemFlow()
+                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    checkFullScreenIntentPermission()
+                }
             },
             onSkip = {
                 pendingRationaleState.value = null
@@ -2103,14 +2140,13 @@ fun QuicLocScreen(
     val scrollState = rememberScrollState()
 
     val pinSet = currentPin.isNotBlank()
+    val receiveSmsGranted = permissionStatuses.any {
+        it.key == Readiness.PERM_RECEIVE_SMS && it.state == PermStatus.GRANTED
+    }
     // Absent from the map defaults to true (can-request) — matches
     // ContactEntry.canRequestLocation's own default for entries added before
     // this existed, or not yet reflected in this snapshot.
     val sharingCount = numbersList.count { canRequestLocationByToken[it] != false }
-    val receiveSmsGranted = permissionStatuses.any {
-        it.key == Manifest.permission.RECEIVE_SMS &&
-            (it.state == PermStatus.GRANTED || it.state == PermStatus.AUTO_GRANTED)
-    }
 
     // Enabled locations with at least one contact that actually resolves to
     // a dialable number — a location whose only selected contact is a
@@ -2387,11 +2423,12 @@ fun QuicLocScreen(
             number = sectionNo("trigger"),
             title = "The trigger word",
             subtitle = "What a trusted contact sends you",
-            statusText = when {
-                notificationAccessGranted -> "Text messages and chat apps"
-                receiveSmsGranted -> "Carrier SMS only (backup)"
-                else -> "Notification Access required"
-            },
+            statusText = if (notificationAccessGranted)
+                "SMS and chat apps"
+            else if (receiveSmsGranted)
+                "SMS only"
+            else
+                "Enable Receive SMS or Notification Access",
             statusOk = notificationAccessGranted || receiveSmsGranted,
         ) {
             Text(
@@ -2419,32 +2456,46 @@ fun QuicLocScreen(
             if (!notificationAccessGranted) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (receiveSmsGranted)
+                            MaterialTheme.colorScheme.secondaryContainer
+                        else MaterialTheme.colorScheme.errorContainer
+                    )
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
+                        val informationColor = if (receiveSmsGranted)
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        else MaterialTheme.colorScheme.onErrorContainer
                         Text(
                             text = if (receiveSmsGranted)
                                 "Chat-app requests are off"
                             else "Incoming requests are off",
                             style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer
+                            color = informationColor
                         )
                         Text(
                             text = if (receiveSmsGranted)
-                                "Optional Receive SMS allows carrier-text requests, but chat " +
-                                    "apps still need Notification Access."
+                                "Receive SMS handles ordinary texts. Notification Access " +
+                                    "is required for WhatsApp, Signal, Telegram, Messenger and other apps."
                             else
-                                "Notification Access is the preferred way to detect SMS and " +
-                                    "chat messages. Enable message notifications and previews " +
-                                    "in your messaging app, or grant optional Receive SMS " +
-                                    "under Permissions for carrier texts only.",
+                                "For SMS, enable either Receive SMS or Notification Access. " +
+                                    "Notification Access also enables other messaging services, " +
+                                    "provided they show readable message notifications.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            color = informationColor,
                             modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
                         )
+                        if (!receiveSmsGranted) {
+                            TextButton(onClick = { onPermissionAction(Manifest.permission.RECEIVE_SMS) }) {
+                                Text("Enable Receive SMS")
+                            }
+                        }
                         Button(
                             onClick = onRequestNotificationAccess,
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (receiveSmsGranted) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.error
+                            )
                         ) {
                             Text("Turn on Notification Access")
                         }
@@ -2466,12 +2517,6 @@ fun QuicLocScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Receive SMS is an optional backup in Permissions, not a setup requirement.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = "Test it: get someone on your list to text you \"loc\" — or add your own " +
@@ -3976,7 +4021,7 @@ fun DiagnosticsScreen(
     // Load + decrypt off the composition thread so navigating here never janks.
     var events by remember { mutableStateOf<List<DiagnosticEvent>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
-    // New events are written by SmsReceiver/NotificationListener/
+    // New events are written by NotificationListener/
     // LocationReplyService — all background components this screen has no
     // direct signal from. Poll while the screen is open so a trigger that
     // arrives while the user is already looking at this screen (exactly the
@@ -4187,8 +4232,8 @@ private fun StatusRow(label: String, ok: Boolean, value: String? = null) {
  * `✗` marker so they stand out.
  *
  * Data source: [RequestHistoryManager.getHistory], polled while this screen
- * is open so a request handled by a background component (SmsReceiver,
- * NotificationListener, LocationReplyService) while the user already has
+ * is open so a request handled by a background component
+ * (NotificationListener, LocationReplyService) while the user already has
  * this screen open still shows up, not just on the next navigation here.
  * Capped at 100 entries (oldest evicted on insert).
  */

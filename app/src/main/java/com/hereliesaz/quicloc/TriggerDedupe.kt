@@ -5,9 +5,9 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Process-wide guard against replying twice to the same `loc` request.
  *
- * When optional `RECEIVE_SMS` is granted, a single carrier text can arrive
- * through *both* intake paths: [SmsReceiver] (the `SMS_RECEIVED` broadcast)
- * and [NotificationListener] (the SMS app's notification). Without
+ * A single carrier SMS is delivered to QuicLoc through *both* intake paths:
+ * [SmsReceiver] (the `SMS_RECEIVED` broadcast) and [NotificationListener] (the
+ * default SMS app posts a notification for that same message). Without
  * coordination each path fetches GPS and replies independently, so the sender
  * gets two location texts.
  *
