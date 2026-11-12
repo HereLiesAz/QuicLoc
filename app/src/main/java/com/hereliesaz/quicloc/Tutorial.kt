@@ -263,7 +263,7 @@ Things to know:
 
 • There is no reset. Nobody — not us, not Google — can recover a forgotten QuicLoc PIN. If you forget it and your phone has a lock screen, you can still get in with your fingerprint and change it.
 • Removing the PIN deletes the encrypted backup along with it, because the PIN is the only key it has.
-• The background components — the SMS receiver, the notification listener, the reply service — are deliberately not gated by any of this. They answer whether the app is locked, closed, or has never been opened today.
+• The background components — the notification listener and the reply service — are deliberately not gated by any of this. They answer whether the app is locked, closed, or has never been opened today.
 """.trim(),
     )
 
