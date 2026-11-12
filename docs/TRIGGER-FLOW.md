@@ -6,7 +6,7 @@ How a single "loc" turns into a Google Maps link in the requester's hand, broken
 
 Before any path runs, `AppSettings.isEnabled(context)` is checked. When disabled:
 
-- `SmsReceiver` ignores incoming SMS.
+- Without direct SMS broadcasts, no incoming SMS is observed independently of `NotificationListener`.
 - `NotificationListener` ignores notifications.
 - `LocationReplyService` aborts non-widget intents on start.
 - Widget taps still vibrate (user-initiated) but don't send.
