@@ -257,7 +257,6 @@ class NotificationListener : NotificationListenerService() {
                     triggerMatched = true, whitelistMatched = true, extractionPath = extraction.path)
                 return
             }
-            candidates.forEach { TriggerDedupe.markHandled(it) }
         }
 
         val replyAction = findReplyAction(notification)
@@ -269,6 +268,14 @@ class NotificationListener : NotificationListenerService() {
                 triggerMatched = true, whitelistMatched = true, extractionPath = extraction.path)
             history.record(sender, pkg, succeeded = false)
             return
+        }
+
+        // A notification without inline reply is not handled. Do not reserve its
+        // dedupe key before this check: the optional direct SmsReceiver must
+        // remain free to answer carrier SMS when notifications are unusable.
+        if (isDefaultSmsApp) {
+            TriggerDedupe.markHandled(sender)
+            whitelist.numbersForName(sender).forEach { TriggerDedupe.markHandled(it) }
         }
 
         val diagId = java.util.UUID.randomUUID().toString()

@@ -61,6 +61,7 @@ Everything below has to be exercised on a real device or emulator.
 | Revoke Notification Access, grant optional Receive SMS | Carrier SMS request works via `SmsReceiver` and outgoing SMS; chat triggers do not |
 | Revoke both incoming grants | No incoming requests; outgoing widget alerts still work |
 | Grant both incoming paths | One SMS request yields one reply; verify cross-intake deduplication |
+| SMS notification has readable text but no inline Reply action, with optional Receive SMS granted | Direct SMS fallback still replies; notification path does not consume cross-path dedupe state |
 | Send `LOC`, `Loc`, `quicloc` | All trigger (case-insensitive, both keywords) |
 | Send `loc me` (extra text) | No reply (must be exact match) |
 | Send `loc` from a number NOT whitelisted | No reply |
