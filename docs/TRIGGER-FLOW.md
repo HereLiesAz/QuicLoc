@@ -2,6 +2,8 @@
 
 How a single "loc" turns into a Google Maps link in the requester's hand, broken down by trigger source.
 
+**Default:** Notification Access watches SMS/chat messages when the messaging app posts readable notification content and a usable reply action. `SmsReceiver` is an optional direct carrier-SMS backup if users manually grant `RECEIVE_SMS`; it is not requested during onboarding. The two paths share a dedupe mechanism when both are on.
+
 ## Master gate
 
 Before any path runs, `AppSettings.isEnabled(context)` is checked. When disabled:
@@ -11,7 +13,7 @@ Before any path runs, `AppSettings.isEnabled(context)` is checked. When disabled
 - `LocationReplyService` aborts non-widget intents on start.
 - Widget taps still vibrate (user-initiated) but don't send.
 
-## Path 1: SMS
+## Path 1: Optional direct carrier SMS (requires separately granted `RECEIVE_SMS`)
 
 ```
 ACTION_SMS_RECEIVED broadcast

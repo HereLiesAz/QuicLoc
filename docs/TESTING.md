@@ -48,13 +48,19 @@ Everything below has to be exercised on a real device or emulator.
 
 ## Manual test plan
 
+**Permission regression:** the merged manifest declares optional `RECEIVE_SMS` and registers `SmsReceiver`, but first-launch onboarding does not request it. Check that either inbound grant can satisfy readiness; neither grant cannot.
+
 ### 1. SMS trigger (smoke test)
 
-**Pre:** Phone A has QuicLoc installed and Phone B's number whitelisted. Both phones have SMS.
+**Pre:** Phone A has QuicLoc installed, Phone B whitelisted, and `SEND_SMS` granted. For the preferred SMS-notification path, grant Notification Access and show previews/inline reply in the SMS app. For direct carrier fallback, explicitly grant Receive SMS under QuicLoc → Permissions.
 
 | Step | Expected |
 |---|---|
 | From Phone B, send `loc` to Phone A | Phone A replies within ~10–30 s with `QuicLoc Location:\nhttps://maps.google.com/?q=…` |
+| Revoke optional Receive SMS, keep Notification Access + SMS notification previews | SMS request still works through notification inline reply |
+| Revoke Notification Access, grant optional Receive SMS | Carrier SMS request works via `SmsReceiver` and outgoing SMS; chat triggers do not |
+| Revoke both incoming grants | No incoming requests; outgoing widget alerts still work |
+| Grant both incoming paths | One SMS request yields one reply; verify cross-intake deduplication |
 | Send `LOC`, `Loc`, `quicloc` | All trigger (case-insensitive, both keywords) |
 | Send `loc me` (extra text) | No reply (must be exact match) |
 | Send `loc` from a number NOT whitelisted | No reply |
