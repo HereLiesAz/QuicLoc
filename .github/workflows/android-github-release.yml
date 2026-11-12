@@ -33,7 +33,7 @@ jobs:
           {
             echo "### Runs in HereLiesAz/workflows"
             echo
-            echo "Result: commit status `$STATUS_CONTEXT` on `$TARGET_SHA`."
+            echo "Result: commit status \`$STATUS_CONTEXT\` on \`$TARGET_SHA\`."
             echo "Central runs: $GITHUB_SERVER_URL/HereLiesAz/workflows/actions"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "Result is reported as commit status '$STATUS_CONTEXT' on $TARGET_SHA."
