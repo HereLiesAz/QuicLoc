@@ -25,10 +25,10 @@ class TrackingAlarmReceiver : BroadcastReceiver() {
         val svcIntent = Intent(context, TrackingService::class.java).apply {
             action = FindMyPhone.ACTION_TICK
         }
-        // AlarmManager-triggered broadcasts to a manifest receiver are on
-        // the Android 12+ background-FGS-start exemption allowlist — same
-        // broadcast-receiver exemption for starting background foreground
-        // services. The SMS broadcast receiver is no longer registered.
+        // The SMS broadcast receiver no longer exists. AlarmManager delivery
+        // wakes this receiver, but a broadcast alone does not guarantee an
+        // Android 12+ background FGS start exemption. Test this path on devices
+        // with battery optimisation enabled and disabled.
         context.startForegroundService(svcIntent)
     }
 }
