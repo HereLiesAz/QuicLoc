@@ -24,6 +24,7 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 
 | Permission | Why | When requested |
 |---|---|---|
+| `RECEIVE_SMS` | **Optional** direct SMS trigger reception; alternative to Notification Access for SMS only | Presented as a choice after background location; user-requested grant only |
 | `SEND_SMS` | Outgoing SMS location replies, widget alerts, Loc Notice and find-my-phone | First-launch chain |
 | `ACCESS_FINE_LOCATION` | `LocationHelper.fetchLocation` GPS fix | Same |
 | `ACCESS_COARSE_LOCATION` | Fallback when fine location unavailable | Same |
@@ -82,15 +83,15 @@ Requested from `MainActivity.autoDetectMyNumber`, through the same rationale dia
 
 ### Notification Access
 
-**Required for all incoming SMS and chat messages.** The default SMS app must post a notification containing the sender and trigger text. No `RECEIVE_SMS` permission is declared; disabled/hidden notification content means incoming requests cannot be detected. SMS notifications are read by the same `NotificationListener` used for chat apps. This is a technical behavior, not a statement that Google Play policy permits all such SMS access.
+**Required for non-SMS messaging services; optional alternative for SMS.** During setup the user is shown both *Receive SMS* and *Notification Access*; **either** lets QuicLoc listen for SMS. Only Notification Access lets QuicLoc handle WhatsApp, Signal, Telegram, Messenger and other chat apps. SMS via Notification Access requires an SMS-app notification containing the sender and trigger word. The optional `RECEIVE_SMS` path is independent of notification visibility. This is technical behavior, **not** a promise of Google Play eligibility: declaring `RECEIVE_SMS` is subject to policy review even if no user grants it.
 
 
 `android.permission.BIND_NOTIFICATION_LISTENER_SERVICE` is system-only; the user grants it via Settings → Apps → Special access → Notification access. We:
 
 - Detect grant state via `Settings.Secure.getString(contentResolver, "enabled_notification_listeners")`.
-- Show an "Incoming requests are off" card inside settings section 2 (The trigger word) with a "Turn on Notification Access" button that routes through the rationale dialog and then opens `Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS`. The same grant is offered as a required row on the setup checklist and from the Diagnostics screen.
+- Show an "Incoming requests are off" card inside settings section 2 (The trigger word) with a "Turn on Notification Access" button that routes through the rationale dialog and then opens `Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS`. The checklist offers both reception permissions separately, with one required combined listening step; Notification Access is also offered from the Diagnostics screen.
 
-Without this grant, the app still works for SMS but doesn't trigger from any chat app.
+Without this grant, SMS listening still works only if `RECEIVE_SMS` is granted; other chat apps cannot be monitored.
 
 ### Device Admin
 
@@ -130,10 +131,11 @@ The battery optimization exemption requires a Play Console disclosure — see [D
 
 | Path | Required runtime permissions | Required special access |
 |---|---|---|
+| Direct carrier-SMS trigger | RECEIVE_SMS, SEND_SMS, *_LOCATION, ACCESS_BACKGROUND_LOCATION | None; receive permission is optional if Notification Access is used instead |
 | SMS notification trigger | SEND_SMS, *_LOCATION, ACCESS_BACKGROUND_LOCATION | Notification Access and visible message notification |
 | Chat-app notification trigger | *_LOCATION, ACCESS_BACKGROUND_LOCATION; an inline reply action from the app | Notification Access and visible message content |
 | Widget tap | SEND_SMS, *_LOCATION, ACCESS_BACKGROUND_LOCATION, POST_NOTIFICATIONS | — |
-| Passphrase / find-my-phone | SEND_SMS, *_LOCATION, BACKGROUND_LOCATION, CAMERA | Notification Access for incoming trigger; Device Admin for real lock |
+| Passphrase / find-my-phone | SEND_SMS, *_LOCATION, BACKGROUND_LOCATION, CAMERA | For SMS: Receive SMS or Notification Access; for other messaging apps: Notification Access. Device Admin for real lock |
 | MMS panic photo | SEND_SMS, CAMERA | The `android-smsmms` library also pulls in `ACCESS_NETWORK_STATE`, already declared by the base for Play Services — not a new permission surface introduced by this path |
 
 ## Permissions explicitly NOT requested
@@ -149,7 +151,7 @@ The battery optimization exemption requires a Play Console disclosure — see [D
 - `READ_PHONE_STATE` — we don't need general phone/telephony state. Own-number lookup uses the
   optional `READ_PHONE_NUMBERS` runtime permission (see "Own phone number" above) with the Phone
   Number Hint API as the no-permission fallback, never `READ_PHONE_STATE`.
-- `READ_SMS`, `RECEIVE_SMS` — QuicLoc does not access the SMS database or receive carrier SMS broadcasts. Incoming SMS messages are detected only if the default SMS app posts a readable notification and the user grants Notification Access.
+- `READ_SMS` — QuicLoc never reads SMS history. `RECEIVE_SMS` **is** declared, but granting it is the user's optional alternative to Notification Access for incoming carrier SMS.
 - `WRITE_SMS` — `SmsManager.sendTextMessage` doesn't need it.
 - `WAKE_LOCK` — FGS keeps the process alive; we don't need a manual wake lock.
 - `SCHEDULE_EXACT_ALARM` / `USE_EXACT_ALARM` — `TrackingService`'s ticks are scheduled with `AlarmManager.set(ELAPSED_REALTIME_WAKEUP, ...)`, a **non-exact** wakeup alarm (see [LOCKDOWN.md](LOCKDOWN.md#ticking-alarmmanager-not-handler)) — deliberately not `setExactAndAllowWhileIdle`, so no exact-alarm permission is needed. A non-exact alarm still forces a real CPU wake during deep sleep, which is what the cadence actually needs; Doze may defer delivery into the next maintenance window by some margin rather than firing at the exact millisecond, which is an acceptable trade for a 1–5 minute tracking interval.
