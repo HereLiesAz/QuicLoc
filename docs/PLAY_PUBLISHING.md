@@ -93,7 +93,7 @@ debug APKs for sideloading.
     one copy of each. Without this fix, the feature literally could not ship — `bundleRelease` failed
     before producing an artifact at all.
   - The core SMS + location permissions stay in the base on purpose: they're driven by a
-    manifest `SmsReceiver` the system delivers broadcasts to, and the app must answer `loc` the
+    notification listener observes the SMS app notification (if message previews are enabled), and the app must answer `loc` the
     moment it's installed. `READ_CONTACTS` is not declared anywhere in the app — the "Pick from
     Contacts" button uses `Intent.ACTION_PICK`, which needs no permission (see
     [PERMISSIONS.md](PERMISSIONS.md)). The `BIND_*` signature permissions (Notification Listener,

@@ -137,18 +137,9 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
     private val RATIONALES: Map<String, PermissionRationale> = listOf(
         PermissionRationale(
-            permission = Manifest.permission.RECEIVE_SMS,
-            title = "Read incoming text messages",
-            whatFor = "Lets QuicLoc notice when a trusted contact texts you the word \"loc\".",
-            ifSkipped = "A request sent by text can never reach the app. Chat apps would still " +
-                "work, if you grant Notification Access later.",
-            limits = "QuicLoc looks at who sent the message and whether it's the trigger word. " +
-                "Nothing else is read, stored, or sent anywhere.",
-        ),
-        PermissionRationale(
             permission = Manifest.permission.SEND_SMS,
             title = "Send text messages",
-            whatFor = "Lets QuicLoc text the Google Maps link back to whoever asked.",
+            whatFor = "Lets QuicLoc text location links to chosen contacts and send SMS alerts.",
             ifSkipped = "QuicLoc can hear the request but has no way to answer it. The widget's " +
                 "parking, safety-check and emergency shortcuts also stop working.",
             limits = "Only ever sends to the person who asked, or to the contacts you picked " +
@@ -211,7 +202,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
      * user taps "Pick from Contacts".
      */
     private val FIRST_LAUNCH_FLOW: List<String> = listOf(
-        Manifest.permission.RECEIVE_SMS,
         Manifest.permission.SEND_SMS,
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.ACCESS_COARSE_LOCATION,
@@ -431,7 +421,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         val list = mutableListOf<PermissionStatus>()
 
         // Runtime — user-prompted on first use
-        list += runtime(Manifest.permission.RECEIVE_SMS, "Receive SMS")
         list += runtime(Manifest.permission.SEND_SMS, "Send SMS")
         list += runtime(Manifest.permission.ACCESS_FINE_LOCATION, "Precise Location")
         list += runtime(Manifest.permission.ACCESS_COARSE_LOCATION, "Approximate Location")
@@ -1388,7 +1377,6 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
                                     // request CAMERA and prompt for Device Admin (neither
                                     // is requestable before the split is part of the app).
                                     val needed = listOf(
-                                        Manifest.permission.RECEIVE_SMS,
                                         Manifest.permission.SEND_SMS,
                                         Manifest.permission.ACCESS_FINE_LOCATION,
                                         Manifest.permission.ACCESS_COARSE_LOCATION,
@@ -1647,14 +1635,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         }
         runPermissionChain(missing) {
             // Warn if the user skipped any critical perm — but don't block the chain.
-            val hasSms = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
-                ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
+            val hasSms = ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
             val hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
             if (!hasSms || !hasLocation) {
                 Toast.makeText(
                     this,
-                    "SMS and Location are required for QuicLoc to answer requests.",
+                    "Send SMS and Location are required for QuicLoc to answer requests.",
                     Toast.LENGTH_LONG
                 ).show()
             }
@@ -2387,10 +2374,9 @@ fun QuicLocScreen(
             statusText = if (notificationAccessGranted)
                 "Text messages and chat apps"
             else
-                "Text messages only — chat apps need Notification Access",
-            // Not a ✗: SMS-only is a perfectly working configuration, just a
-            // narrower one. Only genuinely broken states get an error mark.
-            statusOk = if (notificationAccessGranted) true else null,
+                "Notification Access required",
+            // Incoming SMS and chat requests both require Notification Access.
+            statusOk = notificationAccessGranted,
         ) {
             Text(
                 text = "They send you one of these, on its own, in any messaging app:",
@@ -2421,14 +2407,14 @@ fun QuicLocScreen(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            text = "Chat apps are off",
+                            text = "Incoming requests are off",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
                         Text(
-                            text = "Right now only plain text messages (SMS) work. Notification " +
-                                "Access is what lets QuicLoc see and answer a \"loc\" sent in " +
-                                "WhatsApp, Telegram, Signal, Messenger or Google Messages.",
+                            text = "Notification Access lets QuicLoc detect SMS and chat messages " +
+                                "through their notifications. Enable message notifications " +
+                                "and previews in your messaging app as well.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
@@ -2448,7 +2434,7 @@ fun QuicLocScreen(
                 ) {
                     Text(
                         text = "✓ Notification Access is on — WhatsApp, Telegram, Signal, " +
-                            "Messenger and friends work too. (Apps that hide message text in " +
+                            "Messenger and SMS notifications can be detected. (Apps that hide message text in " +
                             "notifications can't work: the trigger never reaches the phone.)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,

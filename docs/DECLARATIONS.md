@@ -8,20 +8,9 @@ each section below.
 
 ## 1. SMS or Call Log Permissions Declaration
 
-**Location in Play Console:** App content → Sensitive app permissions → SMS or Call Log.
+QuicLoc **does not request RECEIVE_SMS** in the Play build. Incoming SMS requests are detected through the notification listener, when the user grants Notification Access and their messaging app posts a notification containing the message text. This does not access SMS directly, and it is not guaranteed to work when notifications are muted, hidden, bundled or lack the message body.
 
-**Policy eligibility warning (2026-11-09):** Do not submit the earlier claim that the **Physical safety / emergency alerts** exception authorizes both permissions. Google's permitted-use table allows **SEND_SMS** for that exception, but **not RECEIVE_SMS**. It also explicitly lists *family or device locator* and *remote control of user phone* as invalid use cases. Choosing another exception solely to obtain approval would be inaccurate. Neither this document nor a better demo can establish eligibility for RECEIVE_SMS.
-
-**What the code actually does:**
-- `RECEIVE_SMS`: `SmsReceiver` receives carrier SMS, tests configured trigger/passphrase paths and identifies allowed senders for ordinary location requests.
-- `SEND_SMS`: `SmsSender` sends location replies and opt-in alerts (including widget and Loc Notice sends); find-my-phone also uses SMS for tracking responses.
-- The app is **not** the default SMS handler. Passive request handling while the phone is unattended cannot be reproduced by a user-initiated SMS intent.
-
-**Submission decision:** Confirm eligibility for the requested permissions with Google Play policy support *before* submitting a new declaration. In particular, there is no verified permitted-use category covering QuicLoc's passive location-triggered `RECEIVE_SMS` behavior. If Play determines this usage ineligible, ship a separate Play-compliant distribution that removes ineligible manifest permissions and the corresponding functionality; preserve the existing implementation for distribution where permitted. Never describe the app as a default SMS handler or as supporting an approved use case it does not actually implement.
-
-**If Google authorizes an eligible use case**, the declaration and supporting video must precisely describe and demonstrate that approved use case, including actual permission prompts and a request/reply test on physical devices. Do not upload a scripted demonstration that conceals the remote-trigger or anti-theft behavior.
-
-Official policy: https://support.google.com/googleplay/android-developer/answer/10208820
+QuicLoc **retains SEND_SMS** for user-configured widget alerts, trusted-contact location replies where SMS delivery is needed, Loc Notice alerts, and opt-in find-my-phone location messages. The Play Console declaration must accurately reflect these uses; retaining SEND_SMS is not automatically approved. Confirm eligibility with Play before resubmission.
 
 ---
 
@@ -35,7 +24,7 @@ Select: **Yes**
 
 **Describe what your app does with notification access and why it is necessary:**
 
-> QuicLoc uses NotificationListenerService for two purposes, both triggered only by an exact keyword match against a notification's title/body text. First, it extends the same location-sharing trigger detection SMS provides to messaging apps beyond SMS (such as WhatsApp, Telegram, and Signal): if the trigger word "loc" or "quicloc" is detected from a pre-approved contact, the app replies via the notification's built-in inline-reply action with the device's GPS location as a Google Maps link. Second, it powers the same opt-in anti-theft feature described in the SMS declaration: if the notification body is exactly `loc <passphrase>` or `quicloc <passphrase>` against the user's own configured passphrase, QuicLoc locks the device and starts sending its location back to whoever sent that message. Like the SMS path, this passphrase check is deliberately not limited to the whitelist — a locked-out owner may be texting from an app or contact QuicLoc has never seen before. (If the notification's sender can't be resolved to an actual phone number QuicLoc can reply to — some chat apps post only a display name — this second path does not fire; it logs why and does nothing further.) No notification content is stored, logged, uploaded, or transmitted anywhere except the location reply sent directly to whoever the app is responding to. Passphrase text itself is never written to logs or the in-app diagnostic history — it's redacted before either. The service does not otherwise read, record, or process notification content from any app or contact not on the user's encrypted whitelist.
+> QuicLoc uses NotificationListenerService for two purposes, both triggered only by an exact keyword match against a notification's title/body text. First, it extends the same location-sharing trigger detection provides to SMS and other messaging apps (such as WhatsApp, Telegram, and Signal): if the trigger word "loc" or "quicloc" is detected from a pre-approved contact, the app replies via the notification's built-in inline-reply action with the device's GPS location as a Google Maps link. Second, it powers the same opt-in anti-theft feature described in the SMS declaration: if the notification body is exactly `loc <passphrase>` or `quicloc <passphrase>` against the user's own configured passphrase, QuicLoc locks the device and starts sending its location back to whoever sent that message. Like the SMS path, this passphrase check is deliberately not limited to the whitelist — a locked-out owner may be texting from an app or contact QuicLoc has never seen before. (If the notification's sender can't be resolved to an actual phone number QuicLoc can reply to — some chat apps post only a display name — this second path does not fire; it logs why and does nothing further.) No notification content is stored, logged, uploaded, or transmitted anywhere except the location reply sent directly to whoever the app is responding to. Passphrase text itself is never written to logs or the in-app diagnostic history — it's redacted before either. The service does not otherwise read, record, or process notification content from any app or contact not on the user's encrypted whitelist.
 
 ---
 
