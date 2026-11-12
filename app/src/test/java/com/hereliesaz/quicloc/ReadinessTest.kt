@@ -14,7 +14,6 @@ class ReadinessTest {
 
     /** Every permission the checklist looks at, all granted. */
     private fun allGranted(): List<PermissionStatus> = listOf(
-        Readiness.PERM_RECEIVE_SMS,
         Readiness.PERM_SEND_SMS,
         Readiness.PERM_FINE_LOCATION,
         Readiness.PERM_COARSE_LOCATION,
@@ -68,17 +67,12 @@ class ReadinessTest {
     }
 
     @Test
-    fun `missing either half of SMS is one step, and points at the missing half`() {
-        val sendOnly = steps(permissions = withRevoked(Readiness.PERM_RECEIVE_SMS))
-        val smsStep = sendOnly.first { it.id == "sms" }
+    fun `sending SMS remains required without receive SMS`() {
+        val result = steps(permissions = withRevoked(Readiness.PERM_SEND_SMS))
+        val smsStep = result.first { it.id == "sms" }
         assertEquals(StepState.TODO, smsStep.state)
-        assertEquals(Readiness.PERM_RECEIVE_SMS, smsStep.actionKey)
-
-        val receiveOnly = steps(permissions = withRevoked(Readiness.PERM_SEND_SMS))
-        assertEquals(Readiness.PERM_SEND_SMS, receiveOnly.first { it.id == "sms" }.actionKey)
-
-        // Exactly one row for SMS either way — not two.
-        assertEquals(1, sendOnly.count { it.id == "sms" })
+        assertEquals(Readiness.PERM_SEND_SMS, smsStep.actionKey)
+        assertEquals(1, result.count { it.id == "sms" })
     }
 
     @Test
@@ -121,11 +115,11 @@ class ReadinessTest {
     }
 
     @Test
-    fun `notification access is recommended, never required`() {
+    fun `notification access is required for incoming messages`() {
         val steps = steps(permissions = withRevoked(PermKeys.NOTIF_LISTENER))
-        assertTrue("chat apps are nice-to-have", Readiness.isReady(steps))
-        assertEquals(1, Readiness.optionalRemaining(steps))
-        assertFalse(steps.first { it.id == "notification-access" }.required)
+        assertFalse(Readiness.isReady(steps))
+        assertEquals(1, Readiness.requiredRemaining(steps))
+        assertTrue(steps.first { it.id == "notification-access" }.required)
     }
 
     @Test
@@ -203,10 +197,10 @@ class ReadinessTest {
         // platform-specific permission should be present.
         val steps = steps(enabled = false, whitelistCount = 0, myNumber = "", permissions = emptyList(), pinSet = false)
         assertEquals(
-            listOf("enabled", "sms", "location", "whitelist", "battery"),
+            listOf("enabled", "sms", "location", "whitelist", "battery", "notification-access"),
             steps.filter { it.required }.map { it.id }
         )
-        assertEquals(5, Readiness.requiredRemaining(steps))
+        assertEquals(6, Readiness.requiredRemaining(steps))
     }
 
     // ---- dialable whitelist count -----------------------------------------
