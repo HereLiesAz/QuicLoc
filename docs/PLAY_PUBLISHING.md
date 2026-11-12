@@ -92,9 +92,10 @@ debug APKs for sideloading.
     (`libs.androidx.tracing`, `libs.guava.listenablefuture` in `gradle/libs.versions.toml`), so R8 sees
     one copy of each. Without this fix, the feature literally could not ship — `bundleRelease` failed
     before producing an artifact at all.
-  - The outgoing `SEND_SMS` and location permissions stay in the base on purpose: they're driven by a
-    notification listener observes the SMS app notification (if message previews are enabled), and the app must answer `loc` the
-    moment it's installed. `READ_CONTACTS` is not declared anywhere in the app — the "Pick from
+  - The base declares outgoing `SEND_SMS`, location, and **optional** `RECEIVE_SMS`. During
+    setup either direct SMS reception or Notification Access may satisfy incoming SMS listening.
+    Notification Access is required for non-SMS messaging services. Android users can decline
+    `RECEIVE_SMS`, but Play still evaluates it as a restricted declared permission. `READ_CONTACTS` is not declared anywhere in the app — the "Pick from
     Contacts" button uses `Intent.ACTION_PICK`, which needs no permission (see
     [PERMISSIONS.md](PERMISSIONS.md)). The `BIND_*` signature permissions (Notification Listener,
     Device Admin) were intentionally left in the base/module — see the PR discussion.
