@@ -314,7 +314,7 @@ Notes:
 
 - **FGS start from background on Android 12+.** `TrackingService` uses `foregroundServiceType="location"`
   only — the intruder photo is captured by the visible `TrackingLockActivity` (CAMERA permission, no
-  camera-typed FGS). The retired `SmsReceiver` path is not registered. `TrackingAlarmReceiver` uses an AlarmManager wakeup broadcast to restart tracking, while `NotificationListenerService` is the incoming message path and has its own background-start exemption when bound. If you see
+  camera-typed FGS). The SMS broadcast receiver is gone. `TrackingAlarmReceiver` uses an AlarmManager wakeup broadcast to restart tracking; neither an ordinary alarm broadcast nor an incoming notification guarantees an Android 12+ background foreground-service-start exemption. Runtime testing is required. If you see
   FGS-start crashes on a newer Android version, the first question is whether the *caller* of
   `startForegroundService` still qualifies for an exemption on that version.
 - **`startActivity` from a background-started Service.** Forbidden on Android 10+ without
