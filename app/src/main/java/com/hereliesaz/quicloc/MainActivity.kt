@@ -92,7 +92,7 @@ sealed class MainView {
  * Responsibilities:
  *
  *   - Biometric gate on resume ([BiometricHelper]). The background
- *     components (`SmsReceiver`, `NotificationListener`, foreground
+ *     components (`NotificationListener`, foreground
  *     services) are NOT gated — only the configuration UI.
  *   - First-launch tutorial flow (auto-shows the "Why QuicLoc?" tutorial
  *     when [WhitelistManager.isOnboardingCompleted] is false).
@@ -1719,13 +1719,13 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         }
         pendingRationaleState.value = RationaleDialogState(
             title = "Notification Access",
-            whatFor = "Extends the trigger word to WhatsApp, Telegram, Signal, Messenger and " +
-                "Google Messages — QuicLoc replies through the notification's own reply box.",
-            ifSkipped = "Only plain text messages (SMS) will work. Everything else is invisible " +
-                "to the app.",
-            limits = "QuicLoc reads the sender and text of incoming notifications and acts only " +
-                "when the sender is on your trusted list AND the message is exactly the trigger " +
-                "word. Nothing is logged or sent anywhere.",
+            whatFor = "Detects incoming SMS and chat requests through the notifications " +
+                "posted by messaging apps, including Google Messages.",
+            ifSkipped = "Incoming requests cannot be detected, including SMS. The widget " +
+                "can still send outgoing alerts.",
+            limits = "QuicLoc checks sender and text for an exact request word or armed " +
+                "find-my-phone passphrase, stores local diagnostics, and sends only " +
+                "authorized location replies.",
             nextStep = "The next screen is Android's Notification Access list — find QuicLoc and " +
                 "switch it on.",
             confirmLabel = "Open Settings",
@@ -3947,7 +3947,7 @@ fun DiagnosticsScreen(
     // Load + decrypt off the composition thread so navigating here never janks.
     var events by remember { mutableStateOf<List<DiagnosticEvent>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
-    // New events are written by SmsReceiver/NotificationListener/
+    // New events are written by NotificationListener/
     // LocationReplyService — all background components this screen has no
     // direct signal from. Poll while the screen is open so a trigger that
     // arrives while the user is already looking at this screen (exactly the
