@@ -157,9 +157,10 @@ class NotificationListener : NotificationListenerService() {
             (body == "$TRIGGER_PLAIN ${passphrase.lowercase()}" ||
              body == "$TRIGGER_PREFIXED ${passphrase.lowercase()}")
 
-        // Never log the raw body of a passphrase match — it's the secret
-        // itself, and Log.d output ends up in logcat/bugreports.
-        Log.d(TAG, if (isPassphraseTrigger) "msg from $sender via $pkg: '[passphrase redacted]'" else "msg from $sender via $pkg: '$body'")
+        // Never put message bodies (including incorrect passphrase attempts)
+        // or sender identities in logcat. Optional local diagnostics may
+        // record a limited preview when the user enables capture-all.
+        if (looksLikeTrigger) Log.d(TAG, "Trigger-like notification evaluated via $pkg")
 
         if (isPassphraseTrigger) {
             // TrackingService replies over SMS, so it needs an actual phone
@@ -167,12 +168,19 @@ class NotificationListener : NotificationListenerService() {
             // display name (no digits) with no number this app can resolve.
             // Starting tracking anyway would lock the device and burn the
             // passphrase for a reply that silently goes nowhere.
-            if (!sender.any { it.isDigit() }) {
-                Log.w(TAG, "Passphrase trigger from '$sender' via $pkg — sender has no resolvable phone number, ignoring")
+            val rawDialable = sender.matches(Regex("[+0-9() .-]+")) &&
+                PhoneNumbers.clean(sender).count { it.isDigit() } >= 7
+            // A default SMS app may display a saved contact name rather than a
+            // number. Only a unique locally configured contact number is safe.
+            val knownNumber = if (isDefaultSmsApp && latest.verifiedContact) {
+                whitelist.numbersForName(sender).distinct().singleOrNull()
+            } else null
+            val trackingRecipient = if (rawDialable) sender else knownNumber
+            if (trackingRecipient == null) {
+                Log.w(TAG, "Passphrase matched via $pkg but no dialable sender can be identified")
                 recordDiag(pkg, sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
-                    "Find-my-phone passphrase matched, but the sender \"$sender\" is a name with no " +
-                        "phone number this app can reply to — not starting tracking. Trigger from " +
-                        "SMS instead, or from an app that surfaces the sender's number.",
+                    "Find-my-phone passphrase matched but no unique reply number was available. " +
+                        "The messaging app must expose a number, or for SMS a configured unique contact.",
                     triggerMatched = true, extractionPath = extraction.path)
                 return
             }
@@ -181,15 +189,15 @@ class NotificationListener : NotificationListenerService() {
             // still pending). Only burn the single-use passphrase once
             // tracking has actually started, not on a failed attempt that
             // would leave the phone unlocked but the recovery token gone.
-            val started = FindMyPhone.trigger(applicationContext, sender = sender, source = pkg)
+            val started = FindMyPhone.trigger(applicationContext, sender = trackingRecipient, source = pkg)
             if (started) {
-                Log.d(TAG, "Passphrase trigger from '$sender' via $pkg")
+                Log.d(TAG, "Passphrase trigger accepted via $pkg")
                 recordDiag(pkg, sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
                     "Find-my-phone passphrase matched — starting tracking",
                     triggerMatched = true, extractionPath = extraction.path)
                 whitelist.clearPassphraseSync()
             } else {
-                Log.w(TAG, "Passphrase trigger from '$sender' via $pkg — module not installed yet, requesting install")
+                Log.w(TAG, "Passphrase trigger via $pkg — feature module not installed; requesting install")
                 recordDiag(pkg, sender, "[passphrase redacted]", DiagOutcome.PASSPHRASE_TRIGGER,
                     "Find-my-phone passphrase matched, but the feature module isn't installed yet — " +
                         "requesting install now. Passphrase left armed so the same message can retry.",
