@@ -62,13 +62,11 @@ class ManifestRegistrationTest {
     }
 
     @Test
-    fun `SmsReceiver is registered`() {
-        val info = pm.getReceiverInfo(
-            ComponentName(context, SmsReceiver::class.java),
-            0
-        )
-        assertNotNull(info)
-        assertTrue("SmsReceiver must be exported for the system SMS broadcast", info.exported)
+    fun `notification listener replaces the carrier SMS receiver`() {
+        val declared = pm.getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)
+            .requestedPermissions?.toList().orEmpty()
+        assertTrue("RECEIVE_SMS must not be declared",
+            "android.permission.RECEIVE_SMS" !in declared)
     }
 
     @Test
