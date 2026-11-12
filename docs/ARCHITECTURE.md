@@ -6,6 +6,7 @@
                  ┌───────────────────────┐
                  │      Trigger source   │
                  │ ──────────────────── │
+                 │  SmsReceiver (opt.)  │
                  │  NotificationListener│
                  │  Widget (1/2/3/4 tap)│
                  └──────────┬────────────┘
@@ -45,7 +46,8 @@
 
 | Component | File | Purpose |
 |---|---|---|
-| `NotificationListener` | [NotificationListener.kt](../app/src/main/java/com/hereliesaz/quicloc/NotificationListener.kt) | Single inbound path for SMS and chat notifications. Parses sender/body, applies whitelist, dedupes repeated posts; SMS replies use `SmsManager` for an unambiguous trusted number, otherwise RemoteInput. |
+| `SmsReceiver` | [SmsReceiver.kt](../app/src/main/java/com/hereliesaz/quicloc/SmsReceiver.kt) | Optional carrier SMS receiver. Active only when `RECEIVE_SMS` is user-granted; shares duplicate-suppression state with notification listener. |
+| `NotificationListener` | [NotificationListener.kt](../app/src/main/java/com/hereliesaz/quicloc/NotificationListener.kt) | Alternative inbound path for SMS and the required path for chat notifications. Parses sender/body, applies whitelist, dedupes repeated posts; SMS replies use `SmsManager` for an unambiguous trusted number, otherwise RemoteInput. |
 | `QuicLocWidgetProvider` | [QuicLocWidgetProvider.kt](../app/src/main/java/com/hereliesaz/quicloc/QuicLocWidgetProvider.kt) | Home-screen widget. Each tap fires `LocationReplyService.ACTION_WIDGET_TAP`; the service counts taps within 400 ms. |
 | `ToggleReceiver` | [ToggleReceiver.kt](../app/src/main/java/com/hereliesaz/quicloc/ToggleReceiver.kt) | The "Enable/Disable" action button on the reminder notification. |
 | `BootReceiver` | [BootReceiver.kt](../app/src/main/java/com/hereliesaz/quicloc/BootReceiver.kt) | Re-posts the reminder notification after reboot, re-registers Loc Notice's geofences (they don't survive reboot), and calls `FindMyPhone.resumeTrackingAfterBoot` to resume an in-progress find-my-phone tracking session (neither `START_STICKY` nor the `TrackingAlarmReceiver` alarm survives an actual reboot — see [LOCKDOWN.md](LOCKDOWN.md#service-persistence)). |
@@ -96,8 +98,8 @@
 
 See [TRIGGER-FLOW.md](TRIGGER-FLOW.md) for the step-by-step. Quick summary:
 
-1. **SMS or chat notification trigger.** `NotificationListener` (requires Notification Access and visible message notification) → `WhitelistManager.isWhitelistedByName` with trusted sender verification → for a default SMS app and exactly one matching trusted number, `LocationReplyService.startForSms`; otherwise, if an inline-reply action is available, `LocationReplyService.startForNotification` → `LocationHelper` → `SmsManager` or `Notification.Action.actionIntent`.
-2. **Passphrase trigger** (any number — deliberately not whitelist-gated). `NotificationListener` → `FindMyPhone.trigger(...)` (starts the `TrackingService` in the on-demand `:feature_findmyphone` module by `ComponentName`; returns `false` and starts nothing if the module isn't installed) → only on success, `WhitelistManager.clearPassphraseSync()` (burning the single-use passphrase; on failure `FindMyPhone.requestInstall(...)` is kicked off instead and the passphrase is left armed for a retry) → `claimForeground()` + `engageLockdown()` (`LockdownController.lockNow()` — `DevicePolicyManager.lockNow()` if admin, else cover-screen Activity + full-screen-intent notification) → `AlarmManager`-driven 5-min interval location updates (1-min in panic mode) until the user enters the PIN.
+1. **SMS or chat trigger.** `SmsReceiver` handles carrier SMS when `RECEIVE_SMS` is granted; otherwise SMS arrives through `NotificationListener` when Notification Access and message previews are enabled. The two paths share `TriggerDedupe`. For notifications: `NotificationListener` (requires Notification Access and visible message notification) → `WhitelistManager.isWhitelistedByName` with trusted sender verification → for a default SMS app and exactly one matching trusted number, `LocationReplyService.startForSms`; otherwise, if an inline-reply action is available, `LocationReplyService.startForNotification` → `LocationHelper` → `SmsManager` or `Notification.Action.actionIntent`.
+2. **Passphrase trigger** (any number — deliberately not whitelist-gated). `SmsReceiver` or `NotificationListener` → `FindMyPhone.trigger(...)` (starts the `TrackingService` in the on-demand `:feature_findmyphone` module by `ComponentName`; returns `false` and starts nothing if the module isn't installed) → only on success, `WhitelistManager.clearPassphraseSync()` (burning the single-use passphrase; on failure `FindMyPhone.requestInstall(...)` is kicked off instead and the passphrase is left armed for a retry) → `claimForeground()` + `engageLockdown()` (`LockdownController.lockNow()` — `DevicePolicyManager.lockNow()` if admin, else cover-screen Activity + full-screen-intent notification) → `AlarmManager`-driven 5-min interval location updates (1-min in panic mode) until the user enters the PIN.
 
 Loc Notice is not request-driven and runs separately from all three paths above — see [LOC-NOTICE-FLOW.md](LOC-NOTICE-FLOW.md): `GeofenceRegistrar` registers named places with `GeofencingClient`; `GeofenceBroadcastReceiver` fires on a crossing and texts the configured contacts directly, with no incoming message involved.
 
