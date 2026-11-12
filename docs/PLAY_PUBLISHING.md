@@ -1,20 +1,16 @@
 # Play Store publishing (signed AAB)
 
-QuicLoc publishes to Google Play as a **signed Android App Bundle (`.aab`)**, built and
-uploaded by the [`release-play.yml`](../.github/workflows/release-play.yml) workflow. The
-GitHub-Releases APK pipeline (`build-apk.yml` / `ci-cd.yml`) is unchanged and still produces
-debug APKs for sideloading.
+QuicLoc uses **the generalized release executors in [HereLiesAz/workflows](https://github.com/HereLiesAz/workflows)**, not repository-specific release jobs. QuicLoc's own [Android Play Release](../.github/workflows/android-play-release.yml) and [Android GitHub Release](../.github/workflows/android-github-release.yml) files are short *trackers*; they do not build, publish or dispatch anything. Signed AABs and GitHub universal APKs are built centrally from the triggering QuicLoc commit.
+
+The central registry entry is `HereLiesAz/workflows/registry/1177478037/manifest.json`; its Play and GitHub sources preserve the original trigger contracts. The publisher profiles in `HereLiesAz/workflows/scripts/semantic_catalog.py` supply QuicLoc's signing, build and artifact paths.
 
 ## TL;DR
 
-- Local signed bundle: create `keystore.properties` (below) and run `./gradlew bundleRelease`.
-- CI: **automatic.** Publishing a GitHub release publishes to Play — the Play job is chained
-  onto the release job (`needs:`), so the sideload APK goes out first and Play follows. It
-  builds a signed `.aab`, **rolls it out on internal testing**, and stages the **same bundle
-  as a draft** on closed testing, open testing and production. Nothing reaches the public
-  until you promote one of those drafts.
-- Both release paths chain it: **Build and Publish QuicLoc APK** (`workflow_dispatch`) and
-  **CI/CD** on a `v*` tag. **Release to Play** can also still be run on its own.
+- **Play:** A push to `main` builds a signed AAB. On successful Play approval/API submission, it publishes on internal testing and stages alpha, beta and production as drafts. Manual dispatch defaults to **build-only** unless `publish` is set.
+- **GitHub:** Push a `v*` tag or dispatch the GitHub Release tracker. The central publisher builds a signed AAB, then uses QuicLoc's existing bundletool action to produce a **fused universal APK** including `:feature_findmyphone`.
+- **Signing:** Central executors use the project-verified local `.github/actions/android-keystore` and `verify-android-signature` actions, with signing secrets from the QuicLoc environment of `HereLiesAz/workflows`.
+- **Version:** `app/version.properties` remains authoritative. The central version tool observes Play's versionCode floor, and the Gradle build performs its existing version increment.
+- **Play blocker:** The app still declares optional `RECEIVE_SMS`. Google Play's restricted-permission policy may reject the bundle. A passing CI build does **not** establish Play policy eligibility.
 
 ## Why AAB (and what about modular delivery)
 
@@ -60,7 +56,7 @@ debug APKs for sideloading.
     bundletool's **universal mode** (`build-apks --mode=universal`, wrapped as the composite action
     [`.github/actions/build-universal-apk`](../.github/actions/build-universal-apk/action.yml)), which
     reads `dist:fusing` itself and produces one signed APK with every fusing-marked module folded in.
-    `ci-cd.yml` and `build-apk.yml` both build the AAB then hand it to this action to produce the
+    The centralized Android GitHub Release executor builds the AAB then uses this action to produce the
     GitHub-Release APK — see "Sideload APK build" below. The Play **AAB** path was never affected by
     this bug: it keeps the module on-demand, downloaded via `SplitInstall` during find-my-phone setup.
   - **Setup is install-first.** Device Admin and `CAMERA` are only grantable *after* the module is
@@ -105,8 +101,7 @@ debug APKs for sideloading.
 
 ### Sideload APK build (GitHub Releases)
 
-The APK attached to a GitHub Release is **not** `assembleRelease`'s output. Both `ci-cd.yml` (on a `v*`
-tag) and `build-apk.yml` (`workflow_dispatch`) instead:
+The GitHub Release APK is **not** `assembleRelease`'s output. The shared Android GitHub Release executor (on a `v*` tag or manual dispatch) instead:
 
 1. `./gradlew bundleRelease` — build the signed `.aab`, which already contains every module correctly.
 2. Run [`.github/actions/build-universal-apk`](../.github/actions/build-universal-apk/action.yml), which
@@ -148,7 +143,7 @@ cannot read secrets at all.
 
 ### How the keystore reaches the build
 
-Two composite actions do this work, so all three workflows behave identically:
+QuicLoc's existing composite actions are invoked by both central release executors:
 
 - **`.github/actions/android-keystore`** materialises the keystore, then proves it is the right one
   *before* anything is signed. It accepts the keystore whole (`KEYSTORE_RAW`, base64 or raw; JKS,
@@ -184,80 +179,22 @@ keytool -genkeypair -v -keystore upload.jks -alias upload \
 
 Then `./gradlew bundleRelease` → signed bundle at `app/build/outputs/bundle/release/app-release.aab`.
 
-## versionCode
+## versionCode and versionName
 
-`versionCode`/`versionName` are driven **solely by `app/version.properties`** (`A.B.C.D`) — it is the
-single source of truth. `versionCode = VERSION_D`, `versionName = A.B.C.D`. The counter
-auto-increments on `assemble*`/`bundle*` (and writes `version.properties` back); no other task bumps
-it. **There is no `-PversionBuild` override and no offset** — CI builds use exactly what
-`version.properties` says.
+QuicLoc's authoritative version file is **`app/version.properties`**, with `VERSION_A`, `VERSION_B`, `VERSION_C` and `VERSION_D`. The Android Gradle build uses `VERSION_D` as the versionCode and `A.B.C.D` as the versionName. On each `assemble*` or `bundle*` task, it increments both `VERSION_C` and `VERSION_D` exactly once.
 
-To set the version, edit `app/version.properties` directly (e.g. bump `VERSION_D`) and commit it.
+The central publisher's Android version action reads this file, compares `VERSION_D` with the highest versionCode held by Google Play, and selects the next available code. For QuicLoc only, the build profile temporarily seeds `VERSION_D` to one below that code, allowing Gradle's own increment to produce the intended value. After successful release, the central action records the published `VERSION_C` and `VERSION_D` back to `app/version.properties` on `main`. It does not create a competing root `version.properties`.
 
-> **Play requires a strictly increasing `versionCode`.** Whatever `VERSION_D` you ship must be higher
-> than the highest code Google Play has already accepted for the app. If a release is rejected with
-> `Version code N has already been used`, raise `VERSION_D` in `version.properties` above that number
-> and commit it.
+Play requires strictly increasing versionCodes, including drafts and previously uploaded bundles. An obsolete historical `+1000` offset is not reintroduced. The file's current code is recomputed by the central version action before each publishing build.
 
-### Two ways this bites, and what the workflow does about it
+## Running the centralized workflows
 
-A `versionCode` that is **equal** to one Play has seen is rejected at upload with a message that says
-so: *"Version code N has already been used."* A `versionCode` that is merely **lower** than the live
-one is accepted at upload and then rejected at rollout with something far less obvious:
+The actual builders are [Android GitHub Release](https://github.com/HereLiesAz/workflows/blob/main/.github/workflows/android-github-release.yml) and [Android Play Release](https://github.com/HereLiesAz/workflows/blob/main/.github/workflows/android-play-release.yml).
 
-> You cannot rollout this release because it does not allow any existing users to upgrade to the
-> newly added APKs.
+- **Play:** A push to QuicLoc `main` starts the registered central Play workflow. Its manual `publish` input defaults to false. Internal is completed and alpha/beta/production are drafts when published.
+- **GitHub:** A push of a QuicLoc tag matching `v*`, or a manual dispatch, starts the registered GitHub release workflow. The signed, bundletool-fused universal APK is published with its exact version in the asset name.
 
-That is a version-code problem wearing a disguise — nobody on the higher code can "upgrade" to a
-lower one. It is easy to hit after any change to how the code is computed. This repo has hit it
-once already: Play held `255` from an early manual upload, a `+1000` offset was added to clear it
-(uploads went out at ~`1193`), and when the offset was later removed in favour of `version.properties`
-the counter dropped back to the 250s — below what was already live.
-
-The publish workflow now asks Play directly rather than assuming:
-
-1. **Preflight** lists every bundle and APK Play holds and records the highest `versionCode`.
-2. **Before building**, it compares that against what `version.properties` would produce. In `auto`
-   (the default, and what the chained callers use) `VERSION_D` is raised to Play's highest so the
-   build produces *that + 1* — which cannot collide however far behind the file is. In `strict` it
-   fails instead, naming the value to set.
-3. **After building**, it re-checks the actual built code and refuses to upload if it can't clear
-   Play.
-4. **After publishing**, it **commits the consumed `versionCode` back to `main`** (`chore:
-   versionCode N shipped to Play [skip ci]`). The build increments the counter on the runner only, so
-   without this the file is stale the moment anything ships, and the next run would rebuild a number
-   Play has already used. The commit is deliberately non-fatal — the bundle is published by then, so a
-   protected branch or a push race must not turn a successful release red. It retries three times, and
-   if it still can't push it says exactly what to set by hand.
-
-Between (2) and (4), a stale `version.properties` can no longer block a release *or* silently repeat
-a number: `auto` reads the floor from Play, and the commit-back makes the repo catch up.
-`version.properties` also ships alongside the `.aab` artifact.
-
-## Running the workflow
-
-Usually you don't: publishing a GitHub release triggers it. Either
-
-- **Actions → "Build and Publish QuicLoc APK" → Run workflow** — signed APK to a GitHub
-  release, then Play; or
-- **push a `v*` tag** — CI/CD builds the signed APK + AAB, attaches them to a GitHub release,
-  then Play.
-
-In both cases the Play publish is a separate job with `needs:` on the one that published the
-release, so it cannot run first. (A release created by a workflow using the default
-`GITHUB_TOKEN` does not itself trigger other workflows, which is why the chaining is explicit
-rather than a `release: published` trigger.)
-
-To run it alone: **Actions → "Release to Play" → Run workflow**. Inputs — the chained callers
-pass `publish: true` and `version_code_mode: auto`:
-
-| Input     | Default    | Meaning |
-|-----------|------------|---------|
-| `publish` | `true`     | **on** = build, upload to Play, roll out on internal, draft everywhere else; **off** = build + upload the `.aab` as a workflow artifact only, Play untouched |
-| `completed_tracks` | `internal` | Track(s) that actually get rolled out, space-separated — `internal alpha` rolls the same bundle out on both |
-| `draft_tracks` | `alpha beta production` | Tracks that get the *same* bundle staged as a draft, space-separated. A track Play refuses is warned about and skipped. A track also named in `completed_tracks` is rolled out instead of drafted |
-| `release_notes` | empty | Optional en-US release notes attached to every track's release |
-| `version_code_mode` | `auto` | `auto` = take the next code after whatever Play holds, so a stale `version.properties` can't block a release; `strict` = use `version.properties` exactly and fail if Play is ahead |
+The QuicLoc Actions tracker merely points to the central commit status. GitHub reports the real build result on the triggering commit; success of the short tracker itself is not evidence that publishing succeeded.
 
 ### One upload, every track
 
@@ -310,8 +247,7 @@ Failure behaviour is deliberate:
   deleted without being committed. A completed track missing the version is fatal; a draft track
   missing it is a warning.
 
-The workflow verifies the bundle's signature itself before the artifact is uploaded, and fails if it
-is unsigned or signed by an unexpected certificate — so a green run means a correctly signed bundle.
+The central publisher invokes QuicLoc's signature verification composite action before uploading a bundle, and fails if the signing certificate does not match the expected signing key.
 To check by hand anyway:
 
 ```bash
@@ -319,6 +255,8 @@ jarsigner -verify -verbose -certs app-release.aab   # or: bundletool validate --
 ```
 
 ## Required GitHub secrets
+
+Configure these in the **QuicLoc environment of `HereLiesAz/workflows`**, where both central jobs execute. The local actions use the same secret names; there is no separate release implementation in QuicLoc.
 
 | Secret | Purpose |
 |--------|---------|
@@ -361,8 +299,7 @@ Optional, only needed if you would rather store the key material split up than a
    Download its JSON key and store it as `PLAY_SERVICE_ACCOUNT_JSON`.
 4. **First release must be manual.** For a brand-new app, the very first `.aab` has to be
    uploaded **by hand** in the Play Console once (create the app + first internal release)
-   before the API is allowed to publish subsequent builds. After that, `release-play.yml`
-   handles uploads.
+   before the API is allowed to publish subsequent builds. After that, the central Android Play Release workflow handles uploads.
 
 ## Data safety / privacy
 
