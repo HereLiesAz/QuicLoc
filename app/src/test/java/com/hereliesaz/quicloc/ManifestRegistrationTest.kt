@@ -62,16 +62,20 @@ class ManifestRegistrationTest {
     }
 
     @Test
-    fun `notification listener replaces the carrier SMS receiver`() {
+    fun `optional RECEIVE_SMS and SEND_SMS both declared and SMS receiver registered`() {
         val declared = pm.getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)
             .requestedPermissions?.toList().orEmpty()
-        assertTrue("RECEIVE_SMS must not be declared",
-            "android.permission.RECEIVE_SMS" !in declared)
+        assertTrue("Receive SMS is an optional user grant, not removed from the manifest",
+            "android.permission.RECEIVE_SMS" in declared)
+        assertTrue("Send SMS is required for outgoing replies",
+            "android.permission.SEND_SMS" in declared)
+        val info = pm.getReceiverInfo(ComponentName(context, SmsReceiver::class.java), 0)
+        assertTrue("System SMS receiver must be exported", info.exported)
         val smsReceivers = pm.queryBroadcastReceivers(
             Intent("android.provider.Telephony.SMS_RECEIVED"), 0
         )
-        assertTrue("No QuicLoc receiver may consume SMS_RECEIVED broadcasts",
-            smsReceivers.none { it.activityInfo.packageName == context.packageName })
+        assertTrue("SMS broadcast receiver must be registered",
+            smsReceivers.any { it.activityInfo.name == SmsReceiver::class.java.name })
     }
 
     @Test
