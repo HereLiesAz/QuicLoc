@@ -234,7 +234,8 @@ class NotificationListener : NotificationListenerService() {
             val byNumber = eligible.filter { PhoneNumbers.match(sender, it.number) }
                 .map { it.number }.distinct()
             val byName = if (latest.verifiedContact) {
-                eligible.filter { it.name?.trim().equals(sender, ignoreCase = true) }
+                val knownNames = whitelist.numbersForName(sender)
+                eligible.filter { entry -> knownNames.any { PhoneNumbers.match(it, entry.number) } }
                     .map { it.number }.distinct()
             } else emptyList()
             val phone = (if (byNumber.isNotEmpty()) byNumber else byName).singleOrNull()
