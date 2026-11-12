@@ -2456,15 +2456,22 @@ fun QuicLocScreen(
             if (!notificationAccessGranted) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (receiveSmsGranted)
+                            MaterialTheme.colorScheme.secondaryContainer
+                        else MaterialTheme.colorScheme.errorContainer
+                    )
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
+                        val informationColor = if (receiveSmsGranted)
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        else MaterialTheme.colorScheme.onErrorContainer
                         Text(
                             text = if (receiveSmsGranted)
                                 "Chat-app requests are off"
                             else "Incoming requests are off",
                             style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer
+                            color = informationColor
                         )
                         Text(
                             text = if (receiveSmsGranted)
@@ -2475,7 +2482,7 @@ fun QuicLocScreen(
                                     "Notification Access also enables other messaging services, " +
                                     "provided they show readable message notifications.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            color = informationColor,
                             modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
                         )
                         if (!receiveSmsGranted) {
@@ -2485,7 +2492,10 @@ fun QuicLocScreen(
                         }
                         Button(
                             onClick = onRequestNotificationAccess,
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (receiveSmsGranted) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.error
+                            )
                         ) {
                             Text("Turn on Notification Access")
                         }
