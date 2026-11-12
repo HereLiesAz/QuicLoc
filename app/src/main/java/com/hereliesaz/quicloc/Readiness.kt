@@ -103,8 +103,8 @@ object Readiness {
      *   phone number. Defaults to [whitelistCount] for callers (and tests)
      *   that don't distinguish, but real callers should pass the true count:
      *   a whitelist made up entirely of name-only entries can never satisfy
-     *   an SMS trigger (SmsReceiver only number-matches) or the widget's SMS
-     *   fan-out, so it should not be reported as "done".
+     *   a notification-only SMS trigger without visible sender information, or
+     *   the widget's SMS fan-out, so it should not be reported as "done".
      * @param locNoticeEnabled Whether the separate Loc Notice master toggle
      *   is on. Loc Notice gets no "turn it on" row of its own — like
      *   find-my-phone, it's an opt-in feature that isn't penalized for being
@@ -221,9 +221,8 @@ object Readiness {
         steps += SetupStep(
             id = "battery",
             title = "Exempt QuicLoc from battery optimisation",
-            detail = "Android puts sleeping apps on ice; a request that arrives while QuicLoc is " +
-                "asleep can be missed entirely. QuicLoc does no background work of its own, so " +
-                "the exemption costs you nothing.",
+            detail = "Background restrictions can delay request handling. Optional " +
+                "Loc Notice and find-my-phone use additional background work when enabled.",
             state = if (granted(PermKeys.BATTERY)) StepState.DONE else StepState.TODO,
             required = true,
             actionKey = PermKeys.BATTERY,
@@ -247,7 +246,7 @@ object Readiness {
             )
         }
 
-        // ---- Recommended, not required -------------------------------------
+        // ---- Notification Access required; remaining setup optional ----
 
         steps += SetupStep(
             id = "notification-access",

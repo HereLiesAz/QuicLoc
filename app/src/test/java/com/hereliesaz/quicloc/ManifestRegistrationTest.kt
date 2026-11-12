@@ -67,6 +67,11 @@ class ManifestRegistrationTest {
             .requestedPermissions?.toList().orEmpty()
         assertTrue("RECEIVE_SMS must not be declared",
             "android.permission.RECEIVE_SMS" !in declared)
+        val smsReceivers = pm.queryBroadcastReceivers(
+            Intent("android.provider.Telephony.SMS_RECEIVED"), 0
+        )
+        assertTrue("No QuicLoc receiver may consume SMS_RECEIVED broadcasts",
+            smsReceivers.none { it.activityInfo.packageName == context.packageName })
     }
 
     @Test

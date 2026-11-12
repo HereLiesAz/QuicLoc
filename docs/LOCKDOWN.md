@@ -37,17 +37,10 @@ and photograph the owner with no way back in.
 
 ## Activation
 
-The passphrase fires when any incoming SMS or messaging-app notification body equals `"loc <passphrase>"`
-or `"quicloc <passphrase>"`, **regardless of whitelist**. This is intentional, not an oversight: it is
-the only place QuicLoc accepts a trigger from a non-whitelisted number, on the assumption your phone has
-been stolen, you're texting from a friend's, and the passphrase — not your number — is your proof of
-identity. `NotificationListener` additionally requires the notification's sender to contain at least one
-digit before triggering; a chat app's display-name-only "sender" has no phone number QuicLoc could reply
-to, so triggering on one would lock the device and start "tracking" that silently replies to nobody. SMS
-triggers are unaffected — a raw phone number is always present there.
+The passphrase fires when a **visible SMS or chat-app notification** contains exactly `"loc <passphrase>"` or `"quicloc <passphrase>"`, regardless of the whitelist. The user must grant Notification Access. Incoming carrier SMS broadcasts are not registered. The sender must have a usable phone number for location updates. A default SMS app's saved contact name can be mapped to a number only if exactly one match exists among contacts configured in QuicLoc. An unresolvable or ambiguous name cannot start tracking. A suppressed or private-content notification cannot trigger find-my-phone.
 
 ```
-trigger detected (SmsReceiver / NotificationListener)
+trigger detected (NotificationListener)
    │
    ▼
 FindMyPhone.trigger(context, sender, source)
@@ -321,12 +314,7 @@ Notes:
 
 - **FGS start from background on Android 12+.** `TrackingService` uses `foregroundServiceType="location"`
   only — the intruder photo is captured by the visible `TrackingLockActivity` (CAMERA permission, no
-  camera-typed FGS). `SmsReceiver` calling `startForegroundService` from a `BroadcastReceiver.onReceive`
-  is on the Android 12+ background-FGS-start exemption allowlist (see `SmsReceiver`'s own class doc), and
-  `TrackingAlarmReceiver`'s `onReceive` → `startForegroundService` call is exempt for the identical
-  reason — a manifest-registered `BroadcastReceiver` reacting to a broadcast, in both cases. Both are the
-  same shape, so if one is exempt the other is too; there's no remaining hedge about `SmsReceiver` here.
-  `NotificationListenerService` gets its own background-start exemption while bound. If you see
+  camera-typed FGS). The SMS broadcast receiver is gone. `TrackingAlarmReceiver` uses an AlarmManager wakeup broadcast to restart tracking; neither an ordinary alarm broadcast nor an incoming notification guarantees an Android 12+ background foreground-service-start exemption. Runtime testing is required. If you see
   FGS-start crashes on a newer Android version, the first question is whether the *caller* of
   `startForegroundService` still qualifies for an exemption on that version.
 - **`startActivity` from a background-started Service.** Forbidden on Android 10+ without

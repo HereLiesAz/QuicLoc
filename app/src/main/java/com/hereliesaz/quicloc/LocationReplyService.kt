@@ -29,7 +29,7 @@ import java.util.concurrent.ConcurrentHashMap
  *   conditions. A foreground service has no such time limit and survives as
  *   long as needed (up to our own 60-second timeout), then stops itself.
  *
- * Started by SmsReceiver, NotificationListener, and the home-screen widget.
+ * Started by NotificationListener and the home-screen widget.
  * Stops itself once a reply is sent or the timeout is reached.
  */
 class LocationReplyService : Service() {
@@ -119,7 +119,7 @@ class LocationReplyService : Service() {
     // something else I started is still running" -- it only knows about the
     // single most-recent start request delivered to onStartCommand. Multiple
     // triggers can land on the SAME running service instance (e.g. a widget
-    // tap arriving while an earlier SMS-triggered fetch is still in flight,
+    // tap arriving while an earlier notification-triggered fetch is still in flight,
     // or two overlapping widget tap bursts), so every exit path goes through
     // maybeStopSelf() instead of calling stopSelf(startId) directly.
     private val activeOperations = java.util.concurrent.atomic.AtomicInteger(0)

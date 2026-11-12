@@ -27,7 +27,7 @@ The app has a live checklist at the top of its settings screen that tracks all o
 | # | Step | Why it matters |
 |---|---|---|
 | 1 | **Turn QuicLoc on** | The master switch, first thing on the settings screen. While it's off, every trigger is ignored. |
-| 2 | **Grant text messages + location** | QuicLoc reads incoming texts to spot the trigger word, and texts back a maps link. |
+| 2 | **Enable Notification Access, Send SMS and location** | Notification Access detects message triggers; Send SMS delivers alerts and replies. No direct incoming-SMS permission. |
 | 3 | **Set location to "Allow all the time"** | *The step people miss.* Android asks twice. "While using the app" means QuicLoc can only answer while you're looking at it — which defeats the point. |
 | 4 | **Add at least one emergency contact** | Nobody else can trigger anything. An empty list means QuicLoc ignores the entire world. |
 
@@ -35,7 +35,7 @@ Then **test it**: have someone on your list text you `loc`. A Google Maps link s
 
 ### Worth doing next
 
-- **Notification Access** — extends the trigger to WhatsApp, Telegram, Signal, Messenger and Google Messages. Without it, only plain text messages work.
+- **Enable message previews** — SMS and chat requests only work when the messaging app posts a readable notification; hidden, silenced, or bundled notifications may prevent detection.
 - **Battery optimisation exemption** — so a request at 3am isn't slept through. QuicLoc does no background work, so this costs no battery.
 - **Your own number + the home-screen widget** — for the safety-check / emergency / parking shortcuts below.
 
@@ -68,7 +68,7 @@ Settings are grouped by function, one numbered section each, so nothing lives so
 
 - **Answers automatically** — no prompt, no ring, no tap. Works with the screen off and the app closed.
 - **Emergency contacts only** — anyone not on your list is ignored silently; they're never told the app exists. Every contact gets the widget's safety-check and emergency alerts; you separately choose which of them, if any, can also request your location themselves by texting the trigger word.
-- **Works across messaging apps** — SMS always; WhatsApp, Telegram, Signal, Google Messages, Messenger and any app with an inline notification reply once Notification Access is granted.
+- **Works across messaging apps** — SMS and chat triggers require Notification Access plus visible message content. SMS replies use `SEND_SMS` for a uniquely identified trusted number; other chats use inline notification replies.
 - **Home screen widget** — tap it three times for a safety check to up to 3 starred contacts (`#SafetyCheck`), four times for an emergency alert to everyone on your list (`#Emergency`), or twice to just text your own location to yourself, e.g. to find a parked car (`#Parking`). One tap opens a help screen showing which of those are ready to use. Taps must land within about half a second of each other.
 - **Master on/off switch** — pauses every trigger without uninstalling. Optionally mirrored in a persistent notification with a one-tap toggle.
 - **Loc Notice** — passive, Life360-style place alerts: name a location, pick who gets told, and chosen contacts get a text the moment you arrive or leave — no request needed. A separate master switch from the one above, since passive background watching is a different privacy trade-off from answering when asked. Defining a place never touches a Maps/Places API or needs a billing account — you type an address, confirm it in the Maps app, and copy its coordinates back.
@@ -89,7 +89,7 @@ In order of how often each one is the cause:
 1. **The sender isn't on your list — or is listed differently than they appear.** Texts arrive as a phone number; chat apps arrive as the display name at the top of the notification. A contact saved as `+1 555 0100` will not match a WhatsApp message showing "Mum". Add both — "Pick from Contacts" does it in one tap.
 2. **The message wasn't exactly the trigger word.** It has to be `loc` or `quicloc` and nothing else. Case doesn't matter; `loc?` doesn't count.
 3. **Location isn't "Allow all the time".**
-4. **Notification Access is off and they used a chat app.** Apps that hide message text in their notifications (Signal in private-notification mode, Telegram secret chats) can't work even with it — the text never reaches the phone.
+4. **Notification Access is off or the SMS/chat app did not post a readable notification.** Apps that hide message text in their notifications (Signal in private-notification mode, Telegram secret chats) can't work even with it — the text never reaches the phone.
 5. **The phone put QuicLoc to sleep.** Battery optimisation, or an OEM "autostart"/"protected apps" list on Xiaomi, Huawei, Oppo and Vivo devices.
 
 **Diagnostics** (in the app, under Help & troubleshooting) tells you which of these it was: if the message isn't in the log at all it never reached the app; if it is, the log states the reason outright.
@@ -102,7 +102,6 @@ Every permission maps to one feature, and the app shows its live status with a G
 
 | Permission | Purpose |
 |---|---|
-| `RECEIVE_SMS` | Detect the trigger word in incoming SMS |
 | `SEND_SMS` | Send the location reply |
 | `ACCESS_FINE_LOCATION` | Obtain a precise GPS location |
 | `ACCESS_COARSE_LOCATION` | Fallback when GPS is unavailable |
@@ -128,8 +127,7 @@ QuicLoc does not collect, store, transmit, or share any user data with the devel
 
 Kotlin + Jetpack Compose, single activity, no backend.
 
-- **`SmsReceiver`** — `BroadcastReceiver` for incoming SMS; matches trigger word against the whitelist, hands off to a foreground service.
-- **`NotificationListener`** — `NotificationListenerService` that watches messaging-app notifications and replies through their inline reply action.
+- **`NotificationListener`** — single incoming-message path for SMS and chat notifications; trusted SMS numbers use `SmsManager`, otherwise a supported notification inline-reply action.
 - **`LocationHelper`** — Fused Location Provider with a four-stage fallback: `getCurrentLocation()` → `lastLocation` → `requestLocationUpdates()`, racing a network/cell fix once GPS is slow — within a 60-second timeout.
 - **`WhitelistManager`** — trusted contacts in `EncryptedSharedPreferences` (AES-256-GCM, Android Keystore), with migration of any legacy plaintext data.
 - **`Readiness`** — pure-Kotlin derivation of the setup checklist from the live permission snapshot; the same data drives the Permissions table, so the two can't disagree.
@@ -163,7 +161,7 @@ GitHub Actions builds and tests every push to `main`. Pushing a version tag (`v1
 
 ### Google Play
 
-Sensitive permissions (`NotificationListenerService`, background location, SMS) require manual Play review — declaration text and Data Safety guidance in [docs/DECLARATIONS.md](docs/DECLARATIONS.md).
+Sensitive permissions (Notification Access, background location, `SEND_SMS`) require Play policy review — declaration text and Data Safety guidance in [docs/DECLARATIONS.md](docs/DECLARATIONS.md).
 
 Play publishing follows the GitHub release automatically — the Play job is chained onto the release job, so the sideload APK goes out first and Play follows. It uploads the bundle once and puts that same `versionCode` in every track: **rolled out on internal testing, staged as a draft** on closed testing, open testing and production — so promoting a draft later ships the exact artifact internal testers used. Setup and failure modes in [docs/PLAY_PUBLISHING.md](docs/PLAY_PUBLISHING.md).
 

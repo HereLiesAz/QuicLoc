@@ -71,7 +71,7 @@ The master switch is the first thing on the settings screen. While it's off, eve
 
 2. Permissions are granted.
 
-• Text messages: QuicLoc reads incoming texts to spot the trigger word, and sends the reply back by text.
+• Incoming SMS and chat requests: grant Notification Access and enable message previews in your messaging app. QuicLoc detects the word from notifications, not an SMS receive permission. Send SMS permits outgoing texts.
 • Location, set to "Allow all the time": this is the one people miss. Android asks twice — once for location, then again for background access. If you only grant "While using the app", QuicLoc can answer only while you happen to be looking at it, which defeats the point.
 • Notifications (Android 13+): QuicLoc posts a short-lived notification while a reply is being sent. Without permission, Android kills the reply halfway.
 
@@ -89,7 +89,6 @@ If nothing comes back, open Diagnostics (in Help & troubleshooting). It shows th
 
 Worth doing next:
 
-• Notification Access, if your people use WhatsApp / Telegram / Signal / Messenger rather than plain texts.
 • Battery optimisation exemption, so a request at 3am isn't slept through.
 • Your own phone number and the home-screen widget, if you want the parking / safety-check / emergency shortcuts.
 """.trim(),
@@ -105,10 +104,10 @@ Only people on your whitelist can request your location.
 You can add a contact in three ways:
 
 • Pick from Contacts — adds both the display name and every phone number on file.
-• Type a phone number — matched against incoming SMS.
+• Type a phone number — matched against sender information visible in SMS notifications.
 • Type a name — matched against the sender's name in chat-app notifications (WhatsApp, Telegram, Signal, etc.).
 
-Why both? SMS arrives with a phone number. Chat apps post notifications with the sender's display name from your address book. Adding a contact via the picker covers both.
+Why both? The default SMS app may show a phone number or a saved contact name; chat apps often show display names. A contact picked from your address book covers both where the notification exposes that identity.
 
 Star up to 3 contacts as priority for the widget's 3-tap Safety Check.
 
@@ -125,7 +124,7 @@ A whitelisted contact sends you the message "loc" or "quicloc" (case-insensitive
 
 Works in:
 
-• SMS / MMS (always)
+• SMS when the messaging app posts a readable notification (Notification Access required)
 • Any messaging app that posts a notification with an inline "Reply" action — WhatsApp, Telegram, Signal, Google Messages, Samsung Messages, Facebook Messenger, Instagram DMs, and most others.
 
 Doesn't work in:
@@ -133,7 +132,7 @@ Doesn't work in:
 • Apps that hide message content in notifications by default (Signal in private-notification mode, Telegram secret chats). The trigger never reaches QuicLoc because the system never sees the message text.
 • Email clients without inline reply actions.
 
-To enable chat-app support, grant "Notification Access" when prompted. QuicLoc only reads the title and body of incoming notifications, and only acts when both the sender is whitelisted and the message is exactly the trigger word.
+To detect any incoming message request, including SMS, grant "Notification Access" and enable previews in your messaging app. QuicLoc checks the sender and message text and replies only on an authorized trigger. Hidden message content cannot trigger a reply.
 """.trim(),
     )
 
@@ -264,7 +263,7 @@ Things to know:
 
 • There is no reset. Nobody — not us, not Google — can recover a forgotten QuicLoc PIN. If you forget it and your phone has a lock screen, you can still get in with your fingerprint and change it.
 • Removing the PIN deletes the encrypted backup along with it, because the PIN is the only key it has.
-• The background components — the SMS receiver, the notification listener, the reply service — are deliberately not gated by any of this. They answer whether the app is locked, closed, or has never been opened today.
+• The background components — the notification listener and the reply service — are deliberately not gated by any of this. They answer whether the app is locked, closed, or has never been opened today.
 """.trim(),
     )
 
@@ -309,9 +308,9 @@ QuicLoc asks for several sensitive permissions. Each one is tied to a specific f
 
 Messaging
 
-• Receive SMS: the SmsReceiver inspects incoming texts for the trigger word. Without it, SMS-based requests can't be detected at all.
+• Receive SMS is NOT requested. The Notification Listener detects incoming SMS only when the default SMS app posts a notification with visible message content.
 • Send SMS: the reply with your Maps link is sent through SmsManager. Without it, QuicLoc can detect a request but can't answer.
-• Notification Access (special access, granted in Settings): reads only the title and body of incoming notifications so the trigger works inside WhatsApp, Telegram, Signal, etc. QuicLoc ignores everything not from a whitelisted sender containing the exact trigger word.
+• Notification Access (special access, granted in Settings): required for all incoming SMS and chat triggers. QuicLoc checks sender and message text against configured words and trusted contacts; the separate find-my-phone passphrase can trigger from a non-whitelisted number.
 
 Location
 
@@ -356,7 +355,7 @@ Protected (background reliability)
 These keep QuicLoc reachable when the device is idle. Granting them is the difference between "QuicLoc answers a request at 3am while your phone is in your bag" and "QuicLoc answers if you happen to have the app open."
 
 • Battery Optimization Exemption: Android puts apps to sleep to save battery. While QuicLoc is asleep, incoming triggers can be missed and the reply may not finish sending. Granting the exemption keeps QuicLoc reachable. QuicLoc does no proactive background work — battery cost is near zero.
-• OEM Autostart: some manufacturers (Xiaomi, Huawei, Oppo, Vivo, etc.) ship a "Protected apps" or "Autostart" list that overrides Android's defaults. If QuicLoc isn't on it, the SmsReceiver stops firing after a reboot or when the device idles. The "Open" button tries to take you directly to the relevant screen; if it can't find one, it opens app info and you can navigate from there.
+• OEM Autostart: some manufacturers (Xiaomi, Huawei, Oppo, Vivo, etc.) ship a "Protected apps" or "Autostart" list that overrides Android's defaults. If QuicLoc isn't on it, background notification handling may be delayed or stopped after a reboot or when the device idles. The "Open" button tries to take you directly to the relevant screen; if it can't find one, it opens app info and you can navigate from there.
 • Notification Channels: a per-channel "show notifications" toggle controlled by you. If the foreground-service channel is disabled, Android may kill the reply mid-fetch. The "Open" button takes you straight to QuicLoc's notification settings so you can verify every channel is on.
 
 If a toggle in system Settings is greyed out
@@ -396,9 +395,9 @@ It has to be "loc" or "quicloc" and nothing else. "loc?" doesn't count. "hey sen
 
 If location is set to "While using the app", QuicLoc can only answer while the app is on screen. Android splits this into two separate grants, and the second one is easy to miss. The setup checklist shows it as its own line.
 
-4. Notification Access is off, and they used a chat app.
+4. Notification Access is off, or the messaging app didn't show readable message content.
 
-Plain texts work without it. WhatsApp, Telegram, Signal, Messenger and the rest do not — that path exists only through Notification Access.
+Both SMS and chat apps require Notification Access. A hidden, silenced, or absent notification cannot trigger QuicLoc; the SMS permission does not provide a backup receive path.
 
 Some apps can't work even with it: anything that hides message text in its notifications (Signal in private-notification mode, Telegram secret chats) never shows QuicLoc the message to begin with.
 
