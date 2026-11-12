@@ -71,7 +71,7 @@ The master switch is the first thing on the settings screen. While it's off, eve
 
 2. Permissions are granted.
 
-• Text messages: QuicLoc reads incoming texts to spot the trigger word, and sends the reply back by text.
+• Incoming SMS and chat requests: grant Notification Access and enable message previews in your messaging app. QuicLoc detects the word from notifications, not an SMS receive permission. Send SMS permits outgoing texts.
 • Location, set to "Allow all the time": this is the one people miss. Android asks twice — once for location, then again for background access. If you only grant "While using the app", QuicLoc can answer only while you happen to be looking at it, which defeats the point.
 • Notifications (Android 13+): QuicLoc posts a short-lived notification while a reply is being sent. Without permission, Android kills the reply halfway.
 
@@ -89,7 +89,6 @@ If nothing comes back, open Diagnostics (in Help & troubleshooting). It shows th
 
 Worth doing next:
 
-• Notification Access, if your people use WhatsApp / Telegram / Signal / Messenger rather than plain texts.
 • Battery optimisation exemption, so a request at 3am isn't slept through.
 • Your own phone number and the home-screen widget, if you want the parking / safety-check / emergency shortcuts.
 """.trim(),
