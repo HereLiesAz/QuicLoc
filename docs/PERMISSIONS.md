@@ -24,8 +24,7 @@ Every permission declared in `AndroidManifest.xml`, what it's for, and any cavea
 
 | Permission | Why | When requested |
 |---|---|---|
-| Incoming SMS | Detected via the existing NotificationListener when the messaging app posts message content; no `RECEIVE_SMS` permission | Notification Access in system settings |
-| `SEND_SMS` | `LocationHelper.sendSms` replies via `SmsManager` | Same |
+| `SEND_SMS` | Outgoing SMS location replies, widget alerts, Loc Notice and find-my-phone | First-launch chain |
 | `ACCESS_FINE_LOCATION` | `LocationHelper.fetchLocation` GPS fix | Same |
 | `ACCESS_COARSE_LOCATION` | Fallback when fine location unavailable | Same |
 | `POST_NOTIFICATIONS` (API 33+) | All our notifications: FGS, tracking, reminder | Same |
@@ -83,6 +82,9 @@ Requested from `MainActivity.autoDetectMyNumber`, through the same rationale dia
 
 ### Notification Access
 
+**Required for all incoming SMS and chat messages.** The default SMS app must post a notification containing the sender and trigger text. No `RECEIVE_SMS` permission is declared; disabled/hidden notification content means incoming requests cannot be detected. SMS notifications are read by the same `NotificationListener` used for chat apps. This is a technical behavior, not a statement that Google Play policy permits all such SMS access.
+
+
 `android.permission.BIND_NOTIFICATION_LISTENER_SERVICE` is system-only; the user grants it via Settings → Apps → Special access → Notification access. We:
 
 - Detect grant state via `Settings.Secure.getString(contentResolver, "enabled_notification_listeners")`.
@@ -129,7 +131,7 @@ The battery optimization exemption requires a Play Console disclosure — see [D
 | Path | Required runtime permissions | Required special access |
 |---|---|---|
 | SMS notification trigger | SEND_SMS, *_LOCATION, ACCESS_BACKGROUND_LOCATION | Notification Access and visible message notification |
-| Notification trigger | SEND_SMS *(implicit dependency through fallbacks)*, *_LOCATION, ACCESS_BACKGROUND_LOCATION | Notification Access |
+| Chat-app notification trigger | *_LOCATION, ACCESS_BACKGROUND_LOCATION; an inline reply action from the app | Notification Access and visible message content |
 | Widget tap | SEND_SMS, *_LOCATION, ACCESS_BACKGROUND_LOCATION, POST_NOTIFICATIONS | — |
 | Passphrase / find-my-phone | SEND_SMS, *_LOCATION, BACKGROUND_LOCATION, CAMERA | Notification Access for incoming trigger; Device Admin for real lock |
 | MMS panic photo | SEND_SMS, CAMERA | The `android-smsmms` library also pulls in `ACCESS_NETWORK_STATE`, already declared by the base for Play Services — not a new permission surface introduced by this path |
@@ -147,7 +149,7 @@ The battery optimization exemption requires a Play Console disclosure — see [D
 - `READ_PHONE_STATE` — we don't need general phone/telephony state. Own-number lookup uses the
   optional `READ_PHONE_NUMBERS` runtime permission (see "Own phone number" above) with the Phone
   Number Hint API as the no-permission fallback, never `READ_PHONE_STATE`.
-- `READ_SMS` — we only receive new SMS, never read the user's SMS history.
+- `READ_SMS`, `RECEIVE_SMS` — QuicLoc does not access the SMS database or receive carrier SMS broadcasts. Incoming SMS messages are detected only if the default SMS app posts a readable notification and the user grants Notification Access.
 - `WRITE_SMS` — `SmsManager.sendTextMessage` doesn't need it.
 - `WAKE_LOCK` — FGS keeps the process alive; we don't need a manual wake lock.
 - `SCHEDULE_EXACT_ALARM` / `USE_EXACT_ALARM` — `TrackingService`'s ticks are scheduled with `AlarmManager.set(ELAPSED_REALTIME_WAKEUP, ...)`, a **non-exact** wakeup alarm (see [LOCKDOWN.md](LOCKDOWN.md#ticking-alarmmanager-not-handler)) — deliberately not `setExactAndAllowWhileIdle`, so no exact-alarm permission is needed. A non-exact alarm still forces a real CPU wake during deep sleep, which is what the cadence actually needs; Doze may defer delivery into the next maintenance window by some margin rather than firing at the exact millisecond, which is an acceptable trade for a 1–5 minute tracking interval.
