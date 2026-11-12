@@ -4158,8 +4158,8 @@ private fun StatusRow(label: String, ok: Boolean, value: String? = null) {
  * `✗` marker so they stand out.
  *
  * Data source: [RequestHistoryManager.getHistory], polled while this screen
- * is open so a request handled by a background component (SmsReceiver,
- * NotificationListener, LocationReplyService) while the user already has
+ * is open so a request handled by a background component
+ * (NotificationListener, LocationReplyService) while the user already has
  * this screen open still shows up, not just on the next navigation here.
  * Capped at 100 entries (oldest evicted on insert).
  */
