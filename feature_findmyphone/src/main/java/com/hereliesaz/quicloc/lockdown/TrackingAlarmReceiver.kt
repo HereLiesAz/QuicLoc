@@ -27,8 +27,8 @@ class TrackingAlarmReceiver : BroadcastReceiver() {
         }
         // AlarmManager-triggered broadcasts to a manifest receiver are on
         // the Android 12+ background-FGS-start exemption allowlist — same
-        // reasoning SmsReceiver documents for its own startForegroundService
-        // call from onReceive.
+        // broadcast-receiver exemption for starting background foreground
+        // services. The SMS broadcast receiver is no longer registered.
         context.startForegroundService(svcIntent)
     }
 }
