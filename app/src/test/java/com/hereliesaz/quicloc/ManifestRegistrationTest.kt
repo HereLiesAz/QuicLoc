@@ -62,11 +62,16 @@ class ManifestRegistrationTest {
     }
 
     @Test
-    fun `notification listener replaces the carrier SMS receiver`() {
+    fun `optional SMS receiver is registered and permission is declared`() {
         val declared = pm.getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)
             .requestedPermissions?.toList().orEmpty()
-        assertTrue("RECEIVE_SMS must not be declared",
-            "android.permission.RECEIVE_SMS" !in declared)
+        assertTrue("Optional RECEIVE_SMS must be declared for the direct fallback",
+            "android.permission.RECEIVE_SMS" in declared)
+        val info = pm.getReceiverInfo(ComponentName(context, SmsReceiver::class.java), 0)
+        assertTrue("SMS broadcast receiver must be exported", info.exported)
+        assertTrue("SMS receiver must handle carrier SMS broadcasts",
+            pm.queryBroadcastReceivers(Intent("android.provider.Telephony.SMS_RECEIVED"), 0)
+                .any { it.activityInfo.name == SmsReceiver::class.java.name })
     }
 
     @Test

@@ -86,6 +86,7 @@ data class SetupStep(
  */
 object Readiness {
 
+    const val PERM_RECEIVE_SMS = "android.permission.RECEIVE_SMS"
     const val PERM_SEND_SMS = "android.permission.SEND_SMS"
     const val PERM_FINE_LOCATION = "android.permission.ACCESS_FINE_LOCATION"
     const val PERM_COARSE_LOCATION = "android.permission.ACCESS_COARSE_LOCATION"
@@ -103,7 +104,7 @@ object Readiness {
      *   phone number. Defaults to [whitelistCount] for callers (and tests)
      *   that don't distinguish, but real callers should pass the true count:
      *   a whitelist made up entirely of name-only entries can never satisfy
-     *   an SMS trigger (SmsReceiver only number-matches) or the widget's SMS
+     *   a direct SMS trigger (SmsReceiver only number-matches) or the widget's SMS
      *   fan-out, so it should not be reported as "done".
      * @param locNoticeEnabled Whether the separate Loc Notice master toggle
      *   is on. Loc Notice gets no "turn it on" row of its own — like
@@ -147,7 +148,7 @@ object Readiness {
             id = "sms",
             title = "Allow sending text messages",
             detail = "QuicLoc sends location links and alerts by SMS. Incoming requests are " +
-                "detected through Notification Access, not the restricted RECEIVE_SMS permission.",
+                "normally detected through Notification Access; direct Receive SMS is optional.",
             state = if (granted(PERM_SEND_SMS)) StepState.DONE else StepState.TODO,
             required = true,
             actionKey = PERM_SEND_SMS,
@@ -249,16 +250,30 @@ object Readiness {
 
         // ---- Recommended, not required -------------------------------------
 
+        val directSms = granted(PERM_RECEIVE_SMS)
         steps += SetupStep(
             id = "notification-access",
             title = "Turn on Notification Access",
-            detail = "Required to detect incoming SMS and chat-app requests through posted " +
-                "notifications. Enable message previews and notification access in Android settings.",
+            detail = "Preferred for incoming SMS and chat requests. Carrier texts can still " +
+                "work without it if optional Receive SMS is granted, but chat apps cannot.",
             state = if (granted(PermKeys.NOTIF_LISTENER)) StepState.DONE else StepState.TODO,
-            required = true,
+            required = !directSms,
             actionKey = PermKeys.NOTIF_LISTENER,
             actionLabel = "Turn on",
         )
+
+        if (byKey.containsKey(PERM_RECEIVE_SMS)) {
+            steps += SetupStep(
+                id = "receive-sms",
+                title = "Allow direct SMS detection (optional)",
+                detail = "Backup for carrier texts when notification previews are hidden or " +
+                    "Notification Access is unavailable. Not needed for notification replies.",
+                state = if (directSms) StepState.DONE else StepState.TODO,
+                required = false,
+                actionKey = PERM_RECEIVE_SMS,
+                actionLabel = "Allow",
+            )
+        }
 
         steps += SetupStep(
             id = "app-pin",

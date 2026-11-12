@@ -14,6 +14,7 @@ class ReadinessTest {
 
     /** Every permission the checklist looks at, all granted. */
     private fun allGranted(): List<PermissionStatus> = listOf(
+        Readiness.PERM_RECEIVE_SMS,
         Readiness.PERM_SEND_SMS,
         Readiness.PERM_FINE_LOCATION,
         Readiness.PERM_COARSE_LOCATION,
@@ -115,11 +116,29 @@ class ReadinessTest {
     }
 
     @Test
-    fun `notification access is required for incoming messages`() {
+    fun `notification access is optional when receive SMS is granted`() {
         val steps = steps(permissions = withRevoked(PermKeys.NOTIF_LISTENER))
+        assertTrue(Readiness.isReady(steps))
+        assertEquals(0, Readiness.requiredRemaining(steps))
+        assertFalse(steps.first { it.id == "notification-access" }.required)
+    }
+
+    @Test
+    fun `notification access becomes required when receive SMS is denied`() {
+        val steps = steps(permissions = withRevoked(PermKeys.NOTIF_LISTENER, Readiness.PERM_RECEIVE_SMS))
         assertFalse(Readiness.isReady(steps))
-        assertEquals(1, Readiness.requiredRemaining(steps))
         assertTrue(steps.first { it.id == "notification-access" }.required)
+        assertEquals(PermKeys.NOTIF_LISTENER, steps.first { it.id == "notification-access" }.actionKey)
+    }
+
+    @Test
+    fun `optional receive SMS never prevents readiness when notifications work`() {
+        val steps = steps(permissions = withRevoked(Readiness.PERM_RECEIVE_SMS))
+        assertTrue(Readiness.isReady(steps))
+        val fallback = steps.first { it.id == "receive-sms" }
+        assertFalse(fallback.required)
+        assertEquals(StepState.TODO, fallback.state)
+        assertEquals(Readiness.PERM_RECEIVE_SMS, fallback.actionKey)
     }
 
     @Test

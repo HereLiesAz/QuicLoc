@@ -137,6 +137,17 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
     private val RATIONALES: Map<String, PermissionRationale> = listOf(
         PermissionRationale(
+            permission = Manifest.permission.RECEIVE_SMS,
+            title = "Receive SMS (optional backup)",
+            whatFor = "Lets QuicLoc detect incoming carrier texts directly when message " +
+                "notifications are unavailable or hide their contents.",
+            ifSkipped = "Nothing changes for requests visible through Notification Access. " +
+                "Hidden or disabled SMS notifications may prevent those requests from arriving.",
+            limits = "This access is optional and is never requested during initial setup. " +
+                "QuicLoc checks new texts for your trigger or find-my-phone passphrase; " +
+                "it does not read SMS history.",
+        ),
+        PermissionRationale(
             permission = Manifest.permission.SEND_SMS,
             title = "Send text messages",
             whatFor = "Lets QuicLoc text location links to chosen contacts and send SMS alerts.",
@@ -422,6 +433,7 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
 
         // Runtime — user-prompted on first use
         list += runtime(Manifest.permission.SEND_SMS, "Send SMS")
+        list += runtime(Manifest.permission.RECEIVE_SMS, "Receive SMS (optional backup)")
         list += runtime(Manifest.permission.ACCESS_FINE_LOCATION, "Precise Location")
         list += runtime(Manifest.permission.ACCESS_COARSE_LOCATION, "Approximate Location")
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
@@ -1721,8 +1733,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
             title = "Notification Access",
             whatFor = "Extends the trigger word to WhatsApp, Telegram, Signal, Messenger and " +
                 "Google Messages — QuicLoc replies through the notification's own reply box.",
-            ifSkipped = "Only plain text messages (SMS) will work. Everything else is invisible " +
-                "to the app.",
+            ifSkipped = "Chat-app requests cannot be detected. Incoming carrier SMS may still " +
+                "work if you separately granted the optional Receive SMS permission.",
             limits = "QuicLoc reads the sender and text of incoming notifications and acts only " +
                 "when the sender is on your trusted list AND the message is exactly the trigger " +
                 "word. Nothing is logged or sent anywhere.",
@@ -2095,6 +2107,10 @@ fun QuicLocScreen(
     // ContactEntry.canRequestLocation's own default for entries added before
     // this existed, or not yet reflected in this snapshot.
     val sharingCount = numbersList.count { canRequestLocationByToken[it] != false }
+    val receiveSmsGranted = permissionStatuses.any {
+        it.key == Manifest.permission.RECEIVE_SMS &&
+            (it.state == PermStatus.GRANTED || it.state == PermStatus.AUTO_GRANTED)
+    }
 
     // Enabled locations with at least one contact that actually resolves to
     // a dialable number — a location whose only selected contact is a
@@ -2371,12 +2387,12 @@ fun QuicLocScreen(
             number = sectionNo("trigger"),
             title = "The trigger word",
             subtitle = "What a trusted contact sends you",
-            statusText = if (notificationAccessGranted)
-                "Text messages and chat apps"
-            else
-                "Notification Access required",
-            // Incoming SMS and chat requests both require Notification Access.
-            statusOk = notificationAccessGranted,
+            statusText = when {
+                notificationAccessGranted -> "Text messages and chat apps"
+                receiveSmsGranted -> "Carrier SMS only (backup)"
+                else -> "Notification Access required"
+            },
+            statusOk = notificationAccessGranted || receiveSmsGranted,
         ) {
             Text(
                 text = "They send you one of these, on its own, in any messaging app:",
@@ -2407,14 +2423,21 @@ fun QuicLocScreen(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            text = "Incoming requests are off",
+                            text = if (receiveSmsGranted)
+                                "Chat-app requests are off"
+                            else "Incoming requests are off",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
                         Text(
-                            text = "Notification Access lets QuicLoc detect SMS and chat messages " +
-                                "through their notifications. Enable message notifications " +
-                                "and previews in your messaging app as well.",
+                            text = if (receiveSmsGranted)
+                                "Optional Receive SMS allows carrier-text requests, but chat " +
+                                    "apps still need Notification Access."
+                            else
+                                "Notification Access is the preferred way to detect SMS and " +
+                                    "chat messages. Enable message notifications and previews " +
+                                    "in your messaging app, or grant optional Receive SMS " +
+                                    "under Permissions for carrier texts only.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
@@ -2443,6 +2466,12 @@ fun QuicLocScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Receive SMS is an optional backup in Permissions, not a setup requirement.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = "Test it: get someone on your list to text you \"loc\" — or add your own " +
