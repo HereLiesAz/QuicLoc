@@ -7,7 +7,11 @@ import android.provider.Telephony
 import android.util.Log
 
 /**
- * BroadcastReceiver for `SMS_RECEIVED`. The SMS trigger entry point.
+ * Optional direct carrier-SMS fallback for `SMS_RECEIVED`.
+ *
+ * The preferred inbound path is [NotificationListener]. Android dispatches to
+ * this receiver only after the user separately grants `RECEIVE_SMS`; that
+ * permission is never requested during initial onboarding.
  *
  * Responsibilities:
  *

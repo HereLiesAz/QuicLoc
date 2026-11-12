@@ -10,9 +10,11 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 
 /**
- * Listens for notifications from any messaging app and replies via the
- * notification's inline-reply action when a whitelisted contact sends the
- * trigger word "loc" or "quicloc".
+ * Preferred incoming SMS/chat path: listens for posted messaging notifications
+ * and replies using the notification's inline-reply action when a trusted
+ * contact sends "loc" or "quicloc". A user may independently grant optional
+ * `RECEIVE_SMS` for [SmsReceiver] to catch carrier texts whose notification
+ * is unreadable or has no usable reply action.
  *
  * Handles three notification shapes:
  *   1. [Notification.MessagingStyle] — the preferred shape used by WhatsApp,
