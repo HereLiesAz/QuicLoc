@@ -37,7 +37,7 @@ and photograph the owner with no way back in.
 
 ## Activation
 
-The passphrase fires when a **visible SMS or chat-app notification** contains exactly `"loc <passphrase>"` or `"quicloc <passphrase>"`, regardless of the whitelist. The user must grant Notification Access. Incoming carrier SMS broadcasts are not registered. The sender must supply a usable phone number for location updates; a display name without a number cannot start tracking. This is particularly important when the default SMS app displays only a saved contact name. A suppressed or private-content notification cannot trigger find-my-phone.
+The passphrase fires when a **visible SMS or chat-app notification** contains exactly `"loc <passphrase>"` or `"quicloc <passphrase>"`, regardless of the whitelist. The user must grant Notification Access. Incoming carrier SMS broadcasts are not registered. The sender must have a usable phone number for location updates. A default SMS app's saved contact name can be mapped to a number only if exactly one match exists among contacts configured in QuicLoc. An unresolvable or ambiguous name cannot start tracking. A suppressed or private-content notification cannot trigger find-my-phone.
 
 ```
 trigger detected (NotificationListener)
