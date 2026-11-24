@@ -304,10 +304,10 @@ Optional, only needed if you would rather store the key material split up than a
 ## Data safety / privacy
 
 - The app has **no ads, no analytics, no crash reporting, and no third-party trackers** (only
-  `play-services-location` and `play-services-auth`), so it declares **no advertising ID** —
+  `play-services-location`, `play-services-auth`, feature delivery and the Play-only update API), so it declares **no advertising ID** —
   there is intentionally no `com.google.android.gms.permission.AD_ID` permission.
 - Location is **shared device-to-device** with the contact who requested it, via SMS/MMS — it
   is **not collected by the developer** and never sent to any server. Reflect this in the Play
   **Data safety** form (location *shared*, not *collected*; user-initiated). See
   [`DECLARATIONS.md`](../DECLARATIONS.md) and [`PRIVACY_POLICY.md`](../PRIVACY_POLICY.md).
-- `INTERNET` is used for Play Services location and MMS transport, not for telemetry.
+- `INTERNET` is used for Play Services location, MMS transport and installer-aware app update checking, not telemetry. The central Play workflow selects the Play adapter via `releaseVersionCode`; local Play builds may set `-PazPlayUpdates=true`. The sideload artifact has no Play update dependency.

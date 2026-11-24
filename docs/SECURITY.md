@@ -6,7 +6,7 @@ QuicLoc is a single-purpose personal-safety utility. The threats it tries to def
 
 1. **A thief with physical access to the device.** Wants to disable tracking, read the whitelist, learn the PIN. The find-my-phone flow exists specifically for this scenario.
 2. **A casual snoop with brief physical access** (unattended phone on a desk). Wants to add themselves to the whitelist or read the PIN.
-3. **A network attacker.** Almost nothing to attack: QuicLoc makes no HTTP calls, has no backend, and sends only system SMS/MMS/notification replies through standard Android APIs.
+3. **A network attacker.** Almost nothing to attack: QuicLoc has no backend and sends safety data only through system SMS/MMS/notification replies. Its separate foreground update checker uses HTTPS for public GitHub release metadata or the Play update API, with no safety data included.
 4. **A rooted-device attacker who has obtained a full app-data backup.** Wants to read encrypted prefs or the backup blob offline.
 
 What QuicLoc explicitly does **not** defend against:

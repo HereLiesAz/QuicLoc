@@ -39,7 +39,7 @@ Then **test it**: have someone on your list text you `loc`. A Google Maps link s
 - **Battery optimisation exemption** — so a request at 3am isn't slept through. QuicLoc does no background work, so this costs no battery.
 - **Your own number + the home-screen widget** — for the safety-check / emergency / parking shortcuts below.
 
-Install from [Releases](../../releases). On first launch you'll authenticate with your fingerprint or device PIN, then be walked through the permissions one at a time — "Step 2 of 5", with a plain-English explanation of what each one is for, what breaks if you skip it, and what QuicLoc will never do with it. Skipping is fine — the checklist lets you come back to any of them.
+Install from [Releases](../../releases). After onboarding and unlock, the shared AzNavRail checker can offer an update from the installed distribution channel (GitHub or Google Play). It does not send location, contacts, messages, or credentials. On first launch you'll authenticate with your fingerprint or device PIN, then be walked through the permissions one at a time — "Step 2 of 5", with a plain-English explanation of what each one is for, what breaks if you skip it, and what QuicLoc will never do with it. Skipping is fine — the checklist lets you come back to any of them.
 
 ---
 

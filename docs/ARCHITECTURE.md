@@ -105,7 +105,7 @@ Loc Notice is not request-driven and runs separately from all three paths above 
 
 ## Key architectural choices
 
-- **No backend.** Everything happens on-device. The only outbound traffic is the location reply itself, sent directly to the requesting contact via SMS/inline-reply/MMS. This is explicit in the privacy policy and Play Store declarations.
+- **No backend.** Everything happens on-device. Location replies are sent directly to the requesting contact via SMS/inline-reply/MMS, with no developer backend. The independent, foreground-only update checker in `MainActivity.unlock()` queries public GitHub release metadata or the Play update API; it does not access or transmit safety data. This distinction is explicit in the privacy policy and Play Store declarations.
 - **Foreground services for replies, not `goAsync()`.** GPS cold-start can take 20–30 s; `BroadcastReceiver.goAsync()` only buys 10 s before Android kills the process. An FGS with `foregroundServiceType=location` is the only reliable way to wait for a fix from a background trigger.
 - **Two-layer encryption.** `EncryptedSharedPreferences` for on-device storage (Keystore-backed). PIN-derived AES-GCM for the backup blob, because Keystore keys don't survive device restore. See [BACKUP.md](BACKUP.md) and [SECURITY.md](SECURITY.md).
 - **MessagingStyle-aware notification parsing.** Chat apps (WhatsApp, Telegram, Signal, etc.) post messages as `Notification.MessagingStyle`. Naive parsing of `EXTRA_TEXT` fails for group chats and multi-message bundles. We parse `MessagingStyle.messages` and take the latest, with the sender from `Person.name`.
