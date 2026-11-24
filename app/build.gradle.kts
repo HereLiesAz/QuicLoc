@@ -134,8 +134,8 @@ tasks.register("printApplicationId") {
 }
 
 dependencies {
-    implementation("com.github.HereLiesAz.AzNavRail:aznavrail-updates:bfbbf1e9b89a7757a77d8607519d42b33422913d")
-    if (playUpdates.get()) implementation("com.github.HereLiesAz.AzNavRail:aznavrail-updates-play:bfbbf1e9b89a7757a77d8607519d42b33422913d")
+    implementation("com.github.HereLiesAz.AzNavRail:aznavrail-updates:12.5")
+    if (playUpdates.get()) implementation("com.github.HereLiesAz.AzNavRail:aznavrail-updates-play:12.5")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
