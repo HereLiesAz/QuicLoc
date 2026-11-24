@@ -1502,6 +1502,8 @@ class MainActivity : FragmentActivity() {   // FragmentActivity required by Biom
         isAuthenticated = true
         authState.value = true
         pinGateState.value = false
+        // Check only after unlocking and completing onboarding; never from a background service.
+        if (whitelistManager.isOnboardingCompleted()) checkAppUpdates(this)
         // Only auto-walk the permission rationale chain once per process
         // lifetime, not on every unlock. unlock() runs on every successful
         // re-authentication -- an ordinary Home-button press backgrounds the

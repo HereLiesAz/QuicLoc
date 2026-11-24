@@ -8,6 +8,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// The central Play workflow alone supplies releaseVersionCode.
+val playUpdates = providers.gradleProperty("azPlayUpdates").map { it.toBooleanStrict() }
+    .orElse(providers.gradleProperty("releaseVersionCode").map { true }).orElse(false)
+
 android {
     namespace = "com.hereliesaz.quicloc"
     compileSdk = 37
@@ -112,6 +116,9 @@ android {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
         }
     }
+    sourceSets.getByName("main").java.srcDir(
+        if (playUpdates.get()) "src/playUpdates/kotlin" else "src/githubUpdates/kotlin"
+    )
     buildFeatures { compose = true }
     testOptions { unitTests.isIncludeAndroidResources = true }
 }
@@ -127,6 +134,8 @@ tasks.register("printApplicationId") {
 }
 
 dependencies {
+    implementation("com.github.HereLiesAz.AzNavRail:aznavrail-updates:bfbbf1e9b89a7757a77d8607519d42b33422913d")
+    if (playUpdates.get()) implementation("com.github.HereLiesAz.AzNavRail:aznavrail-updates-play:bfbbf1e9b89a7757a77d8607519d42b33422913d")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
